@@ -22,12 +22,16 @@ export class BuildingViewer3D {
     this.lastY = 0;
     this.project = null;
     this.activeFloorId = null;
-    this._bindInteraction();
+    this._boundCanvas = null;
+    this._resizeObserver = null;
+    this._ensureBound();
   }
 
-  _bindInteraction() {
+  _ensureBound() {
     const c = document.getElementById(this.canvasId);
-    if (!c) return;
+    if (!c || this._boundCanvas === c) return c;
+    this._boundCanvas = c;
+    c.style.touchAction = 'none';
 
     c.addEventListener('pointerdown', e => {
       this.dragging = true;
@@ -62,6 +66,15 @@ export class BuildingViewer3D {
       },
       { passive: false }
     );
+
+    if (typeof ResizeObserver !== 'undefined' && c.parentElement) {
+      this._resizeObserver?.disconnect();
+      this._resizeObserver = new ResizeObserver(() => {
+        if (this.project && c.isConnected) this.render();
+      });
+      this._resizeObserver.observe(c.parentElement);
+    }
+    return c;
   }
 
   setView(preset) {
@@ -84,11 +97,12 @@ export class BuildingViewer3D {
   update(project, activeFloorId) {
     this.project = project;
     this.activeFloorId = activeFloorId;
+    this._ensureBound();
     this.render();
   }
 
   render() {
-    const c = document.getElementById(this.canvasId);
+    const c = this._ensureBound();
     if (!c || !c.parentElement || !this.project) return;
 
     const rect = c.parentElement.getBoundingClientRect();

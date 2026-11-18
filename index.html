@@ -4,9 +4,38 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SIA Thermic Studio — Simulation de surchauffe &amp; Confort thermique</title>
-  <link rel="stylesheet" href="./css/tokens.css" />
-  <link rel="stylesheet" href="./css/layout.css" />
-  <link rel="stylesheet" href="./css/components.css" />
+  <link rel="stylesheet" href="./css/tokens.css?v=20261118-3" />
+  <link rel="stylesheet" href="./css/layout.css?v=20261118-3" />
+  <link rel="stylesheet" href="./css/components.css?v=20261118-3" />
+  <script type="importmap">
+    {
+      "imports": {
+        "./src/app.js": "./src/app.js?v=20261118-3",
+        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261118-3",
+        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261118-3",
+        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261118-3",
+        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261118-3",
+        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261118-3",
+        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261118-3",
+        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261118-3",
+        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261118-3",
+        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261118-3",
+        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261118-3",
+        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261118-3",
+        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261118-3",
+        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261118-3",
+        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261118-3",
+        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261118-3",
+        "./src/state/house-library.js": "./src/state/house-library.js?v=20261118-3",
+        "./src/state/project-store.js": "./src/state/project-store.js?v=20261118-3",
+        "./src/ui/charts.js": "./src/ui/charts.js?v=20261118-3",
+        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261118-3",
+        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261118-3",
+        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261118-3",
+        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261118-3"
+      }
+    }
+  </script>
 </head>
 <body>
 
@@ -604,6 +633,6 @@
 
 <div class="chart-tooltip" id="chartTooltip"></div>
 
-<script type="module" src="./src/app.js"></script>
+<script type="module" src="./src/app.js?v=20261118-3"></script>
 </body>
 </html>

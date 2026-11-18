@@ -1,0 +1,45 @@
+/* Variables de thème Sombre & Clair pour SIA Thermic Studio */
+
+:root[data-theme="dark"] {
+  --bg: #131314;
+  --surface: #1e1f20;
+  --surface-2: #282a2c;
+  --surface-3: #333537;
+  --border: #3c4043;
+  --text: #e3e3e3;
+  --text-muted: #9aa0a6;
+  --primary: #a8c7fa;
+  --primary-bg: #0842a0;
+  --primary-text: #d3e3fd;
+  --ok: #81c995;
+  --ok-bg: rgba(129, 201, 149, 0.14);
+  --warn: #fdd663;
+  --warn-bg: rgba(253, 214, 99, 0.14);
+  --ko: #f28b82;
+  --ko-bg: rgba(242, 139, 130, 0.14);
+  --grid-line: rgba(255, 255, 255, 0.08);
+  --chart-band: rgba(168, 199, 250, 0.09);
+  --chart-band-2: rgba(129, 201, 149, 0.12);
+}
+
+:root[data-theme="light"] {
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --surface-2: #f1f3f4;
+  --surface-3: #e8eaed;
+  --border: #dadce0;
+  --text: #202124;
+  --text-muted: #5f6368;
+  --primary: #1a73e8;
+  --primary-bg: #1a73e8;
+  --primary-text: #ffffff;
+  --ok: #137333;
+  --ok-bg: #e6f4ea;
+  --warn: #b06000;
+  --warn-bg: #fef7e0;
+  --ko: #c5221f;
+  --ko-bg: #fce8e6;
+  --grid-line: rgba(0, 0, 0, 0.08);
+  --chart-band: rgba(26, 115, 232, 0.08);
+  --chart-band-2: rgba(19, 115, 51, 0.10);
+}

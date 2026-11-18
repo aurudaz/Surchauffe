@@ -1,0 +1,391 @@
+/* Composants réutilisables : contrôles, cartes, tableaux, graphiques, confort & méthodologie */
+
+button, select, input, textarea { font: inherit; color: var(--text); }
+
+input, select, textarea {
+  width: 100%;
+  max-width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  text-overflow: ellipsis;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+}
+
+input[type="number"] { font-variant-numeric: tabular-nums; }
+input[type="checkbox"] { width: auto; accent-color: var(--primary); }
+input[type="range"] { padding: 0; border: none; background: transparent; accent-color: var(--primary); }
+
+.seg-pill {
+  display: inline-flex;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+
+.seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.seg-btn.active { background: var(--surface-3); color: var(--text); }
+.seg-btn.active-blue { background: var(--primary-bg); color: var(--primary-text); }
+
+.btn {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.btn:hover { background: var(--surface-3); }
+.btn-run { background: var(--primary-bg); border-color: transparent; color: var(--primary-text); padding: 7px 18px; }
+.btn-run:hover { filter: brightness(1.1); background: var(--primary-bg); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-danger { color: var(--ko); border-color: transparent; background: transparent; padding: 4px 8px; }
+.btn-danger:hover { background: var(--ko-bg); }
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+}
+
+.card-title {
+  margin: 0 0 12px 0;
+  font-size: 14.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: -6px;
+  margin-bottom: 12px;
+}
+
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.field small { font-size: 11px; color: var(--text-muted); }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.ok { background: var(--ok-bg); color: var(--ok); }
+.warn { background: var(--warn-bg); color: var(--warn); }
+.ko { background: var(--ko-bg); color: var(--ko); }
+.neutral { background: var(--surface-2); color: var(--text-muted); border: 1px solid var(--border); }
+
+.house-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.house-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.house-card:hover { border-color: var(--primary); background: var(--surface-3); }
+.house-card h4 { margin: 0 0 4px 0; font-size: 13px; color: var(--text); }
+.house-card p { margin: 0; font-size: 11.5px; color: var(--text-muted); }
+
+.dropzone {
+  border: 1.5px dashed var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+  background: var(--surface-2);
+}
+
+.dropzone.dragover {
+  border-color: var(--primary);
+  background: rgba(168, 199, 250, 0.1);
+}
+
+.table-wrap { overflow-x: auto; width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 6px 6px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+th { color: var(--text-muted); font-weight: 600; font-size: 11px; background: var(--surface-2); }
+.num { text-align: right; font-variant-numeric: tabular-nums; font-family: "Roboto Mono", ui-monospace, monospace; }
+td input, td select { padding: 4px 6px; font-size: 11.5px; }
+
+.well {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.well-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+  gap: 12px;
+}
+
+.kpi-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.kpi-label { font-size: 11.5px; color: var(--text-muted); font-weight: 600; }
+.kpi-val { font-size: 23px; font-weight: 700; margin: 4px 0 2px 0; font-family: "Roboto Mono", ui-monospace, monospace; }
+.kpi-sub { font-size: 11.5px; color: var(--text-muted); }
+
+.chart-box { position: relative; width: 100%; height: 250px; overflow: hidden; }
+.chart-box canvas { width: 100%; height: 100%; display: block; }
+
+.chart-tooltip {
+  position: fixed;
+  pointer-events: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 11.5px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  z-index: 100;
+  display: none;
+  white-space: nowrap;
+}
+
+.inspector-stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+
+.inspector-stat span:first-child { color: var(--text-muted); }
+.inspector-stat strong { font-family: "Roboto Mono", ui-monospace, monospace; }
+
+.sub-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.sub-tab {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sub-tab.active {
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  border-color: transparent;
+}
+
+.reco-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.reco-item {
+  background: var(--surface-2);
+  border-left: 3px solid var(--primary);
+  padding: 8px 10px;
+  border-radius: 0 8px 8px 0;
+  font-size: 12.5px;
+}
+
+/* Cartes Confort Thermique (Normes & Études) */
+.comfort-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.comfort-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.comfort-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.comfort-ref {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.comfort-metric {
+  font-size: 20px;
+  font-weight: 700;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+}
+
+.progress-track {
+  width: 100%;
+  height: 7px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+  display: flex;
+}
+
+.progress-seg { height: 100%; }
+
+/* Panneau Méthodologie & Traçabilité */
+.method-step {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.method-step-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.method-file {
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  font-size: 11px;
+  background: var(--surface-3);
+  color: var(--primary);
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.formula-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+/* Constructeur 3D Paroi par paroi & Visualisation 3D */
+.box3d-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.35fr);
+  gap: 14px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .box3d-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
+.viewer3d-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.viewer3d-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.viewer3d-box {
+  width: 100%;
+  height: 250px;
+  cursor: grab;
+  position: relative;
+}
+
+.viewer3d-box:active { cursor: grabbing; }
+.viewer3d-box canvas { width: 100%; height: 100%; display: block; }
+
+.wall-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.wall-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  font-size: 12.5px;
+}
+

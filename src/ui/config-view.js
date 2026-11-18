@@ -1,0 +1,975 @@
+/**
+ * @fileoverview Gestion de l'interface Configuration (5 étapes, Mode Simple / Avancé,
+ * inspecteur latéral, importateurs BIM/météo et synchronisation bidirectionnelle).
+ */
+
+import {
+  ORIENTATIONS,
+  SHADING_PRESETS,
+  SIA380_CATEGORIES,
+  deriveSiaInternalDefaults
+} from '../standards/sia380-1.js';
+import {
+  BOX3D_CONTACTS,
+  BOX3D_WALL_PRESETS,
+  BOX3D_WINDOW_PRESETS,
+  getWallOrientations
+} from '../standards/box3d-presets.js';
+import { SWISS_STATIONS } from '../standards/swiss-stations.js';
+import {
+  applyBox3dToFloor,
+  computeAutoEnvelopeFromFloor,
+  ensureBox3dDefaults
+} from '../methodology/03-envelope-and-gains.js';
+import {
+  calcSimplePctNightFlowM3s,
+  computeBuildingStackSpan
+} from '../methodology/04-natural-ventilation.js';
+import { parseAnyWeatherText } from '../methodology/02-weather-model.js';
+import { parseHouseFile } from '../parsers/house-importers.js';
+import { HOUSE_LIBRARY, appState, escapeHtml } from '../state/project-store.js';
+import { BuildingViewer3D } from './viewer-3d.js';
+
+let viewerInspector = null;
+let viewerMain3D = null;
+
+export function refresh3DViewers() {
+  if (!viewerInspector && document.getElementById('inspector3dCanvas')) {
+    viewerInspector = new BuildingViewer3D('inspector3dCanvas');
+  }
+  if (viewerInspector) {
+    viewerInspector.update(appState.project, appState.activeFloorId);
+  }
+  if (appState.uiModes.floors === 'box3d' && document.getElementById('box3dMainCanvas')) {
+    if (!viewerMain3D || viewerMain3D.canvasId !== 'box3dMainCanvas') {
+      viewerMain3D = new BuildingViewer3D('box3dMainCanvas');
+    }
+    viewerMain3D.update(appState.project, appState.activeFloorId);
+  }
+}
+
+function detectShadingPresetKey(ops) {
+  if (!ops || ops.length === 0) return 'triple_lamelles';
+  const ref = ops[0];
+  for (const [key, sp] of Object.entries(SHADING_PRESETS)) {
+    if (
+      Math.abs(ref.gVit - sp.gVit) < 0.02 &&
+      Math.abs(ref.gStore - sp.gStore) < 0.02 &&
+      ref.gtotMode === sp.gtotMode
+    ) {
+      return key;
+    }
+  }
+  return 'custom';
+}
+
+export function renderFloorSelectors() {
+  const { project } = appState;
+  if (!project.floors.some(f => f.id === appState.activeFloorId)) {
+    appState.activeFloorId = project.floors[0].id;
+  }
+  const opts = project.floors
+    .map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`)
+    .join('');
+  ['activeOpeningFloor', 'siaTargetFloor'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = opts;
+    sel.value = appState.activeFloorId;
+  });
+}
+
+function getFacadeGrossForFloor(fl) {
+  return Math.max(4, Math.sqrt(Math.max(4, fl.area)) * fl.height);
+}
+
+export function updateSimpleNightLiveBadge(fl, totalWin) {
+  const { project } = appState;
+  const span = project.stackCoupling ? computeBuildingStackSpan(project) : fl.height;
+  const { m3s, openArea } = calcSimplePctNightFlowM3s(fl, totalWin, 26, 18, span);
+  const m3h = m3s * 3600;
+  const spec = m3h / Math.max(1, fl.area);
+  const badge = document.getElementById('simpNightLiveFlow');
+  if (!badge) return;
+  badge.textContent = `Ouvrant : ${openArea.toFixed(2)} m² → ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) à ΔT=8K)`;
+  badge.className = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
+}
+
+export function renderSimpleOpeningsForFloor(fl) {
+  const ops = appState.project.openings.filter(o => o.floorId === fl.id);
+  const facA = getFacadeGrossForFloor(fl);
+  const areaBy = orients =>
+    ops.filter(o => orients.includes(o.orient)).reduce((s, o) => s + o.width * o.height * o.qty, 0);
+
+  document.getElementById('simpPctS').value = Math.min(95, Math.round((areaBy(['S', 'SE', 'SO']) / facA) * 100));
+  document.getElementById('simpPctO').value = Math.min(95, Math.round((areaBy(['O']) / facA) * 100));
+  document.getElementById('simpPctE').value = Math.min(95, Math.round((areaBy(['E']) / facA) * 100));
+  document.getElementById('simpPctN').value = Math.min(95, Math.round((areaBy(['N', 'NE', 'NO']) / facA) * 100));
+  document.getElementById('simpPctR').value = Math.min(40, Math.round((areaBy(['R']) / Math.max(1, fl.area)) * 100));
+
+  const simpShadingEl = document.getElementById('simpShading');
+  const detectedPreset = detectShadingPresetKey(ops);
+  const customOpt = simpShadingEl.querySelector('option[value="custom"]');
+  if (detectedPreset === 'custom') {
+    if (!customOpt) {
+      const opt = document.createElement('option');
+      opt.value = 'custom';
+      opt.textContent = `Personnalisé (g_vit=${ops[0].gVit.toFixed(2)}, g_store=${ops[0].gStore.toFixed(2)})`;
+      simpShadingEl.appendChild(opt);
+    } else {
+      customOpt.textContent = `Personnalisé (g_vit=${ops[0].gVit.toFixed(2)}, g_store=${ops[0].gStore.toFixed(2)})`;
+    }
+    simpShadingEl.value = 'custom';
+  } else {
+    if (customOpt) customOpt.remove();
+    simpShadingEl.value = detectedPreset;
+  }
+
+  const firstOp = ops[0];
+  if (firstOp) {
+    document.getElementById('simpBlindMode').value = firstOp.blindMode;
+    document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
+  }
+
+  const totalWin = ops.reduce((s, o) => s + o.width * o.height * o.qty, 0);
+  document.getElementById('simpleGlazingSummary').textContent =
+    `Total vitré : ${totalWin.toFixed(1)} m² (${((totalWin / Math.max(1, fl.area)) * 100).toFixed(0)} % du sol)`;
+
+  document.getElementById('simpOpenBasis').value = fl.nightSimpleBasis || 'floor_pct';
+  document.getElementById('simpOpenPct').value = fl.nightSimplePct ?? 5.0;
+  document.getElementById('simpOpenEff').value = String(fl.nightSimpleEff ?? 1.0);
+  document.getElementById('simpOpenCross').checked = Boolean(fl.nightSimpleCross);
+
+  updateSimpleNightLiveBadge(fl, totalWin);
+}
+
+export function applySimpleGlazingFromInputs() {
+  const { project } = appState;
+  const fl = project.floors.find(f => f.id === appState.activeFloorId);
+  if (!fl) return;
+
+  const facA = getFacadeGrossForFloor(fl);
+  const pcts = {
+    S: Math.max(0, Math.min(95, parseFloat(document.getElementById('simpPctS').value) || 0)),
+    O: Math.max(0, Math.min(95, parseFloat(document.getElementById('simpPctO').value) || 0)),
+    E: Math.max(0, Math.min(95, parseFloat(document.getElementById('simpPctE').value) || 0)),
+    N: Math.max(0, Math.min(95, parseFloat(document.getElementById('simpPctN').value) || 0)),
+    R: Math.max(0, Math.min(40, parseFloat(document.getElementById('simpPctR').value) || 0))
+  };
+
+  const existingOps = project.openings.filter(o => o.floorId === fl.id);
+  const shadingChoice = document.getElementById('simpShading').value;
+  const sp =
+    shadingChoice === 'custom' && existingOps[0]
+      ? {
+          gVit: existingOps[0].gVit,
+          gStore: existingOps[0].gStore,
+          gtotMode: existingOps[0].gtotMode,
+          uWin: existingOps[0].uWin
+        }
+      : SHADING_PRESETS[shadingChoice] || SHADING_PRESETS.triple_lamelles;
+
+  const blindMode = document.getElementById('simpBlindMode').value;
+  const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
+
+  project.openings = project.openings.filter(o => o.floorId !== fl.id);
+  const labels = {
+    S: 'Vitrage Sud',
+    O: 'Vitrage Ouest',
+    E: 'Vitrage Est',
+    N: 'Vitrage Nord',
+    R: 'Fenêtre de toit'
+  };
+
+  Object.entries(pcts).forEach(([orient, pct]) => {
+    if (pct <= 0) return;
+    const area = orient === 'R' ? (pct / 100) * fl.area : (pct / 100) * facA;
+    const h = orient === 'R' ? 1.18 : Math.min(2.2, fl.height * 0.72);
+    const w = Math.round((area / h) * 100) / 100;
+    project.openings.push({
+      id: `op_${fl.id}_${orient}`,
+      floorId: fl.id,
+      name: labels[orient],
+      orient,
+      width: w,
+      height: Math.round(h * 100) / 100,
+      qty: 1,
+      uWin: sp.uWin,
+      gVit: sp.gVit,
+      gStore: sp.gStore,
+      gtotMode: sp.gtotMode,
+      overhangDepth: orient === 'R' ? 0 : overhang,
+      frameFactor: 0.78,
+      shadingFactor: 0.95,
+      blindMode,
+      blindThreshI: 150,
+      blindThreshT: 23.0,
+      windSafe: true,
+      operable: true,
+      openWidth: Math.min(w, 1.2),
+      openHeight: Math.min(h, 1.4),
+      openType: fl.nightSimpleCross ? 'cross_rect' : 'rect',
+      alphaDeg: 20,
+      cd: 0.6,
+      sillHeight: 0.9
+    });
+  });
+
+  renderSimpleOpeningsForFloor(fl);
+  updateInspector();
+  document.getElementById('railOpeningCount').textContent = project.openings.reduce(
+    (s, o) => s + o.qty,
+    0
+  );
+}
+
+export function renderOpenings() {
+  renderFloorSelectors();
+  const { project, uiModes } = appState;
+  const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+
+  if (uiModes.openings === 'simple') {
+    renderSimpleOpeningsForFloor(fl);
+    document.getElementById('railOpeningCount').textContent = project.openings.reduce(
+      (s, o) => s + o.qty,
+      0
+    );
+    return;
+  }
+
+  const list = project.openings.filter(o => o.floorId === fl.id);
+  const tbody = document.getElementById('openingsTableBody');
+  tbody.innerHTML = '';
+  const orients = Object.keys(ORIENTATIONS);
+
+  list.forEach(op => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><select data-op="${escapeHtml(op.id)}" data-k="floorId" style="min-width:95px;">${project.floors
+        .map(f => `<option value="${escapeHtml(f.id)}" ${f.id === op.floorId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`)
+        .join('')}</select></td>
+      <td><input type="text" value="${escapeHtml(op.name)}" data-op="${escapeHtml(op.id)}" data-k="name" style="min-width:105px;" /></td>
+      <td><select data-op="${escapeHtml(op.id)}" data-k="orient" style="width:60px;">${orients
+        .map(o => `<option value="${o}" ${o === op.orient ? 'selected' : ''}>${o}</option>`)
+        .join('')}</select></td>
+      <td><input type="number" step="0.1" min="0.2" value="${op.width}" data-op="${escapeHtml(op.id)}" data-k="width" style="width:54px;" /></td>
+      <td><input type="number" step="0.1" min="0.2" value="${op.height}" data-op="${escapeHtml(op.id)}" data-k="height" style="width:54px;" /></td>
+      <td><input type="number" step="1" min="1" value="${op.qty}" data-op="${escapeHtml(op.id)}" data-k="qty" style="width:46px;" /></td>
+      <td><input type="number" step="0.05" min="0.4" value="${op.uWin}" data-op="${escapeHtml(op.id)}" data-k="uWin" style="width:52px;" /></td>
+      <td><input type="number" step="0.02" min="0.1" max="0.9" value="${op.gVit}" data-op="${escapeHtml(op.id)}" data-k="gVit" style="width:52px;" /></td>
+      <td><input type="number" step="0.01" min="0.02" max="1" value="${op.gStore}" data-op="${escapeHtml(op.id)}" data-k="gStore" style="width:52px;" /></td>
+      <td><select data-op="${escapeHtml(op.id)}" data-k="gtotMode" style="width:70px;">
+        <option value="product" ${op.gtotMode === 'product' ? 'selected' : ''}>g×g</option>
+        <option value="direct" ${op.gtotMode === 'direct' ? 'selected' : ''}>g_tot</option>
+      </select></td>
+      <td><input type="number" step="0.1" min="0" value="${op.overhangDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="overhangDepth" style="width:56px;" /></td>
+      <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:82px;">
+        <option value="auto" ${op.blindMode === 'auto' ? 'selected' : ''}>Auto</option>
+        <option value="manual_day" ${op.blindMode === 'manual_day' ? 'selected' : ''}>Manuel</option>
+        <option value="always_down" ${op.blindMode === 'always_down' ? 'selected' : ''}>Fermé</option>
+        <option value="always_up" ${op.blindMode === 'always_up' ? 'selected' : ''}>Ouvert</option>
+      </select></td>
+      <td style="text-align:center;"><input type="checkbox" ${op.operable ? 'checked' : ''} data-op="${escapeHtml(op.id)}" data-k="operable" /></td>
+      <td><button class="btn btn-danger" data-del-op="${escapeHtml(op.id)}">✕</button></td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  const nightBox = document.getElementById('openingNightDetails');
+  const operables = list.filter(o => o.operable);
+  nightBox.innerHTML = operables.length
+    ? `
+    <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">
+      Paramètres aérauliques détaillés (actifs si « Méthode avancée » est sélectionnée à l'étape 4) :
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Ouverture</th><th>Type</th><th>Larg. ouvrante [m]</th><th>Haut. ouvrante [m]</th><th>Angle α [°]</th><th>Allège [m]</th></tr></thead>
+      <tbody>${operables
+        .map(
+          op => `<tr>
+        <td>${escapeHtml(op.name)} (×${op.qty})</td>
+        <td><select data-op="${escapeHtml(op.id)}" data-k="openType">
+          <option value="rect" ${op.openType === 'rect' ? 'selected' : ''}>Battante rect.</option>
+          <option value="imposte" ${op.openType === 'imposte' ? 'selected' : ''}>Imposte / soufflet</option>
+          <option value="cross_rect" ${op.openType === 'cross_rect' ? 'selected' : ''}>Traversante rect.</option>
+          <option value="cross_imposte" ${op.openType === 'cross_imposte' ? 'selected' : ''}>Traversante imposte</option>
+        </select></td>
+        <td><input type="number" step="0.1" min="0.1" value="${op.openWidth}" data-op="${escapeHtml(op.id)}" data-k="openWidth" style="width:70px;" /></td>
+        <td><input type="number" step="0.1" min="0.1" value="${op.openHeight}" data-op="${escapeHtml(op.id)}" data-k="openHeight" style="width:70px;" /></td>
+        <td><input type="number" step="1" min="1" max="180" value="${op.alphaDeg}" data-op="${escapeHtml(op.id)}" data-k="alphaDeg" style="width:68px;" /></td>
+        <td><input type="number" step="0.1" min="0" value="${op.sillHeight}" data-op="${escapeHtml(op.id)}" data-k="sillHeight" style="width:68px;" /></td>
+      </tr>`
+        )
+        .join('')}</tbody>
+    </table></div>`
+    : '<span class="pill warn">Aucune ouverture cochée « Nuit ».</span>';
+
+  document.querySelectorAll('[data-op]').forEach(el => {
+    el.addEventListener('change', e => {
+      const op = project.openings.find(o => o.id === e.target.dataset.op);
+      const k = e.target.dataset.k;
+      if (!op) return;
+      if (k === 'operable') {
+        op[k] = e.target.checked;
+        renderOpenings();
+      } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'openType'].includes(k)) {
+        op[k] = e.target.value;
+        if (['name', 'openType', 'floorId'].includes(k)) renderOpenings();
+      } else {
+        op[k] = Number(e.target.value);
+        if (k === 'qty') renderOpenings();
+      }
+      updateInspector();
+    });
+  });
+
+  tbody.querySelectorAll('[data-del-op]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      project.openings = project.openings.filter(o => o.id !== btn.dataset.delOp);
+      renderOpenings();
+      updateInspector();
+    });
+  });
+
+  document.getElementById('railOpeningCount').textContent = project.openings.reduce(
+    (s, o) => s + o.qty,
+    0
+  );
+}
+
+export function renderFloors() {
+  const { project, uiModes } = appState;
+  const isAdv = uiModes.floors === 'advanced';
+  document.getElementById('floorsSubtitle').textContent = isAdv
+    ? 'Mode Avancé : édition manuelle de toutes les surfaces opaques, facteurs b, valeurs U et ponts thermiques.'
+    : 'Mode Simple : choisissez uniquement la surface, la hauteur, la position de l’étage, le standard SIA et l’inertie.';
+
+  const wrap = document.getElementById('floorsList');
+  wrap.innerHTML = '';
+
+  project.floors.forEach((fl, idx) => {
+    const opsCount = project.openings.filter(o => o.floorId === fl.id).length;
+    const div = document.createElement('div');
+    div.className = 'well';
+
+    if (!isAdv) {
+      div.innerHTML = `
+        <div class="well-head">
+          <div style="display:flex;align-items:center;gap:8px;flex:1;">
+            <strong style="color:var(--primary);">#${idx + 1}</strong>
+            <input type="text" value="${escapeHtml(fl.name)}" data-fl="${escapeHtml(fl.id)}" data-k="name" style="max-width:260px;font-weight:600;" />
+            <span class="pill neutral">${opsCount} ouv.</span>
+          </div>
+          ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(fl.id)}">Supprimer</button>` : ''}
+        </div>
+        <div class="g5">
+          <div class="field"><label>Surface [m²]</label><input type="number" step="1" min="5" value="${fl.area}" data-fl="${escapeHtml(fl.id)}" data-k="area" /></div>
+          <div class="field"><label>Hauteur [m]</label><input type="number" step="0.05" min="1.8" value="${fl.height}" data-fl="${escapeHtml(fl.id)}" data-k="height" /></div>
+          <div class="field"><label>Position étage</label>
+            <select data-fl="${escapeHtml(fl.id)}" data-k="simplePos">
+              <option value="ground" ${fl.simplePos === 'ground' ? 'selected' : ''}>RDC (sur sol)</option>
+              <option value="mid" ${fl.simplePos === 'mid' ? 'selected' : ''}>Étage intermédiaire</option>
+              <option value="top" ${fl.simplePos === 'top' ? 'selected' : ''}>Dernier étage (sous toit)</option>
+              <option value="attic" ${fl.simplePos === 'attic' ? 'selected' : ''}>Combles</option>
+              <option value="standalone" ${fl.simplePos === 'standalone' ? 'selected' : ''}>Local / Pavillon isolé</option>
+            </select>
+          </div>
+          <div class="field"><label>Isolation SIA 380/1</label>
+            <select data-fl="${escapeHtml(fl.id)}" data-k="envelopeStd">
+              <option value="sia_new" ${fl.envelopeStd === 'sia_new' ? 'selected' : ''}>SIA Neuf (U=0.20)</option>
+              <option value="sia_reno" ${fl.envelopeStd === 'sia_reno' ? 'selected' : ''}>Rénovation (U=0.25)</option>
+              <option value="minergie" ${fl.envelopeStd === 'minergie' ? 'selected' : ''}>Minergie (U=0.15)</option>
+              <option value="old" ${fl.envelopeStd === 'old' ? 'selected' : ''}>Ancien (U=1.10)</option>
+            </select>
+          </div>
+          <div class="field"><label>Inertie thermique</label>
+            <select data-fl="${escapeHtml(fl.id)}" data-k="inertiaClass">
+              <option value="20" ${fl.inertiaClass === '20' ? 'selected' : ''}>Faible / légère</option>
+              <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (SIA 45)</option>
+              <option value="75" ${fl.inertiaClass === '75' ? 'selected' : ''}>Forte / massive</option>
+              <option value="100" ${fl.inertiaClass === '100' ? 'selected' : ''}>Très forte</option>
+            </select>
+          </div>
+        </div>
+      `;
+    } else {
+      div.innerHTML = `
+        <div class="well-head">
+          <div style="display:flex;align-items:center;gap:8px;flex:1;">
+            <strong style="color:var(--primary);">#${idx + 1}</strong>
+            <input type="text" value="${escapeHtml(fl.name)}" data-fl="${escapeHtml(fl.id)}" data-k="name" style="max-width:260px;font-weight:600;" />
+            <span class="pill neutral">${opsCount} ouv.</span>
+          </div>
+          ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(fl.id)}">Supprimer</button>` : ''}
+        </div>
+        <div class="g4">
+          <div class="field"><label>Surface plancher [m²]</label><input type="number" step="1" min="5" value="${fl.area}" data-fl="${escapeHtml(fl.id)}" data-k="area" /></div>
+          <div class="field"><label>Hauteur [m]</label><input type="number" step="0.05" min="1.8" value="${fl.height}" data-fl="${escapeHtml(fl.id)}" data-k="height" /></div>
+          <div class="field"><label>Altitude z [m]</label><input type="number" step="0.1" value="${fl.elevationZ}" data-fl="${escapeHtml(fl.id)}" data-k="elevationZ" /></div>
+          <div class="field"><label>Profondeur pièce [m]</label><input type="number" step="0.1" min="0.5" value="${fl.depthBehindWin}" data-fl="${escapeHtml(fl.id)}" data-k="depthBehindWin" /></div>
+        </div>
+        <div class="g4" style="margin-top:8px;">
+          <div class="field"><label>Murs ext. opaques [m²]</label><input type="number" step="1" min="0" value="${fl.wallExtArea}" data-fl="${escapeHtml(fl.id)}" data-k="wallExtArea" /></div>
+          <div class="field"><label>U murs ext. [W/(m²·K)]</label><input type="number" step="0.01" min="0.05" value="${fl.uWallExt}" data-fl="${escapeHtml(fl.id)}" data-k="uWallExt" /></div>
+          <div class="field"><label>Toiture ext. [m²]</label><input type="number" step="1" min="0" value="${fl.roofExtArea}" data-fl="${escapeHtml(fl.id)}" data-k="roofExtArea" /></div>
+          <div class="field"><label>U toiture [W/(m²·K)]</label><input type="number" step="0.01" min="0.05" value="${fl.uRoofExt}" data-fl="${escapeHtml(fl.id)}" data-k="uRoofExt" /></div>
+        </div>
+        <div class="g4" style="margin-top:8px;">
+          <div class="field"><label>Plancher sol/NC [m²]</label><input type="number" step="1" min="0" value="${fl.floorGroundArea}" data-fl="${escapeHtml(fl.id)}" data-k="floorGroundArea" /></div>
+          <div class="field"><label>Facteur b plancher</label>
+            <select data-fl="${escapeHtml(fl.id)}" data-k="bFloorGround">
+              <option value="0" ${fl.bFloorGround === 0 ? 'selected' : ''}>0.0 (sur chauffé)</option>
+              <option value="0.3" ${fl.bFloorGround === 0.3 ? 'selected' : ''}>0.3 (sur sol)</option>
+              <option value="0.5" ${fl.bFloorGround === 0.5 ? 'selected' : ''}>0.5 (sur non chauffé)</option>
+              <option value="1" ${fl.bFloorGround === 1 ? 'selected' : ''}>1.0 (sur extérieur)</option>
+            </select>
+          </div>
+          <div class="field"><label>Classe inertie SIA 180</label>
+            <select data-fl="${escapeHtml(fl.id)}" data-k="inertiaClass">
+              <option value="20" ${fl.inertiaClass === '20' ? 'selected' : ''}>Faible (20)</option>
+              <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (45)</option>
+              <option value="75" ${fl.inertiaClass === '75' ? 'selected' : ''}>Forte (75)</option>
+              <option value="100" ${fl.inertiaClass === '100' ? 'selected' : ''}>Très forte (100)</option>
+              <option value="custom" ${fl.inertiaClass === 'custom' ? 'selected' : ''}>Personnalisée</option>
+            </select>
+          </div>
+          <div class="field"><label>Capacité C [Wh/(m²·K)]</label><input type="number" step="1" min="5" value="${fl.cSpec}" data-fl="${escapeHtml(fl.id)}" data-k="cSpec" /></div>
+        </div>
+      `;
+    }
+    wrap.appendChild(div);
+  });
+
+  wrap.querySelectorAll('input, select').forEach(el => {
+    el.addEventListener('change', e => {
+      const fl = project.floors.find(f => f.id === e.target.dataset.fl);
+      const k = e.target.dataset.k;
+      if (!fl) return;
+      fl[k] = ['name', 'inertiaClass', 'simplePos', 'envelopeStd'].includes(k)
+        ? e.target.value
+        : Number(e.target.value);
+
+      if (k === 'inertiaClass' && e.target.value !== 'custom') {
+        fl.cSpec = Number(e.target.value);
+        renderFloors();
+      }
+      if (k === 'cSpec') {
+        fl.inertiaClass = 'custom';
+        renderFloors();
+      }
+      if (!isAdv && ['area', 'height', 'simplePos', 'envelopeStd'].includes(k)) {
+        computeAutoEnvelopeFromFloor(fl);
+      }
+      if (['area', 'height', 'name'].includes(k)) {
+        renderFloorSelectors();
+        renderOpenings();
+      }
+      updateInspector();
+    });
+  });
+
+  wrap.querySelectorAll('[data-del-floor]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = btn.dataset.delFloor;
+      project.floors = project.floors.filter(f => f.id !== id);
+      project.openings = project.openings.filter(o => o.floorId !== id);
+      if (appState.activeFloorId === id) appState.activeFloorId = project.floors[0].id;
+      syncAllUI();
+    });
+  });
+
+  document.getElementById('railFloorCount').textContent = project.floors.length;
+}
+
+export function loadSiaFloorInputs() {
+  const { project } = appState;
+  const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  if (!fl) return;
+
+  document.getElementById('siaCategorySelect').value = fl.siaCategory || 'custom';
+  document.getElementById('siaGainFactor').value = fl.gainFactorPct ?? 100;
+  document.getElementById('siaGainFactorLbl').textContent = `${fl.gainFactorPct ?? 100} %`;
+
+  document.getElementById('inOccCount').value = fl.occCount;
+  document.getElementById('inOccWatt').value = fl.occWatt;
+  document.getElementById('inOccPresence').value = Math.round((fl.occPresenceFactor ?? 1) * 100);
+  document.getElementById('inLightWm2').value = fl.lightWm2;
+  document.getElementById('inEquipWatt').value = fl.equipWatt;
+  document.getElementById('inOccStart').value = fl.occStart;
+  document.getElementById('inOccEnd').value = fl.occEnd;
+  document.getElementById('inOccDays').value = fl.occDays;
+  document.getElementById('inStandbyPct').value = fl.standbyPct;
+  document.getElementById('inQHyg').value = fl.qHygSpec;
+  document.getElementById('inAchInfil').value = fl.achInfil;
+  document.getElementById('inEtaWrg').value = fl.etaWRG;
+  document.getElementById('inNightMode').value = fl.nightVentMode;
+  document.getElementById('inNightFixed').value = fl.nightVentFixedVal;
+  document.getElementById('inNightStart').value = fl.nightStart;
+  document.getElementById('inNightEnd').value = fl.nightEnd;
+  document.getElementById('inNightTargetTi').value = fl.nightTargetTi;
+  document.getElementById('inNightMinDT').value = fl.nightMinDT;
+
+  updateSiaCatChips(fl);
+}
+
+function updateSiaCatChips(fl) {
+  const c = SIA380_CATEGORIES[fl.siaCategory];
+  document.getElementById('siaCatChips').innerHTML = c
+    ? `<span class="pill neutral">θ_i = ${c.ti} °C</span>
+       <span class="pill neutral">A_P = ${c.Ap} m²/P</span>
+       <span class="pill neutral">Q_P = ${c.Qp} W/P (t_p = ${c.tp} h/j)</span>
+       <span class="pill neutral">E_F,el = ${c.Efel} kWh/m² (f_el = ${c.fel})</span>
+       <span class="pill neutral">q_th = ${c.qth} m³/(h·m²)</span>`
+    : '<span class="pill neutral">Valeurs manuelles actives pour cet étage.</span>';
+}
+
+export function applySiaCatToCurrentFloor(catKey) {
+  const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+  if (!fl) return;
+  fl.siaCategory = catKey;
+  const sia = deriveSiaInternalDefaults(catKey, fl.area);
+  if (sia) {
+    fl.spaceType = sia.spaceType;
+    fl.occCount = sia.occCount;
+    fl.occWatt = sia.occWatt;
+    fl.occPresenceFactor = sia.presenceFactor;
+    fl.lightWm2 = sia.lightWm2;
+    fl.equipWatt = sia.equipWatt;
+    fl.occStart = sia.occStart;
+    fl.occEnd = sia.occEnd;
+    fl.occDays = sia.occDays;
+    fl.standbyPct = sia.standbyPct;
+    fl.qHygSpec = sia.qHygSpec;
+    fl.gainFactorPct = 100;
+  }
+  loadSiaFloorInputs();
+  updateInspector();
+}
+
+export function updateInspector() {
+  const { project, customWeather } = appState;
+  const totalArea = project.floors.reduce((s, f) => s + f.area, 0);
+  const totalVol = project.floors.reduce((s, f) => s + f.area * f.height, 0);
+  const totalWin = project.openings.reduce((s, o) => s + o.width * o.height * o.qty, 0);
+  const avgC =
+    totalArea > 0 ? project.floors.reduce((s, f) => s + f.cSpec * f.area, 0) / totalArea : 0;
+
+  document.getElementById('inspectorSummary').innerHTML = `
+    <div class="inspector-stat"><span>Projet</span><strong>${escapeHtml(project.name.slice(0, 18))}</strong></div>
+    <div class="inspector-stat"><span>Étages</span><strong>${project.floors.length}</strong></div>
+    <div class="inspector-stat"><span>Surface totale</span><strong>${totalArea.toFixed(1)} m²</strong></div>
+    <div class="inspector-stat"><span>Volume total</span><strong>${totalVol.toFixed(0)} m³</strong></div>
+    <div class="inspector-stat"><span>Surface vitrée</span><strong>${totalWin.toFixed(1)} m²</strong></div>
+    <div class="inspector-stat"><span>Inertie moyenne</span><strong>${avgC.toFixed(0)} Wh/m²K</strong></div>
+    <div class="inspector-stat"><span>Climat</span><strong>${customWeather ? 'Importé' : escapeHtml(project.climate.station + ' ' + project.climate.scenario)}</strong></div>
+  `;
+
+  const alerts = [];
+  if (totalWin === 0) alerts.push('<span class="pill warn">Aucune ouverture vitrée définie</span>');
+  if (project.floors.some(f => f.cSpec < 30)) {
+    alerts.push('<span class="pill warn">Inertie faible sur un étage (&lt; 30 Wh/m²K)</span>');
+  }
+  document.getElementById('inspectorAlerts').innerHTML = alerts.join('');
+}
+
+export function syncPvgisUI() {
+  const { project, customWeather } = appState;
+  document.getElementById('climateStation').value = project.climate.station;
+  document.getElementById('climateScenario').value = project.climate.scenario;
+  document.getElementById('pvLat').value = project.climate.lat;
+  document.getElementById('pvLon').value = project.climate.lon;
+  document.getElementById('pvTzMode').value = project.climate.tzMode || 'cet_cest';
+
+  const badge = document.getElementById('weatherStatusBadge');
+  if (customWeather) {
+    badge.textContent = `Climat actif : ${customWeather.sourceLabel}`;
+    badge.className = 'pill ok';
+  } else {
+    const st = SWISS_STATIONS[project.climate.station] || SWISS_STATIONS.SIO;
+    badge.textContent = `Climat actif : ${st.name} (${project.climate.scenario})`;
+    badge.className = 'pill neutral';
+  }
+
+  const pvType = document.getElementById('pvType').value;
+  const base = 'https://re.jrc.ec.europa.eu/api/v5_3/';
+  if (pvType === 'tmy') {
+    document.getElementById('linkPvgisJson').href = `${base}tmy?lat=${project.climate.lat}&lon=${project.climate.lon}&outputformat=json`;
+    document.getElementById('linkPvgisCsv').href = `${base}tmy?lat=${project.climate.lat}&lon=${project.climate.lon}&outputformat=csv`;
+    document.getElementById('linkPvgisEpw').href = `${base}tmy?lat=${project.climate.lat}&lon=${project.climate.lon}&outputformat=epw`;
+    document.getElementById('linkPvgisEpw').classList.remove('hidden');
+  } else {
+    document.getElementById('linkPvgisJson').href = `${base}seriescalc?lat=${project.climate.lat}&lon=${project.climate.lon}&startyear=${pvType}&endyear=${pvType}&angle=0&components=1&outputformat=json`;
+    document.getElementById('linkPvgisCsv').href = `${base}seriescalc?lat=${project.climate.lat}&lon=${project.climate.lon}&startyear=${pvType}&endyear=${pvType}&angle=0&components=1&outputformat=csv`;
+    document.getElementById('linkPvgisEpw').classList.add('hidden');
+  }
+}
+
+export function applyPartModeUI(part, onResultsRefresh) {
+  const mode = appState.uiModes[part];
+  document.querySelectorAll(`[data-part-toggle="${part}"] .seg-btn`).forEach(b => {
+    b.classList.toggle('active-blue', b.dataset.mode === mode);
+  });
+
+  if (part === 'house') {
+    document.getElementById('houseAdvBox').classList.toggle('hidden', mode === 'simple');
+  } else if (part === 'floors') {
+    renderFloors();
+  } else if (part === 'openings') {
+    const isSimple = mode === 'simple';
+    document.getElementById('openingsSimpleBox').classList.toggle('hidden', !isSimple);
+    document.getElementById('openingsAdvBox').classList.toggle('hidden', isSimple);
+    renderOpenings();
+  } else if (part === 'sia') {
+    document.getElementById('siaAdvBox').classList.toggle('hidden', mode === 'simple');
+  } else if (part === 'climate') {
+    document.getElementById('climateAdvBox').classList.toggle('hidden', mode === 'simple');
+  } else if (part === 'results') {
+    const isAdv = mode === 'advanced';
+    document.querySelectorAll('.res-adv-only').forEach(el => el.classList.toggle('hidden', !isAdv));
+    if (!isAdv) {
+      const activeSub = document.querySelector('.sub-tab.active');
+      if (activeSub && activeSub.classList.contains('res-adv-only')) {
+        const m3Btn = document.querySelector('.sub-tab[data-sub="m3"]');
+        if (m3Btn) m3Btn.click();
+      }
+    }
+    if (!document.getElementById('view-results').classList.contains('hidden') && onResultsRefresh) {
+      onResultsRefresh();
+    }
+  }
+}
+
+export function setGlobalMode(mode, onResultsRefresh) {
+  Object.keys(appState.uiModes).forEach(k => {
+    appState.uiModes[k] = mode;
+  });
+  document.getElementById('btnGlobalSimple').classList.toggle('active-blue', mode === 'simple');
+  document.getElementById('btnGlobalAdv').classList.toggle('active-blue', mode === 'advanced');
+  Object.keys(appState.uiModes).forEach(part => applyPartModeUI(part, onResultsRefresh));
+}
+
+export function syncAllUI(onResultsRefresh) {
+  const { project } = appState;
+  document.getElementById('projName').value = project.name;
+  document.getElementById('projectType').value = project.projectType;
+  document.getElementById('siaCurveMode').value = project.siaCurveMode;
+  document.getElementById('stackCoupling').checked = project.stackCoupling;
+
+  renderFloorSelectors();
+  renderFloors();
+  renderOpenings();
+  loadSiaFloorInputs();
+  syncPvgisUI();
+  updateInspector();
+  Object.keys(appState.uiModes).forEach(part => applyPartModeUI(part, onResultsRefresh));
+}
+
+export function renderLibrary(onLoadProject) {
+  const grid = document.getElementById('libraryGrid');
+  grid.innerHTML = '';
+  HOUSE_LIBRARY.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'house-card';
+    btn.innerHTML = `<h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.desc)}</p>`;
+    btn.addEventListener('click', () => {
+      appState.project = item.build();
+      appState.activeFloorId = appState.project.floors[0].id;
+      appState.customWeather = null;
+      syncAllUI();
+      onLoadProject();
+    });
+    grid.appendChild(btn);
+  });
+}
+
+export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
+  document.getElementById('btnGlobalSimple').addEventListener('click', () => setGlobalMode('simple', onResultsRefresh));
+  document.getElementById('btnGlobalAdv').addEventListener('click', () => setGlobalMode('advanced', onResultsRefresh));
+
+  document.querySelectorAll('[data-part-toggle]').forEach(grp => {
+    const part = grp.dataset.partToggle;
+    grp.querySelectorAll('.seg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        appState.uiModes[part] = btn.dataset.mode;
+        applyPartModeUI(part, onResultsRefresh);
+      });
+    });
+  });
+
+  document.querySelectorAll('.rail-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.rail-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.querySelectorAll('.step-section').forEach(s => s.classList.add('hidden'));
+      document.getElementById(btn.dataset.step).classList.remove('hidden');
+      if (btn.dataset.step === 'step-openings') renderOpenings();
+    });
+  });
+
+  document.getElementById('projName').addEventListener('input', e => {
+    appState.project.name = e.target.value;
+    updateInspector();
+  });
+  document.getElementById('projectType').addEventListener('change', e => {
+    appState.project.projectType = e.target.value;
+  });
+  document.getElementById('siaCurveMode').addEventListener('change', e => {
+    appState.project.siaCurveMode = e.target.value;
+  });
+  document.getElementById('stackCoupling').addEventListener('change', e => {
+    appState.project.stackCoupling = e.target.checked;
+    renderOpenings();
+  });
+
+  document.getElementById('btnAddFloor').addEventListener('click', () => {
+    const { project } = appState;
+    const topFl = project.floors[project.floors.length - 1];
+    const clone = JSON.parse(JSON.stringify(topFl));
+    clone.id = 'fl_' + Date.now();
+    clone.name = `Étage ${project.floors.length + 1}`;
+    clone.elevationZ = Math.round((topFl.elevationZ + topFl.height + 0.25) * 100) / 100;
+    clone.simplePos = 'top';
+    computeAutoEnvelopeFromFloor(clone);
+    project.floors.push(clone);
+    appState.activeFloorId = clone.id;
+    syncAllUI();
+  });
+
+  ['activeOpeningFloor', 'siaTargetFloor'].forEach(id => {
+    document.getElementById(id).addEventListener('change', e => {
+      appState.activeFloorId = e.target.value;
+      renderFloorSelectors();
+      renderOpenings();
+      loadSiaFloorInputs();
+    });
+  });
+
+  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindMode', 'simpOverhang'].forEach(id => {
+    document.getElementById(id).addEventListener('change', applySimpleGlazingFromInputs);
+  });
+
+  ['simpOpenBasis', 'simpOpenPct', 'simpOpenEff', 'simpOpenCross'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+      if (!fl) return;
+      fl.nightSimpleBasis = document.getElementById('simpOpenBasis').value;
+      fl.nightSimplePct = Math.max(0, Math.min(100, parseFloat(document.getElementById('simpOpenPct').value) || 0));
+      fl.nightSimpleEff = parseFloat(document.getElementById('simpOpenEff').value) || 1.0;
+      fl.nightSimpleCross = document.getElementById('simpOpenCross').checked;
+      fl.nightVentMode = fl.nightSimpleBasis === 'none' ? 'none' : 'simple_pct';
+      document.getElementById('inNightMode').value = fl.nightVentMode;
+      const totalWin = appState.project.openings
+        .filter(o => o.floorId === fl.id)
+        .reduce((s, o) => s + o.width * o.height * o.qty, 0);
+      updateSimpleNightLiveBadge(fl, totalWin);
+    });
+  });
+
+  document.getElementById('btnAddOpening').addEventListener('click', () => {
+    appState.project.openings.push({
+      id: 'op_' + Date.now(),
+      floorId: appState.activeFloorId,
+      name: `Fenêtre ${appState.project.openings.length + 1}`,
+      orient: 'S',
+      width: 1.4,
+      height: 1.4,
+      qty: 1,
+      uWin: 1.0,
+      gVit: 0.55,
+      gStore: 0.12,
+      gtotMode: 'product',
+      overhangDepth: 0,
+      frameFactor: 0.78,
+      shadingFactor: 0.95,
+      blindMode: 'auto',
+      blindThreshI: 150,
+      blindThreshT: 23.0,
+      windSafe: true,
+      operable: true,
+      openWidth: 1.0,
+      openHeight: 1.4,
+      openType: 'imposte',
+      alphaDeg: 20,
+      cd: 0.6,
+      sillHeight: 0.9
+    });
+    renderOpenings();
+    updateInspector();
+  });
+
+  document.getElementById('btnApplyQuickShading').addEventListener('click', () => {
+    const sp = SHADING_PRESETS[document.getElementById('quickShadingPreset').value];
+    if (!sp) return;
+    appState.project.openings.forEach(op => {
+      if (op.floorId === appState.activeFloorId) {
+        op.gVit = sp.gVit;
+        op.gStore = sp.gStore;
+        op.gtotMode = sp.gtotMode;
+      }
+    });
+    renderOpenings();
+  });
+
+  document.getElementById('siaCategorySelect').addEventListener('change', e =>
+    applySiaCatToCurrentFloor(e.target.value)
+  );
+  document.getElementById('siaGainFactor').addEventListener('input', e => {
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    if (!fl) return;
+    fl.gainFactorPct = Number(e.target.value);
+    document.getElementById('siaGainFactorLbl').textContent = `${fl.gainFactorPct} %`;
+  });
+
+  const bindSia = (id, prop, customFlag = false, scaleDiv = 1) => {
+    document.getElementById(id).addEventListener('change', e => {
+      const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+      if (!fl) return;
+      fl[prop] = prop === 'nightVentMode' ? e.target.value : Number(e.target.value) / scaleDiv;
+      if (customFlag) {
+        fl.siaCategory = 'custom';
+        document.getElementById('siaCategorySelect').value = 'custom';
+        updateSiaCatChips(fl);
+      }
+      updateInspector();
+    });
+  };
+  bindSia('inOccCount', 'occCount', true);
+  bindSia('inOccWatt', 'occWatt', true);
+  bindSia('inOccPresence', 'occPresenceFactor', true, 100);
+  bindSia('inLightWm2', 'lightWm2', true);
+  bindSia('inEquipWatt', 'equipWatt', true);
+  bindSia('inOccStart', 'occStart', true);
+  bindSia('inOccEnd', 'occEnd', true);
+  bindSia('inOccDays', 'occDays', true);
+  bindSia('inStandbyPct', 'standbyPct', true);
+  bindSia('inQHyg', 'qHygSpec', true);
+  bindSia('inAchInfil', 'achInfil');
+  bindSia('inEtaWrg', 'etaWRG');
+  bindSia('inNightMode', 'nightVentMode');
+  bindSia('inNightFixed', 'nightVentFixedVal');
+  bindSia('inNightStart', 'nightStart');
+  bindSia('inNightEnd', 'nightEnd');
+  bindSia('inNightTargetTi', 'nightTargetTi');
+  bindSia('inNightMinDT', 'nightMinDT');
+
+  document.getElementById('climateStation').addEventListener('change', e => {
+    appState.project.climate.station = e.target.value;
+    const st = SWISS_STATIONS[e.target.value];
+    if (st) {
+      appState.project.climate.lat = st.lat;
+      appState.project.climate.lon = st.lon;
+    }
+    appState.customWeather = null;
+    syncPvgisUI();
+    updateInspector();
+  });
+
+  document.getElementById('climateScenario').addEventListener('change', e => {
+    appState.project.climate.scenario = e.target.value;
+    appState.customWeather = null;
+    syncPvgisUI();
+    updateInspector();
+  });
+
+  ['pvLat', 'pvLon', 'pvType', 'pvTzMode'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      appState.project.climate.lat = parseFloat(document.getElementById('pvLat').value) || 46.22;
+      appState.project.climate.lon = parseFloat(document.getElementById('pvLon').value) || 7.33;
+      appState.project.climate.tzMode = document.getElementById('pvTzMode').value;
+      syncPvgisUI();
+    });
+  });
+
+  const loadWeatherText = (text, name) => {
+    const badge = document.getElementById('weatherStatusBadge');
+    try {
+      appState.customWeather = parseAnyWeatherText(text, name, appState.project.climate);
+      badge.textContent = `Climat actif : ${appState.customWeather.sourceLabel}`;
+      badge.className = 'pill ok';
+      updateInspector();
+    } catch (err) {
+      badge.textContent = `Erreur : ${err.message}`;
+      badge.className = 'pill ko';
+    }
+  };
+
+  document.getElementById('weatherFileInput').addEventListener('change', e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => loadWeatherText(ev.target.result, f.name);
+    r.readAsText(f);
+  });
+
+  const wdz = document.getElementById('weatherDropzone');
+  wdz.addEventListener('dragover', e => {
+    e.preventDefault();
+    wdz.classList.add('dragover');
+  });
+  wdz.addEventListener('dragleave', () => wdz.classList.remove('dragover'));
+  wdz.addEventListener('drop', e => {
+    e.preventDefault();
+    wdz.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => loadWeatherText(ev.target.result, f.name);
+    r.readAsText(f);
+  });
+
+  document.getElementById('btnTogglePaste').addEventListener('click', () =>
+    document.getElementById('pasteBox').classList.toggle('hidden')
+  );
+  document.getElementById('btnLoadPasted').addEventListener('click', () => {
+    const val = document.getElementById('pasteArea').value.trim();
+    if (val) loadWeatherText(val, 'Données collées');
+  });
+  document.getElementById('btnResetWeather').addEventListener('click', () => {
+    appState.customWeather = null;
+    document.getElementById('weatherFileInput').value = '';
+    syncPvgisUI();
+    updateInspector();
+  });
+
+  const handleHouseFile = file => {
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const p = parseHouseFile(ev.target.result, file.name, appState.project.climate);
+        appState.project = p.proj;
+        appState.activeFloorId = appState.project.floors[0].id;
+        document.getElementById('houseImportMsg').textContent = p.msg;
+        syncAllUI();
+        onRunSimulation();
+      } catch (err) {
+        document.getElementById('houseImportMsg').textContent = `Erreur : ${err.message}`;
+      }
+    };
+    r.readAsText(file);
+  };
+
+  document.getElementById('fileImportHouse').addEventListener('change', e => {
+    if (e.target.files[0]) handleHouseFile(e.target.files[0]);
+  });
+  const hdz = document.getElementById('dropzoneHouse');
+  hdz.addEventListener('dragover', e => {
+    e.preventDefault();
+    hdz.classList.add('dragover');
+  });
+  hdz.addEventListener('dragleave', () => hdz.classList.remove('dragover'));
+  hdz.addEventListener('drop', e => {
+    e.preventDefault();
+    hdz.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) handleHouseFile(e.dataTransfer.files[0]);
+  });
+
+  document.getElementById('btnExportHouse').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(appState.project, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${appState.project.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'projet'}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+}

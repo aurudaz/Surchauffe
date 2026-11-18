@@ -1,0 +1,23 @@
+{
+  "name": "sia-thermic-studio",
+  "version": "2.0.0",
+  "description": "Simulateur web de surchauffe estivale et confort thermique (SIA 180, SIA 380/1, ISO 13790 5R1C, ISO 7730, EN 16798-1, ASHRAE 55, CIBSE TM52/59).",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "preview": "node scripts/dev-server.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "keywords": [
+    "SIA 180",
+    "SIA 380/1",
+    "ISO 13790",
+    "5R1C",
+    "overheating",
+    "thermal comfort",
+    "PMV",
+    "PPD",
+    "building physics"
+  ],
+  "license": "MIT"
+}

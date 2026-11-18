@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SIA Thermic Studio — Simulation de surchauffe &amp; Confort thermique</title>
+  <link rel="stylesheet" href="./css/tokens.css" />
+  <link rel="stylesheet" href="./css/layout.css" />
+  <link rel="stylesheet" href="./css/components.css" />
+</head>
+<body>
+
+<header class="studio-header">
+  <div class="brand">
+    <span class="brand-dot">SIA</span>
+    <span>SIA Thermic Studio</span>
+    <span class="pill neutral" style="font-weight:500;">5R1C ISO 13790 • SIA 180 / 380/1 • Confort</span>
+  </div>
+
+  <div class="header-switches">
+    <div class="seg-pill" title="Mode d'affichage global">
+      <button class="seg-btn active-blue" id="btnGlobalSimple">Mode Simple</button>
+      <button class="seg-btn" id="btnGlobalAdv">Mode Avancé</button>
+    </div>
+
+    <div class="seg-pill">
+      <button class="seg-btn active" id="btnModeConfig">Configuration</button>
+      <button class="seg-btn" id="btnModeResults">
+        Résultats SIA <span id="navBadgeHours" class="pill neutral" style="padding:1px 7px;">—</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="header-actions">
+    <button class="btn btn-sm" id="btnExportHouse" title="Sauvegarder le projet en .json">Exporter .json</button>
+    <button class="btn btn-sm" id="btnThemeToggle" title="Basculer Sombre / Clair">Thème</button>
+    <button class="btn btn-run" id="btnRunTop">▶ Simuler</button>
+  </div>
+</header>
+
+<!-- ==================== MODE 1 : CONFIGURATION ==================== -->
+<div class="workspace" id="view-config">
+  <aside class="left-rail">
+    <button class="rail-item active" data-step="step-house"><span>1. Bâtiment &amp; Import</span></button>
+    <button class="rail-item" data-step="step-floors"><span>2. Étages &amp; Enveloppe</span><span class="rail-count" id="railFloorCount">1</span></button>
+    <button class="rail-item" data-step="step-openings"><span>3. Ouvertures &amp; Ouvrants</span><span class="rail-count" id="railOpeningCount">1</span></button>
+    <button class="rail-item" data-step="step-sia"><span>4. Usage SIA &amp; Ventilation</span></button>
+    <button class="rail-item" data-step="step-climate"><span>5. Climat &amp; PVGIS</span></button>
+  </aside>
+
+  <main class="center-pane">
+    <div class="center-inner">
+
+      <!-- ÉTAPE 1 : BÂTIMENT -->
+      <section class="step-section" id="step-house">
+        <div class="card">
+          <h3 class="card-title">
+            <span>1. Projet &amp; Paramètres généraux</span>
+            <div class="seg-pill" data-part-toggle="house">
+              <button class="seg-btn active-blue" data-mode="simple">Simple</button>
+              <button class="seg-btn" data-mode="advanced">Avancé</button>
+            </div>
+          </h3>
+          <div class="g2">
+            <div class="field"><label>Nom du projet</label><input type="text" id="projName" value="Villa individuelle R+1" /></div>
+            <div class="field">
+              <label>Exigence de tolérance (SIA 180 / Minergie)</label>
+              <select id="projectType">
+                <option value="new" selected>Bureau / École / Minergie / Stricte (≤ 100 h/an)</option>
+                <option value="residential_400">Habitation SIA 180 standard (≤ 400 h/an)</option>
+                <option value="reno">Transformation / Rénovation SIA 180 (≤ 400 h/an)</option>
+                <option value="zero">Exigence zéro surchauffe / EN-102 strict (0 h/an)</option>
+              </select>
+            </div>
+          </div>
+          <div id="houseAdvBox" class="hidden" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+            <div class="g3">
+              <div class="field">
+                <label>Domaine admissible SIA 180</label>
+                <select id="siaCurveMode">
+                  <option value="fig3" selected>Ventilation naturelle (Fig. 3 — ni chauffé ni refroidi)</option>
+                  <option value="fig4">Chauffé / refroidi / VMC (Fig. 4)</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Albédo du sol environnant [-]</label>
+                <input type="number" id="projAlbedo" min="0.05" max="0.80" step="0.05" value="0.20" />
+              </div>
+              <div class="field" style="justify-content:flex-end;">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);">
+                  <input type="checkbox" id="stackCoupling" checked />
+                  Couplage thermique des dalles &amp; tirage cheminée inter-étages
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Bâtiments types prêts à l'emploi</h3>
+          <p class="subtitle">Chargez un bâtiment complet en 1 clic, puis ajustez les valeurs.</p>
+          <div class="house-grid" id="libraryGrid"></div>
+        </div>
+
+        <div class="card">
+          <h3 class="card-title">Importer un fichier de maison</h3>
+          <p class="subtitle">Formats : <strong>.json</strong>, <strong>.gbxml / .xml</strong> (Revit / ArchiCAD), <strong>.ifc</strong> (STEP BIM), ou <strong>.idf</strong> (EnergyPlus).</p>
+          <div class="dropzone" id="dropzoneHouse">
+            <div style="font-weight:600;margin-bottom:6px;">Glisser-déposer ici (.json, .gbxml, .ifc, .idf)</div>
+            <input type="file" id="fileImportHouse" accept=".json,.gbxml,.xml,.ifc,.idf" style="max-width:320px;" />
+            <div id="houseImportMsg" style="margin-top:8px;font-size:12px;color:var(--primary);"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ÉTAPE 2 : ÉTAGES & ENVELOPPE -->
+      <section class="step-section hidden" id="step-floors">
+        <div class="card">
+          <h3 class="card-title">
+            <span>2. Étages &amp; Enveloppe thermique (SIA 380/1)</span>
+            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <div class="seg-pill" data-part-toggle="floors">
+                <button class="seg-btn active-blue" data-mode="simple">Simple</button>
+                <button class="seg-btn" data-mode="box3d">Constructeur 3D</button>
+                <button class="seg-btn" data-mode="advanced">Avancé</button>
+              </div>
+              <button class="btn btn-sm" id="btnAddFloor">+ Ajouter un étage</button>
+            </span>
+          </h3>
+          <p class="subtitle" id="floorsSubtitle"></p>
+          <div id="floorsList"></div>
+        </div>
+      </section>
+
+      <!-- ÉTAPE 3 : OUVERTURES & OUVRANTS -->
+      <section class="step-section hidden" id="step-openings">
+        <div class="card">
+          <h3 class="card-title">
+            <span>3. Ouvertures (Vitrages) &amp; Ouvrants (Ventilation nuit)</span>
+            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <div class="seg-pill" data-part-toggle="openings">
+                <button class="seg-btn active-blue" data-mode="simple">Simple (%)</button>
+                <button class="seg-btn" data-mode="advanced">Avancé (fenêtre/fenêtre)</button>
+              </div>
+              <select id="activeOpeningFloor" style="width:185px;padding:4px 8px;font-size:12px;"></select>
+            </span>
+          </h3>
+
+          <!-- MODE SIMPLE OUVERTURES & OUVRANTS (%) -->
+          <div id="openingsSimpleBox">
+            <div class="well">
+              <div class="well-head">
+                <strong>A. Surface vitrée en % de chaque façade (et % du plancher en toiture)</strong>
+                <span class="pill neutral" id="simpleGlazingSummary"></span>
+              </div>
+              <div class="g5">
+                <div class="field"><label>Sud [%]</label><input type="number" id="simpPctS" min="0" max="95" step="5" /></div>
+                <div class="field"><label>Ouest [%]</label><input type="number" id="simpPctO" min="0" max="95" step="5" /></div>
+                <div class="field"><label>Est [%]</label><input type="number" id="simpPctE" min="0" max="95" step="5" /></div>
+                <div class="field"><label>Nord [%]</label><input type="number" id="simpPctN" min="0" max="95" step="5" /></div>
+                <div class="field"><label>Toiture [% sol]</label><input type="number" id="simpPctR" min="0" max="40" step="1" /></div>
+              </div>
+              <div class="g3" style="margin-top:12px;">
+                <div class="field">
+                  <label>Protection solaire (stores) sur l'étage</label>
+                  <select id="simpShading">
+                    <option value="triple_lamelles">Store lamelles ext. performant (g_store=0.10)</option>
+                    <option value="triple_ext_15">Store lamelles ext. standard (g_store=0.15)</option>
+                    <option value="double_ext_pastel">Double vitrage + Protection ext. pastel (g_tot=0.09)</option>
+                    <option value="toile_sombre">Toile extérieure sombre (g_store=0.15)</option>
+                    <option value="toile_claire">Toile extérieure claire (g_store=0.35)</option>
+                    <option value="int_claire">Protection intérieure claire (g_tot=0.36)</option>
+                    <option value="none">Aucune protection solaire</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Commande des stores</label>
+                  <select id="simpBlindMode">
+                    <option value="auto">Automatique (selon soleil / T°)</option>
+                    <option value="manual_day">Manuelle (pendant occupation)</option>
+                    <option value="always_down">Toujours baissés</option>
+                    <option value="always_up">Toujours levés</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Casquette / avant-toit moyen [m]</label>
+                  <input type="number" id="simpOverhang" min="0" max="4" step="0.1" value="0" />
+                </div>
+              </div>
+            </div>
+
+            <div class="well">
+              <div class="well-head">
+                <strong>B. Ouvrants de ventilation nocturne — Méthode simple en %</strong>
+                <span class="pill ok" id="simpNightLiveFlow"></span>
+              </div>
+              <div class="g4">
+                <div class="field">
+                  <label>Référence du pourcentage</label>
+                  <select id="simpOpenBasis">
+                    <option value="floor_pct">% de la surface de la pièce (règle SIA)</option>
+                    <option value="window_pct">% de la surface vitrée qui s'ouvre</option>
+                    <option value="none">Pas d'ouvrant la nuit (0 %)</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Pourcentage ouvrant [%]</label>
+                  <input type="number" id="simpOpenPct" min="0" max="100" step="0.5" value="5.0" />
+                  <small>SIA : ~5 % simple face, 2.5–3 % traversant</small>
+                </div>
+                <div class="field">
+                  <label>Type d'ouverture</label>
+                  <select id="simpOpenEff">
+                    <option value="1.00">Battante ouverte en plein (100 %)</option>
+                    <option value="0.60">Oscillo-battant / ouverture large (60 %)</option>
+                    <option value="0.25">En imposte / soufflet ~15° (25 %)</option>
+                  </select>
+                </div>
+                <div class="field" style="justify-content:center;">
+                  <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);margin-top:14px;">
+                    <input type="checkbox" id="simpOpenCross" />
+                    Aération traversante (2 façades / cheminée)
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- MODE AVANCÉ OUVERTURES & OUVRANTS -->
+          <div id="openingsAdvBox" class="hidden">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;flex:1;">
+                <select id="quickShadingPreset" style="max-width:340px;">
+                  <option value="">— Appliquer une combinaison SIA vitrage + store —</option>
+                  <option value="triple_lamelles">Triple vitrage isolant (g=0.55) + Store ext. (g_store=0.10)</option>
+                  <option value="triple_ext_15">Triple vitrage (g=0.60) + Store ext. (g_store=0.15)</option>
+                  <option value="double_ext_pastel">Double vitrage + Protection ext. pastel (g_tot=0.09)</option>
+                  <option value="toile_sombre">Toile extérieure sombre (g_vit=0.55, g_store=0.15)</option>
+                  <option value="toile_claire">Toile extérieure claire (g_vit=0.55, g_store=0.35)</option>
+                  <option value="int_claire">Protection intérieure claire (g_tot=0.36)</option>
+                  <option value="none">Aucune protection solaire (g_store=1.00)</option>
+                </select>
+                <button class="btn btn-sm" id="btnApplyQuickShading">Appliquer</button>
+              </div>
+              <button class="btn btn-sm" id="btnAddOpening">+ Ajouter une ouverture</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Étage</th><th>Nom</th><th>Orient.</th><th>L [m]</th><th>H [m]</th><th>Qté</th>
+                    <th>U_fen</th><th>g_vit</th><th>g_store</th><th>Mode</th><th>Casq. [m]</th><th>Store</th><th>Nuit</th><th></th>
+                  </tr>
+                </thead>
+                <tbody id="openingsTableBody"></tbody>
+              </table>
+            </div>
+            <div id="openingNightDetails" style="margin-top:12px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ÉTAPE 4 : USAGE SIA & VENTILATION -->
+      <section class="step-section hidden" id="step-sia">
+        <div class="card">
+          <h3 class="card-title">
+            <span>4. Catégorie d'utilisation SIA 380/1 &amp; Ventilation</span>
+            <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+              <div class="seg-pill" data-part-toggle="sia">
+                <button class="seg-btn active-blue" data-mode="simple">Simple</button>
+                <button class="seg-btn" data-mode="advanced">Avancé</button>
+              </div>
+              <select id="siaTargetFloor" style="width:190px;padding:4px 8px;font-size:12px;"></select>
+            </span>
+          </h3>
+
+          <div class="well">
+            <div class="g2">
+              <div class="field">
+                <label>Catégorie d'ouvrage SIA 380/1:2016</label>
+                <select id="siaCategorySelect">
+                  <option value="custom">— Personnalisée (valeurs manuelles) —</option>
+                  <option value="I">I — Habitat collectif</option>
+                  <option value="II">II — Habitat individuel</option>
+                  <option value="III">III — Administration (Bureau)</option>
+                  <option value="IV">IV — École</option>
+                  <option value="V">V — Commerce</option>
+                  <option value="VI">VI — Restauration</option>
+                  <option value="VII">VII — Lieu de rassemblement</option>
+                  <option value="VIII">VIII — Hôpital</option>
+                  <option value="IX">IX — Industrie</option>
+                  <option value="X">X — Dépôt</option>
+                  <option value="XI">XI — Installation sportive</option>
+                  <option value="XII">XII — Piscine couverte</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Intensité des charges internes vs SIA [%]: <strong id="siaGainFactorLbl">100 %</strong></label>
+                <input type="range" id="siaGainFactor" min="25" max="200" step="5" value="100" />
+                <small>Ajuste rapidement les gains internes (personnes + éclairage + appareils)</small>
+              </div>
+            </div>
+            <div id="siaCatChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;"></div>
+          </div>
+
+          <div id="siaAdvBox" class="hidden">
+            <h4 style="margin:0 0 8px 0;font-size:13px;">Détail des gains internes &amp; occupation</h4>
+            <div class="g5">
+              <div class="field"><label>Nb personnes [-]</label><input type="number" id="inOccCount" step="0.5" min="0" /></div>
+              <div class="field"><label>Chaleur/pers. Q_P [W/P]</label><input type="number" id="inOccWatt" step="5" min="0" /></div>
+              <div class="field"><label>Présence eff. [%]</label><input type="number" id="inOccPresence" step="5" min="5" max="100" title="t_p / durée d'occupation (50 % si 12h/24h en logement)" /></div>
+              <div class="field"><label>Éclairage [W/m²]</label><input type="number" id="inLightWm2" step="0.5" min="0" /></div>
+              <div class="field"><label>Appareils total [W]</label><input type="number" id="inEquipWatt" step="10" min="0" /></div>
+            </div>
+            <div class="g4" style="margin-top:10px;">
+              <div class="field"><label>Début occ. [h]</label><input type="number" id="inOccStart" min="0" max="23" /></div>
+              <div class="field"><label>Fin occ. [h]</label><input type="number" id="inOccEnd" min="1" max="24" /></div>
+              <div class="field"><label>Jours / sem.</label>
+                <select id="inOccDays"><option value="5">5 j/sem</option><option value="6">6 j/sem</option><option value="7">7 j/sem</option></select>
+              </div>
+              <div class="field"><label>Veille hors occ. [%]</label><input type="number" id="inStandbyPct" step="5" min="0" max="100" /></div>
+            </div>
+
+            <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
+
+            <h4 style="margin:0 0 8px 0;font-size:13px;">Ventilation diurne &amp; Paramètres de régulation nocturne</h4>
+            <div class="g3">
+              <div class="field"><label>Débit air neuf q_th [m³/(h·m²)]</label><input type="number" id="inQHyg" step="0.1" min="0" /></div>
+              <div class="field"><label>Infiltration [vol/h]</label><input type="number" id="inAchInfil" step="0.05" min="0" /></div>
+              <div class="field"><label>Récupération chaleur η [-]</label><input type="number" id="inEtaWrg" step="0.05" min="0" max="0.95" /></div>
+            </div>
+            <div class="g4" style="margin-top:10px;">
+              <div class="field">
+                <label>Méthode ventilation nuit</label>
+                <select id="inNightMode">
+                  <option value="simple_pct">Méthode simple (% ouvrant)</option>
+                  <option value="physical">Méthode avancée (ouvrants détaillés)</option>
+                  <option value="fixed_m3hm2">Débit imposé [m³/(h·m²)]</option>
+                  <option value="fixed_ach">Taux imposé [vol/h]</option>
+                  <option value="none">Aucun</option>
+                </select>
+              </div>
+              <div class="field"><label>Débit imposé (si choisi)</label><input type="number" id="inNightFixed" step="0.5" min="0" /></div>
+              <div class="field"><label>Plage nuit début [h]</label><input type="number" id="inNightStart" min="0" max="23" /></div>
+              <div class="field"><label>Plage nuit fin [h]</label><input type="number" id="inNightEnd" min="1" max="24" /></div>
+            </div>
+            <div class="g2" style="margin-top:10px;">
+              <div class="field"><label>Température cible nocturne [°C]</label><input type="number" id="inNightTargetTi" step="0.5" min="15" /></div>
+              <div class="field"><label>Écart minimal (θ_i − θ_e) [K]</label><input type="number" id="inNightMinDT" step="0.5" min="0" /></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ÉTAPE 5 : CLIMAT & PVGIS -->
+      <section class="step-section hidden" id="step-climate">
+        <div class="card">
+          <h3 class="card-title">
+            <span>5. Climat Suisse &amp; Données météo</span>
+            <div class="seg-pill" data-part-toggle="climate">
+              <button class="seg-btn active-blue" data-mode="simple">Simple</button>
+              <button class="seg-btn" data-mode="advanced">Avancé (PVGIS / EPW)</button>
+            </div>
+          </h3>
+          <div class="g2">
+            <div class="field">
+              <label>Station climatique suisse</label>
+              <select id="climateStation">
+                <option value="SIO" selected>Sion (46.22°N, 7.33°E)</option>
+                <option value="MVE">Montana (46.30°N, 7.46°E)</option>
+                <option value="ZER">Zermatt (46.02°N, 7.75°E)</option>
+                <option value="GSB">Grand-St-Bernard (45.87°N, 7.17°E)</option>
+                <option value="GVE">Genève (46.25°N, 6.13°E)</option>
+                <option value="LSN">Lausanne (46.52°N, 6.63°E)</option>
+                <option value="ZRH">Zurich (47.38°N, 8.57°E)</option>
+                <option value="LUG">Lugano (46.00°N, 8.96°E)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Scénario climatique</label>
+              <select id="climateScenario">
+                <option value="REF" selected>Climat de référence (REF)</option>
+                <option value="2050">Projection 2050 (+1.5 °C)</option>
+                <option value="2100">Projection 2100 (+4.2 °C)</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:10px;">
+            <span class="pill neutral" id="weatherStatusBadge">Climat actif : Synthétique calibré</span>
+          </div>
+        </div>
+
+        <div class="card hidden" id="climateAdvBox">
+          <h3 class="card-title">Importer des données réelles PVGIS / EPW / CSV</h3>
+          <p class="subtitle">Compatible PVGIS 5.3 (TMY et années réelles <code>seriescalc</code>), Meteonorm / SIA 2028 (<code>.epw</code>) et CSV.</p>
+          <div class="g4">
+            <div class="field"><label>Latitude [°N]</label><input type="number" id="pvLat" step="0.001" value="46.22" /></div>
+            <div class="field"><label>Longitude [°E]</label><input type="number" id="pvLon" step="0.001" value="7.33" /></div>
+            <div class="field">
+              <label>Période PVGIS</label>
+              <select id="pvType">
+                <option value="tmy" selected>Année type (TMY)</option>
+                <option value="2023">Année réelle 2023</option>
+                <option value="2022">Année canicule 2022</option>
+                <option value="2020">Année réelle 2020</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Fuseau UTC → CH</label>
+              <select id="pvTzMode">
+                <option value="cet_cest" selected>CET+1 / CEST+2 (été)</option>
+                <option value="cet">CET (+1h fixe)</option>
+                <option value="utc">UTC brut (0h)</option>
+              </select>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+            <a class="btn btn-sm" id="linkPvgisJson" href="#" target="_blank" rel="noopener">1a. Télécharger JSON PVGIS</a>
+            <a class="btn btn-sm" id="linkPvgisCsv" href="#" target="_blank" rel="noopener">1b. Télécharger CSV PVGIS</a>
+            <a class="btn btn-sm" id="linkPvgisEpw" href="#" target="_blank" rel="noopener">1c. Télécharger EPW PVGIS</a>
+            <a class="btn btn-sm" href="https://re.jrc.ec.europa.eu/pvg_tools/fr/" target="_blank" rel="noopener">Ouvrir carte PVGIS</a>
+          </div>
+
+          <div class="dropzone" id="weatherDropzone" style="margin-top:12px;">
+            <div style="font-weight:600;margin-bottom:6px;">2. Glisser-déposer le fichier (.json, .csv, .epw)</div>
+            <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
+              <input type="file" id="weatherFileInput" accept=".json,.csv,.epw,.txt" style="max-width:280px;" />
+              <button class="btn btn-sm" id="btnTogglePaste">Coller JSON / CSV</button>
+              <button class="btn btn-sm" id="btnResetWeather">Climat suisse par défaut</button>
+            </div>
+            <div id="pasteBox" class="hidden" style="margin-top:10px;text-align:left;">
+              <textarea id="pasteArea" rows="4" placeholder="Collez ici le texte PVGIS JSON ou CSV..."></textarea>
+              <button class="btn btn-sm" id="btnLoadPasted" style="margin-top:6px;">Charger</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <aside class="right-inspector">
+    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:var(--text-muted);">
+      Aperçu 3D &amp; Synthèse
+    </div>
+    <div class="viewer3d-card">
+      <div class="viewer3d-toolbar">
+        <span>Modèle 3D</span>
+        <span style="display:flex;gap:4px;">
+          <button class="btn btn-sm" data-3d-preset="iso" style="padding:2px 7px;font-size:10.5px;">Iso</button>
+          <button class="btn btn-sm" data-3d-preset="front" style="padding:2px 7px;font-size:10.5px;">Face</button>
+          <button class="btn btn-sm" data-3d-preset="top" style="padding:2px 7px;font-size:10.5px;">Haut</button>
+        </span>
+      </div>
+      <div class="viewer3d-box" style="height:185px;"><canvas id="inspector3dCanvas"></canvas></div>
+    </div>
+    <div id="inspectorSummary"></div>
+    <div id="inspectorAlerts" style="display:flex;flex-direction:column;gap:6px;"></div>
+    <button class="btn btn-run" id="btnRunInspector" style="width:100%;justify-content:center;margin-top:auto;">
+      ▶ Lancer la simulation SIA
+    </button>
+  </aside>
+</div>
+
+<!-- ==================== MODE 2 : RÉSULTATS & ANALYSE ==================== -->
+<div class="results-pane hidden" id="view-results">
+  <div class="results-inner">
+
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">
+      <div>
+        <h2 style="margin:0;font-size:18px;" id="resProjectTitle">Résultats de la simulation thermique</h2>
+        <div style="font-size:12px;color:var(--text-muted);" id="resSubMeta"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div class="seg-pill" data-part-toggle="results">
+          <button class="seg-btn active-blue" data-mode="simple">Vue Simple</button>
+          <button class="seg-btn" data-mode="advanced">Vue Avancée</button>
+        </div>
+        <select id="resFloorSelect" style="width:220px;"></select>
+        <button class="btn btn-sm" id="btnExportCSV">Exporter .csv</button>
+        <button class="btn btn-sm" id="btnPrintReport">Imprimer / PDF</button>
+      </div>
+    </div>
+
+    <div class="kpi-row" id="kpiGrid"></div>
+
+    <!-- DIAGNOSTIC & JUSTIFICATIFS SIA 180 + MÉTHODOLOGIE -->
+    <div class="card">
+      <h3 class="card-title">Diagnostic SIA 180, Comparateur &amp; Méthodologie de calcul</h3>
+      <div class="sub-tabs" id="resSubTabs">
+        <button class="sub-tab active" data-sub="m3">Méthode 3 — Simulation &amp; Recommandations</button>
+        <button class="sub-tab" data-sub="compare">Comparateur (Actuel / Optimal / Oubli / 2050)</button>
+        <button class="sub-tab res-adv-only" data-sub="m2">Méthode 2 — Figure 12</button>
+        <button class="sub-tab res-adv-only" data-sub="m1">Méthode 1 — Tableau 8</button>
+        <button class="sub-tab" data-sub="floors">Synthèse par étage</button>
+        <button class="sub-tab" data-sub="methodology">Méthodologie &amp; Traçabilité</button>
+      </div>
+      <div id="sub-m3"></div>
+      <div id="sub-compare" class="hidden"></div>
+      <div id="sub-m2" class="hidden"></div>
+      <div id="sub-m1" class="hidden"></div>
+      <div id="sub-floors" class="hidden"></div>
+      <div id="sub-methodology" class="hidden"></div>
+    </div>
+
+    <!-- SECTION CONFORT THERMIQUE CIBLÉE (SUISSE + OMS + 2 RÉFÉRENCES) -->
+    <div class="card">
+      <h3 class="card-title">
+        <span>Confort thermique — Normes suisses, OMS &amp; Références clés</span>
+        <span class="pill neutral">SIA 180 &amp; SECO (CH) • OMS (Santé/Sommeil) • EN 16798-1 • ISO 7730 (PMV/PPD)</span>
+      </h3>
+      <div id="comfortSectionBody"></div>
+    </div>
+
+    <!-- GRAPHIQUE 1 -->
+    <div class="card">
+      <h3 class="card-title">
+        <span>Évolution horaire : θ_op(t), θ_e(t) et limite SIA 180</span>
+        <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <label style="font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;">
+            <input type="checkbox" id="plotCompareFloors" checked /> Comparer étages
+          </label>
+          <select id="plotWindow" style="width:185px;padding:4px 8px;font-size:12px;">
+            <option value="hottest14" selected>14 jours autour du pic</option>
+            <option value="summer">Été complet (juin–août)</option>
+            <option value="year">Année complète (8760 h)</option>
+          </select>
+        </span>
+      </h3>
+      <div class="chart-box"><canvas id="chartTime"></canvas></div>
+    </div>
+
+    <!-- GRAPHIQUES 2 & 3 -->
+    <div class="charts-two">
+      <div class="card">
+        <h3 class="card-title">Domaine adaptatif SIA 180 (θ_op vs θ_rm,48h)</h3>
+        <div class="chart-box"><canvas id="chartSIA"></canvas></div>
+      </div>
+      <div class="card res-adv-only">
+        <h3 class="card-title">Bilan thermique estival (Mai–Septembre) [kWh]</h3>
+        <div class="chart-box"><canvas id="chartBalance"></canvas></div>
+      </div>
+    </div>
+
+    <!-- GRAPHIQUE 4 -->
+    <div class="card res-adv-only">
+      <h3 class="card-title">Apports solaires estivaux transmis par orientation [kWh]</h3>
+      <div class="chart-box" style="height:210px;"><canvas id="chartOrient"></canvas></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="chart-tooltip" id="chartTooltip"></div>
+
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>

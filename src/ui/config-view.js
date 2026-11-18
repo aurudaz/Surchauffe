@@ -18,12 +18,14 @@ import {
 import { SWISS_STATIONS } from '../standards/swiss-stations.js';
 import {
   applyBox3dToFloor,
+  buildFloorThermalParams,
   computeAutoEnvelopeFromFloor,
   ensureBox3dDefaults
 } from '../methodology/03-envelope-and-gains.js';
 import {
   calcSimplePctNightFlowM3s,
-  computeBuildingStackSpan
+  computeBuildingStackSpan,
+  computeFloorNightFlowM3h
 } from '../methodology/04-natural-ventilation.js';
 import { parseAnyWeatherText } from '../methodology/02-weather-model.js';
 import { parseHouseFile } from '../parsers/house-importers.js';
@@ -320,9 +322,21 @@ export function renderOpenings() {
       if (!op) return;
       if (k === 'operable') {
         op[k] = e.target.checked;
+        const flOp = project.floors.find(f => f.id === op.floorId);
+        if (flOp && e.target.checked && (flOp.nightVentMode === 'none' || flOp.nightVentMode === 'simple_pct')) {
+          flOp.nightVentMode = 'physical';
+          loadSiaFloorInputs();
+        }
         renderOpenings();
       } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'openType'].includes(k)) {
         op[k] = e.target.value;
+        if (k === 'openType') {
+          const flOp = project.floors.find(f => f.id === op.floorId);
+          if (flOp && (flOp.nightVentMode === 'none' || flOp.nightVentMode === 'simple_pct')) {
+            flOp.nightVentMode = 'physical';
+            loadSiaFloorInputs();
+          }
+        }
         if (['name', 'openType', 'floorId'].includes(k)) renderOpenings();
       } else if (k === 'sideFinDepth') {
         const v = Math.max(0, Number(e.target.value) || 0);
@@ -330,8 +344,16 @@ export function renderOpenings() {
         op.rightFinDepth = v;
       } else {
         op[k] = Number(e.target.value);
+        if (['openWidth', 'openHeight', 'alphaDeg', 'sillHeight'].includes(k)) {
+          const flOp = project.floors.find(f => f.id === op.floorId);
+          if (flOp && (flOp.nightVentMode === 'none' || flOp.nightVentMode === 'simple_pct')) {
+            flOp.nightVentMode = 'physical';
+            loadSiaFloorInputs();
+          }
+        }
         if (k === 'qty') renderOpenings();
       }
+      updateNightVentUI();
       updateInspector();
       refresh3DViewers();
     });
@@ -746,6 +768,55 @@ export function renderFloors() {
   refresh3DViewers();
 }
 
+export function updateNightVentUI(targetFl = null) {
+  const { project } = appState;
+  const fl = targetFl || project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  if (!fl) return;
+
+  const mode = fl.nightVentMode || 'simple_pct';
+  const isFixed = mode === 'fixed_m3hm2' || mode === 'fixed_ach';
+  const isSimple = mode === 'simple_pct';
+  const isPhys = mode === 'physical';
+  const isNone = mode === 'none';
+
+  document.getElementById('nightFixedBox')?.classList.toggle('hidden', !isFixed);
+  document.getElementById('nightSimpleQuickBox')?.classList.toggle('hidden', !isSimple);
+  document.getElementById('nightPhysicalHintBox')?.classList.toggle('hidden', !isPhys);
+  document.getElementById('nightRegulBox')?.classList.toggle('hidden', isNone);
+
+  const lblFixed = document.getElementById('lblNightFixed');
+  if (lblFixed) {
+    lblFixed.textContent = mode === 'fixed_ach' ? 'Taux imposé [vol/h]' : 'Débit imposé [m³/(h·m²)]';
+  }
+
+  const simpPctEl = document.getElementById('inNightSimplePct');
+  const simpCrossEl = document.getElementById('inNightSimpleCross');
+  if (simpPctEl) simpPctEl.value = fl.nightSimplePct ?? 5.0;
+  if (simpCrossEl) simpCrossEl.checked = Boolean(fl.nightSimpleCross);
+
+  const ops = project.openings.filter(o => o.floorId === fl.id);
+  const operableCount = ops.filter(o => o.operable).reduce((s, o) => s + (o.qty || 1), 0);
+  const physHint = document.getElementById('nightPhysicalHintTxt');
+  if (physHint) {
+    physHint.innerHTML =
+      operableCount > 0
+        ? `<span class="pill ok">${operableCount} ouvrant(s) actif(s) la nuit à l'étape 3</span>`
+        : `<span class="pill ko">Aucun ouvrant coché « Nuit » à l'étape 3</span>`;
+  }
+
+  const fp = buildFloorThermalParams(fl, ops);
+  const span = project.stackCoupling ? computeBuildingStackSpan(project) : fl.height;
+  const m3h = computeFloorNightFlowM3h(fp, 26, 18, span, project.stackCoupling);
+  const spec = m3h / Math.max(1, fl.area);
+  const badge = document.getElementById('siaNightLiveBadge');
+  if (badge) {
+    badge.textContent = isNone
+      ? 'Ventilation nuit désactivée (0.0 m³/(h·m²))'
+      : `Débit nuit (ΔT=8 K) : ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²))`;
+    badge.className = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
+  }
+}
+
 export function loadSiaFloorInputs() {
   const { project } = appState;
   const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
@@ -775,6 +846,7 @@ export function loadSiaFloorInputs() {
   document.getElementById('inNightMinDT').value = fl.nightMinDT;
 
   updateSiaCatChips(fl);
+  updateNightVentUI(fl);
 }
 
 function updateSiaCatChips(fl) {
@@ -1067,6 +1139,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
         .filter(o => o.floorId === fl.id)
         .reduce((s, o) => s + o.width * o.height * o.qty, 0);
       updateSimpleNightLiveBadge(fl, totalWin);
+      updateNightVentUI(fl);
     });
   });
 
@@ -1126,14 +1199,26 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   });
 
   const bindSia = (id, prop, customFlag = false, scaleDiv = 1) => {
-    document.getElementById(id).addEventListener('change', e => {
+    document.getElementById(id)?.addEventListener('change', e => {
       const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
       if (!fl) return;
       fl[prop] = prop === 'nightVentMode' ? e.target.value : Number(e.target.value) / scaleDiv;
+      if (prop === 'nightVentMode' && e.target.value === 'simple_pct') {
+        if (!fl.nightSimpleBasis || fl.nightSimpleBasis === 'none') {
+          fl.nightSimpleBasis = 'floor_pct';
+        }
+        if ((fl.nightSimplePct ?? 0) <= 0) {
+          fl.nightSimplePct = 5.0;
+        }
+        renderOpenings();
+      }
       if (customFlag) {
         fl.siaCategory = 'custom';
         document.getElementById('siaCategorySelect').value = 'custom';
         updateSiaCatChips(fl);
+      }
+      if (['nightVentMode', 'nightVentFixedVal'].includes(prop)) {
+        updateNightVentUI(fl);
       }
       updateInspector();
     });
@@ -1156,6 +1241,22 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   bindSia('inNightEnd', 'nightEnd');
   bindSia('inNightTargetTi', 'nightTargetTi');
   bindSia('inNightMinDT', 'nightMinDT');
+
+  document.getElementById('inNightSimplePct')?.addEventListener('change', e => {
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    if (!fl) return;
+    if (!fl.nightSimpleBasis || fl.nightSimpleBasis === 'none') fl.nightSimpleBasis = 'floor_pct';
+    fl.nightSimplePct = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
+    renderOpenings();
+    updateNightVentUI(fl);
+  });
+  document.getElementById('inNightSimpleCross')?.addEventListener('change', e => {
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    if (!fl) return;
+    fl.nightSimpleCross = e.target.checked;
+    renderOpenings();
+    updateNightVentUI(fl);
+  });
 
   document.getElementById('climateStation').addEventListener('change', e => {
     appState.project.climate.station = e.target.value;

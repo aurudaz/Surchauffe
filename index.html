@@ -4,35 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SIA Thermic Studio — Simulation de surchauffe &amp; Confort thermique</title>
-  <link rel="stylesheet" href="./css/tokens.css?v=20261118-3" />
-  <link rel="stylesheet" href="./css/layout.css?v=20261118-3" />
-  <link rel="stylesheet" href="./css/components.css?v=20261118-3" />
+  <link rel="stylesheet" href="./css/tokens.css?v=20261118-4" />
+  <link rel="stylesheet" href="./css/layout.css?v=20261118-4" />
+  <link rel="stylesheet" href="./css/components.css?v=20261118-4" />
   <script type="importmap">
     {
       "imports": {
-        "./src/app.js": "./src/app.js?v=20261118-3",
-        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261118-3",
-        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261118-3",
-        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261118-3",
-        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261118-3",
-        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261118-3",
-        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261118-3",
-        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261118-3",
-        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261118-3",
-        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261118-3",
-        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261118-3",
-        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261118-3",
-        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261118-3",
-        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261118-3",
-        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261118-3",
-        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261118-3",
-        "./src/state/house-library.js": "./src/state/house-library.js?v=20261118-3",
-        "./src/state/project-store.js": "./src/state/project-store.js?v=20261118-3",
-        "./src/ui/charts.js": "./src/ui/charts.js?v=20261118-3",
-        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261118-3",
-        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261118-3",
-        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261118-3",
-        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261118-3"
+        "./src/app.js": "./src/app.js?v=20261118-4",
+        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261118-4",
+        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261118-4",
+        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261118-4",
+        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261118-4",
+        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261118-4",
+        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261118-4",
+        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261118-4",
+        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261118-4",
+        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261118-4",
+        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261118-4",
+        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261118-4",
+        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261118-4",
+        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261118-4",
+        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261118-4",
+        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261118-4",
+        "./src/state/house-library.js": "./src/state/house-library.js?v=20261118-4",
+        "./src/state/project-store.js": "./src/state/project-store.js?v=20261118-4",
+        "./src/ui/charts.js": "./src/ui/charts.js?v=20261118-4",
+        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261118-4",
+        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261118-4",
+        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261118-4",
+        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261118-4"
       }
     }
   </script>
@@ -368,13 +368,16 @@
 
             <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
 
-            <h4 style="margin:0 0 8px 0;font-size:13px;">Ventilation diurne &amp; Paramètres de régulation nocturne</h4>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+              <h4 style="margin:0;font-size:13px;">Ventilation diurne &amp; Paramètres de régulation nocturne</h4>
+              <span class="pill neutral" id="siaNightLiveBadge"></span>
+            </div>
             <div class="g3">
               <div class="field"><label>Débit air neuf q_th [m³/(h·m²)]</label><input type="number" id="inQHyg" step="0.1" min="0" /></div>
               <div class="field"><label>Infiltration [vol/h]</label><input type="number" id="inAchInfil" step="0.05" min="0" /></div>
               <div class="field"><label>Récupération chaleur η [-]</label><input type="number" id="inEtaWrg" step="0.05" min="0" max="0.95" /></div>
             </div>
-            <div class="g4" style="margin-top:10px;">
+            <div class="g3" style="margin-top:10px;">
               <div class="field">
                 <label>Méthode ventilation nuit</label>
                 <select id="inNightMode">
@@ -385,13 +388,31 @@
                   <option value="none">Aucun</option>
                 </select>
               </div>
-              <div class="field"><label>Débit imposé (si choisi)</label><input type="number" id="inNightFixed" step="0.5" min="0" /></div>
-              <div class="field"><label>Plage nuit début [h]</label><input type="number" id="inNightStart" min="0" max="23" /></div>
-              <div class="field"><label>Plage nuit fin [h]</label><input type="number" id="inNightEnd" min="1" max="24" /></div>
+              <div class="field hidden" id="nightFixedBox">
+                <label id="lblNightFixed">Débit imposé [m³/(h·m²)]</label>
+                <input type="number" id="inNightFixed" step="0.5" min="0" />
+              </div>
+              <div class="field hidden" id="nightSimpleQuickBox">
+                <label>Ouvrant nuit [% surface] (étape 3)</label>
+                <div style="display:flex;gap:8px;align-items:center;">
+                  <input type="number" id="inNightSimplePct" step="0.5" min="0" max="100" style="width:95px;" />
+                  <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text);cursor:pointer;white-space:nowrap;">
+                    <input type="checkbox" id="inNightSimpleCross" /> Traversante
+                  </label>
+                </div>
+              </div>
+              <div class="field hidden" id="nightPhysicalHintBox">
+                <label>Ouvrants détaillés (étape 3)</label>
+                <div style="font-size:12px;color:var(--text-muted);padding:7px 0;" id="nightPhysicalHintTxt"></div>
+              </div>
             </div>
-            <div class="g2" style="margin-top:10px;">
-              <div class="field"><label>Température cible nocturne [°C]</label><input type="number" id="inNightTargetTi" step="0.5" min="15" /></div>
-              <div class="field"><label>Écart minimal (θ_i − θ_e) [K]</label><input type="number" id="inNightMinDT" step="0.5" min="0" /></div>
+            <div id="nightRegulBox">
+              <div class="g4" style="margin-top:10px;">
+                <div class="field"><label>Plage nuit début [h]</label><input type="number" id="inNightStart" min="0" max="23" /></div>
+                <div class="field"><label>Plage nuit fin [h]</label><input type="number" id="inNightEnd" min="1" max="24" /></div>
+                <div class="field"><label>Température cible nocturne [°C]</label><input type="number" id="inNightTargetTi" step="0.5" min="15" /></div>
+                <div class="field"><label>Écart minimal (θ_i − θ_e) [K]</label><input type="number" id="inNightMinDT" step="0.5" min="0" /></div>
+              </div>
             </div>
           </div>
         </div>
@@ -633,6 +654,6 @@
 
 <div class="chart-tooltip" id="chartTooltip"></div>
 
-<script type="module" src="./src/app.js?v=20261118-3"></script>
+<script type="module" src="./src/app.js?v=20261118-4"></script>
 </body>
 </html>

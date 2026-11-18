@@ -244,7 +244,7 @@ export function createHouseLibrary() {
       title: 'Local bureau 4×5×2.5 m (Constructeur 3D)',
       desc: 'Modèle type paroi par paroi : 1 façade Sud vitrée, 5 parois adiabatiques',
       build: () => {
-        const fl = makeFloor('f1', 'Bureau exercice 20 m²', 0.0, 20, 2.5, 'mid', 'III', 80, 'sia_new', 0, false);
+        const fl = makeFloor('f1', 'Bureau exercice 20 m²', 0.0, 20, 2.5, 'mid', 'III', 80, 'sia_new', 5.0, false);
         fl.occCount = 2;
         fl.occPresenceFactor = 1.0;
         fl.lightWm2 = 2.0;

@@ -36,6 +36,13 @@ function renderMinergieGaugeHtml(m) {
       ? `Capacité thermique (+${m.massReservePct}% réserve)`
       : `Capacité thermique (${m.massReservePct}% déficit)`;
 
+  const massLabelStyle =
+    massLeft > 80
+      ? 'right:0;left:auto;transform:none;'
+      : massLeft < 20
+        ? 'left:0;transform:none;'
+        : '';
+
   return `
     <div class="minergie-gauge-wrap">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
@@ -54,7 +61,7 @@ function renderMinergieGaugeHtml(m) {
           <span class="mg-limit-label">Max 100 %</span>
         </div>
         <div class="mg-mass-marker" style="left:${massLeft.toFixed(1)}%;">
-          <span class="mg-mass-label">${reserveText}</span>
+          <span class="mg-mass-label" style="${massLabelStyle}">${reserveText}</span>
         </div>
       </div>
       <div class="mg-scale">

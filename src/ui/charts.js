@@ -7,7 +7,7 @@
  *  - Comparatif des normes de confort adaptatif (EN 16798-1, ASHRAE 55, SIA 180)
  */
 
-import { ASHRAE55_LIMITS, EN16798_LIMITS } from '../standards/comfort-references.js';
+import { EN16798_LIMITS } from '../standards/comfort-references.js';
 import { getSIA180Limits } from '../standards/sia180.js';
 
 function prepCanvas(id) {
@@ -419,7 +419,7 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
   drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 2, '#78d9ec', [4, 3]);
   drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 3, '#81c995');
   drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 4, '#fdd663', [2, 3]);
-  drawCurve(x => ASHRAE55_LIMITS.slope * x + ASHRAE55_LIMITS.intercept + 3.5, '#c58af9', [6, 4]);
+  drawCurve(() => 26.0, '#c58af9', [6, 4]);
   drawCurve(x => getSIA180Limits(x, siaCurveMode).upper, '#f28b82', [5, 2]);
 
   for (const pt of activeFR.series) {
@@ -435,7 +435,7 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
     ['EN Cat I', '#78d9ec'],
     ['EN Cat II', '#81c995'],
     ['EN Cat III', '#fdd663'],
-    ['ASHRAE 80%', '#c58af9'],
+    ['SECO 26°C', '#c58af9'],
     ['SIA 180', '#f28b82']
   ];
   let lx = pad.l;

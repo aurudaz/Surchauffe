@@ -28,7 +28,6 @@ function renderComfortSection(activeFR, isAdv) {
   if (!c) return;
   const p = c.params;
 
-  const pmvVerdict = Math.abs(c.fanger.meanPmv) <= 0.5;
   const pmvPeakVerdict = c.fanger.maxPmv <= 1.0;
   const pmvBadgeHtml =
     c.fanger.meanPmv > 0.5
@@ -37,43 +36,46 @@ function renderComfortSection(activeFR, isAdv) {
         ? badge(false, '', `Frais (${p.clo.toFixed(2)} clo)`, true)
         : badge(pmvPeakVerdict, 'Classe B OK', 'Pic chaud', true);
 
-  document.getElementById('comfortSectionBody').innerHTML = `
-    <div class="well" style="margin-bottom:12px;">
-      <div class="well-head" style="margin-bottom:8px;padding-bottom:6px;">
-        <strong>Paramètres physiologiques pour le modèle analytique ISO 7730 (Fanger PMV/PPD)</strong>
-        <span class="pill neutral">T_mr = θ_s (surfaces 5R1C)</span>
-      </div>
-      <div class="g4">
-        <div class="field">
-          <label>Habillement été [clo] : <strong id="lblComfortClo">${p.clo.toFixed(2)}</strong></label>
-          <input type="range" id="inComfortClo" min="0.30" max="1.00" step="0.05" value="${p.clo}" />
-          <small>0.35 short/T-shirt • 0.50 été • 1.00 hiver</small>
-        </div>
-        <div class="field">
-          <label>Métabolisme [met] : <strong id="lblComfortMet">${p.met.toFixed(2)}</strong></label>
-          <input type="range" id="inComfortMet" min="0.80" max="2.00" step="0.10" value="${p.met}" />
-          <small>1.0 repos • 1.2 bureau/séjour • 1.6 actif</small>
-        </div>
-        <div class="field">
-          <label>Vitesse d'air v_a [m/s] : <strong id="lblComfortVel">${p.airSpeed.toFixed(2)}</strong></label>
-          <input type="range" id="inComfortVel" min="0.05" max="0.80" step="0.05" value="${p.airSpeed}" />
-          <small>0.10 calme • 0.15 nat. • 0.50 brasseur</small>
-        </div>
-        <div class="field">
-          <label>Humidité relative [%] : <strong id="lblComfortRh">${p.rh.toFixed(0)}</strong></label>
-          <input type="range" id="inComfortRh" min="25" max="80" step="5" value="${p.rh}" />
-          <small>Plage recommandée SIA 180 : 30–65 %</small>
-        </div>
-      </div>
-    </div>
+  const siaOccPct =
+    activeFR.occH > 0 ? ((activeFR.occH - activeFR.overSIA) / activeFR.occH) * 100 : 100;
+  const secoOk = c.secoOlt3.occOver28H === 0;
 
+  document.getElementById('comfortSectionBody').innerHTML = `
     <div class="comfort-grid">
+      <div class="comfort-card">
+        <div class="comfort-card-head">
+          <strong>Normes suisses — SIA 180 &amp; SECO (OLT 3)</strong>
+          ${badge(activeFR.passSIA && secoOk, 'Conforme CH', secoOk ? 'Dépassement SIA' : 'Critique > 28 °C', activeFR.passSIA && !secoOk)}
+        </div>
+        <div class="comfort-ref">SIA 180:2014 (courbe adaptative 48h) &amp; SECO OLT 3 (postes de travail)</div>
+        <div class="comfort-metric">${siaOccPct.toFixed(1)} % <span style="font-size:12px;font-weight:500;color:var(--text-muted);">conforme SIA 180 (${activeFR.overSIA} h dép.)</span></div>
+        <div style="font-size:12px;color:var(--text-muted);">
+          SECO ≤ 26 °C : <strong>${c.secoOlt3.occWithin26Pct.toFixed(1)} %</strong> •
+          &gt; 26 °C : <strong>${c.secoOlt3.occOver26H} h</strong> •
+          Critique &gt; 28 °C : <strong>${c.secoOlt3.occOver28H} h</strong>
+        </div>
+      </div>
+
+      <div class="comfort-card">
+        <div class="comfort-card-head">
+          <strong>OMS (WHO 2018) — Santé &amp; Sommeil</strong>
+          ${badge(c.healthSleep.nightOver26H <= 32, 'Nuit OK', 'Chaleur nocturne', c.healthSleep.nightOver26H <= 100)}
+        </div>
+        <div class="comfort-ref">WHO Housing &amp; Health Guidelines (seuil santé 24 °C / sommeil 26 °C)</div>
+        <div class="comfort-metric">${c.healthSleep.nightOver26H} h <span style="font-size:12px;font-weight:500;color:var(--text-muted);">nocturnes &gt; 26 °C (22h–07h)</span></div>
+        <div style="font-size:12px;color:var(--text-muted);">
+          Nuits &gt; 24 °C : <strong>${c.healthSleep.nightOver24H} h</strong> •
+          Nuits chaudes ≥ 24 °C min : <strong>${c.healthSleep.indoorTropicalNights} nuits</strong> •
+          Jour &gt; 24 °C : ${c.healthSleep.occOver24Pct.toFixed(0)} %
+        </div>
+      </div>
+
       <div class="comfort-card">
         <div class="comfort-card-head">
           <strong>EN 16798-1:2019 (Adaptatif EU)</strong>
           ${badge(c.en16798.passCat2, 'Cat. II OK', 'Hors Cat. II')}
         </div>
-        <div class="comfort-ref">θ_c = 0.33·θ_rm(α=0.8) + 18.8 °C (réf. européenne)</div>
+        <div class="comfort-ref">θ_c = 0.33·θ_rm(α=0.8) + 18.8 °C (référence européenne)</div>
         <div class="comfort-metric">${c.en16798.cat2OkPct.toFixed(1)} % <span style="font-size:12px;font-weight:500;color:var(--text-muted);">en Cat. II (${c.en16798.cat2HotH} h chaud)</span></div>
         <div style="font-size:12px;color:var(--text-muted);">
           Cat. I : <strong>${c.en16798.cat1OkPct.toFixed(1)} %</strong> (${c.en16798.cat1HotH} h chaud) •
@@ -83,68 +85,35 @@ function renderComfortSection(activeFR, isAdv) {
 
       <div class="comfort-card">
         <div class="comfort-card-head">
-          <strong>ASHRAE 55-2020 (de Dear &amp; Brager)</strong>
-          ${badge(c.ashrae55.pass80, '80 % OK', 'Hors 80 %')}
-        </div>
-        <div class="comfort-ref">θ_comf = 0.31·θ_pma(7j) + 17.8 °C (±2.5 / ±3.5 K)</div>
-        <div class="comfort-metric">${c.ashrae55.pct80Ok.toFixed(1)} % <span style="font-size:12px;font-weight:500;color:var(--text-muted);">acceptabilité 80 %</span></div>
-        <div style="font-size:12px;color:var(--text-muted);">
-          Plage 90 % (±2.5 K) : <strong>${c.ashrae55.pct90Ok.toFixed(1)} %</strong> •
-          Dépassement chaud (&gt; 80 %) : <strong>${c.ashrae55.hot80H} h</strong>
-        </div>
-      </div>
-
-      <div class="comfort-card">
-        <div class="comfort-card-head">
           <strong>ISO 7730:2005 — Fanger PMV / PPD</strong>
           ${pmvBadgeHtml}
         </div>
-        <div class="comfort-ref">Bilan thermique humain (Mai–Septembre, jour 07h–22h)</div>
+        <div class="comfort-ref">Confort physiologique (Mai–Sept., jour 07h–22h)</div>
         <div class="comfort-metric">PMV ${c.fanger.meanPmv >= 0 ? '+' : ''}${c.fanger.meanPmv.toFixed(2)} <span style="font-size:12px;font-weight:500;color:var(--text-muted);">(PPD moy. ${c.fanger.meanPpd.toFixed(1)} %)</span></div>
         <div style="font-size:12px;color:var(--text-muted);">
           Pic été : <strong>PMV ${c.fanger.maxPmv >= 0 ? '+' : ''}${c.fanger.maxPmv.toFixed(2)}</strong> (PPD ${c.fanger.maxPpd.toFixed(0)} %) •
-          Classe B : <strong>${c.fanger.pctClassB.toFixed(0)} %</strong> • Δ|T_air−T_s| max : ${c.fanger.maxRadiantDelta.toFixed(1)} K
+          Classe B : <strong>${c.fanger.pctClassB.toFixed(0)} %</strong> • Δ|T_air−T_s| : ${c.fanger.maxRadiantDelta.toFixed(1)} K
         </div>
       </div>
+    </div>
 
-      <div class="comfort-card">
-        <div class="comfort-card-head">
-          <strong>CIBSE TM52 (2013) &amp; TM59 (2017)</strong>
-          ${badge(c.cibse.tm52Pass, 'TM52 OK', `TM52 Échec (${c.cibse.failCount}/3)`)}
+    <div class="well" style="margin-bottom:${isAdv ? '12px' : '0'};">
+      <div class="g4">
+        <div class="field">
+          <label>Habillement [clo] : <strong id="lblComfortClo">${p.clo.toFixed(2)}</strong></label>
+          <input type="range" id="inComfortClo" min="0.30" max="1.00" step="0.05" value="${p.clo}" />
         </div>
-        <div class="comfort-ref">Sévérité surchauffe (3 critères, échec si ≥ 2 dépassés)</div>
-        <div class="comfort-metric">${c.cibse.exceedPct.toFixed(1)} % <span style="font-size:12px;font-weight:500;color:var(--text-muted);">heures ΔT ≥ 1 K (seuil ≤ 3 %)</span></div>
-        <div style="font-size:12px;color:var(--text-muted);">
-          W_e max/j : <strong>${c.cibse.maxDailyWe.toFixed(1)} Kh</strong> (≤ 6) •
-          ΔT_max : <strong>${c.cibse.maxDeltaT.toFixed(1)} K</strong> (≤ 4) •
-          Nuit TM59 &gt;26 °C : <strong>${c.cibse.tm59NightOver26Pct.toFixed(1)} %</strong>
+        <div class="field">
+          <label>Métabolisme [met] : <strong id="lblComfortMet">${p.met.toFixed(2)}</strong></label>
+          <input type="range" id="inComfortMet" min="0.80" max="2.00" step="0.10" value="${p.met}" />
         </div>
-      </div>
-
-      <div class="comfort-card">
-        <div class="comfort-card-head">
-          <strong>OMS (2018) &amp; Qualité du sommeil</strong>
-          ${badge(c.cibse.tm59Pass, 'Nuit OK', 'Risque sommeil', c.healthSleep.nightOver26H > 0)}
+        <div class="field">
+          <label>Vitesse d'air [m/s] : <strong id="lblComfortVel">${p.airSpeed.toFixed(2)}</strong></label>
+          <input type="range" id="inComfortVel" min="0.05" max="0.80" step="0.05" value="${p.airSpeed}" />
         </div>
-        <div class="comfort-ref">WHO Housing Guidelines &amp; Lan et al. (2017)</div>
-        <div class="comfort-metric">${c.healthSleep.nightOver26H} h <span style="font-size:12px;font-weight:500;color:var(--text-muted);">nocturnes &gt; 26 °C (22h–07h)</span></div>
-        <div style="font-size:12px;color:var(--text-muted);">
-          Nuits &gt; 24 °C : <strong>${c.healthSleep.nightOver24H} h</strong> •
-          Nuits intérieures ≥ 24 °C min : <strong>${c.healthSleep.indoorTropicalNights} nuits</strong> •
-          Occ. &gt; 24 °C : ${c.healthSleep.occOver24Pct.toFixed(0)} %
-        </div>
-      </div>
-
-      <div class="comfort-card">
-        <div class="comfort-card-head">
-          <strong>Seppänen, Fisk &amp; Lei (2006)</strong>
-          ${badge(c.productivity.meanLossPct <= 2.0, 'Impact faible', 'Perte &gt; 2 %', true)}
-        </div>
-        <div class="comfort-ref">LBNL-60952 : performance cognitive vs température</div>
-        <div class="comfort-metric">${c.productivity.meanRelativePct.toFixed(1)} % <span style="font-size:12px;font-weight:500;color:var(--text-muted);">productivité estivale moy.</span></div>
-        <div style="font-size:12px;color:var(--text-muted);">
-          Perte de pointe : <strong>−${c.productivity.peakLossPct.toFixed(1)} %</strong> •
-          Heures avec perte &gt; 2 % : <strong>${c.productivity.hoursLossOver2Pct} h</strong>
+        <div class="field">
+          <label>Humidité [%] : <strong id="lblComfortRh">${p.rh.toFixed(0)}</strong></label>
+          <input type="range" id="inComfortRh" min="25" max="80" step="5" value="${p.rh}" />
         </div>
       </div>
     </div>
@@ -152,29 +121,11 @@ function renderComfortSection(activeFR, isAdv) {
     ${
       isAdv
         ? `
-    <div class="charts-two">
-      <div>
-        <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">
-          Comparaison des domaines adaptatifs : EN 16798-1 (Cat I/II/III), ASHRAE 55 (80 %) &amp; SIA 180
-        </div>
-        <div class="chart-box" style="height:230px;"><canvas id="chartComfortAdaptive"></canvas></div>
+    <div>
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">
+        Domaines adaptatifs comparés : EN 16798-1 (Cat I/II/III), SECO (26 °C) &amp; SIA 180
       </div>
-      <div>
-        <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">
-          Détail des critères et répartitions ISO 7730 / CIBSE TM52
-        </div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Critère / Étude</th><th class="num">Valeur mesurée</th><th class="num">Seuil référence</th><th>Statut</th></tr></thead>
-          <tbody>
-            <tr><td>CIBSE TM52 — Crit. 1 (Heures ΔT ≥ 1 K)</td><td class="num">${c.cibse.exceedPct.toFixed(2)} % (${c.cibse.exceed1KHours} h)</td><td class="num">≤ 3.0 %</td><td>${badge(!c.cibse.crit1Fail, 'OK', 'Dépassé')}</td></tr>
-            <tr><td>CIBSE TM52 — Crit. 2 (Sévérité jour W_e)</td><td class="num">${c.cibse.maxDailyWe.toFixed(1)} Kh (${c.cibse.daysOver6} j)</td><td class="num">≤ 6.0 Kh</td><td>${badge(!c.cibse.crit2Fail, 'OK', 'Dépassé')}</td></tr>
-            <tr><td>CIBSE TM52 — Crit. 3 (Pic ΔT_max)</td><td class="num">${c.cibse.maxDeltaT.toFixed(1)} K</td><td class="num">≤ 4.0 K</td><td>${badge(!c.cibse.crit3Fail, 'OK', 'Dépassé')}</td></tr>
-            <tr><td>CIBSE TM59 — Chambres nuit (&gt; 26 °C)</td><td class="num">${c.cibse.tm59NightOver26Pct.toFixed(2)} % (${c.cibse.tm59NightOver26H} h)</td><td class="num">≤ 1.0 %</td><td>${badge(c.cibse.tm59Pass, 'OK', 'Dépassé')}</td></tr>
-            <tr><td>ISO 7730 — Classes A / B / C (été)</td><td class="num">${c.fanger.pctClassA.toFixed(0)}% / ${c.fanger.pctClassB.toFixed(0)}% / ${c.fanger.pctClassC.toFixed(0)}%</td><td class="num">|PMV| ≤ 0.2 / 0.5 / 0.7</td><td>${pmvBadgeHtml}</td></tr>
-            <tr><td>Asymétrie θ_air − θ_s max (ISO 7730)</td><td class="num">${c.fanger.maxRadiantDelta.toFixed(2)} K</td><td class="num">&lt; 5.0 K</td><td>${badge(c.fanger.maxRadiantDelta < 5.0, 'OK', 'Élevée')}</td></tr>
-          </tbody>
-        </table></div>
-      </div>
+      <div class="chart-box" style="height:230px;"><canvas id="chartComfortAdaptive"></canvas></div>
     </div>`
         : ''
     }
@@ -222,7 +173,7 @@ export function renderResultsView(onEnsureSimulation) {
 
   document.getElementById('resProjectTitle').textContent = `${project.name} — ${activeFR.floor.name}`;
   document.getElementById('resSubMeta').textContent =
-    `${res.weatherLabel}  •  Modèle 5R1C ISO 13790  •  θ_e,max = ${res.maxTe.toFixed(1)} °C (${res.tropicalNights} nuits tropicales)`;
+    `${res.weatherLabel}  •  Modèle 5R1C ISO 13790  •  θ_e : ${res.minTe.toFixed(1)}..${res.maxTe.toFixed(1)} °C (${res.tropicalNights} nuits tropicales)`;
 
   document.getElementById('kpiGrid').innerHTML = `
     <div class="kpi-box">
@@ -231,9 +182,9 @@ export function renderResultsView(onEnsureSimulation) {
       <div class="kpi-sub">Tolérance : ≤ ${limH} h/an (EN-102 : ${activeFR.overSIA === 0 ? '0 h OK' : 'Dépassé'})</div>
     </div>
     <div class="kpi-box">
-      <div class="kpi-label">Température opérative max θ_op</div>
-      <div class="kpi-val" style="color:${activeFR.maxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.maxTop.toFixed(1)} °C</div>
-      <div class="kpi-sub">Degrés-heures : <strong>${activeFR.dhSIA.toFixed(1)} Kh</strong> (J${Math.floor(activeFR.maxTopHour / 24) + 1} à ${activeFR.maxTopHour % 24}h)</div>
+      <div class="kpi-label">Température opérative (Min / Max)</div>
+      <div class="kpi-val" style="color:${activeFR.maxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.minTop.toFixed(1)} / ${activeFR.maxTop.toFixed(1)} °C</div>
+      <div class="kpi-sub">Été : <strong>${activeFR.summerMinTop.toFixed(1)}..${activeFR.summerMaxTop.toFixed(1)} °C</strong> • Pic J${Math.floor(activeFR.maxTopHour / 24) + 1} à ${activeFR.maxTopHour % 24}h (${activeFR.dhSIA.toFixed(1)} Kh)</div>
     </div>
     <div class="kpi-box">
       <div class="kpi-label">Score de résilience estivale</div>
@@ -243,7 +194,7 @@ export function renderResultsView(onEnsureSimulation) {
     <div class="kpi-box">
       <div class="kpi-label">Confort EN 16798-1 / PMV été</div>
       <div class="kpi-val" style="color:${activeFR.comfort.en16798.cat2OkPct >= 97 ? 'var(--ok)' : 'var(--warn)'}">${activeFR.comfort.en16798.cat2OkPct.toFixed(0)} % Cat.II</div>
-      <div class="kpi-sub">PMV moy. ${activeFR.comfort.fanger.meanPmv >= 0 ? '+' : ''}${activeFR.comfort.fanger.meanPmv.toFixed(2)} • TM52 : ${activeFR.comfort.cibse.tm52Pass ? 'OK' : 'Échec'}</div>
+      <div class="kpi-sub">PMV moy. ${activeFR.comfort.fanger.meanPmv >= 0 ? '+' : ''}${activeFR.comfort.fanger.meanPmv.toFixed(2)} • OMS nuit &gt;26°C : ${activeFR.comfort.healthSleep.nightOver26H} h</div>
     </div>
     <div class="kpi-box res-adv-only">
       <div class="kpi-label">Puissance froid fictive (0 h)</div>
@@ -278,7 +229,7 @@ export function renderResultsView(onEnsureSimulation) {
   // Onglet Comparateur
   document.getElementById('sub-compare').innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>Scénario comparé</th><th>Hypothèses</th><th class="num">Surchauffe SIA</th><th class="num">Degrés-heures</th><th class="num">θ_op,max</th><th class="num">Score</th></tr></thead>
+      <thead><tr><th>Scénario comparé</th><th>Hypothèses</th><th class="num">Surchauffe SIA</th><th class="num">Degrés-heures</th><th class="num">θ_op Min / Max</th><th class="num">Score</th></tr></thead>
       <tbody>${res.variants
         .map(
           v => `<tr>
@@ -286,7 +237,7 @@ export function renderResultsView(onEnsureSimulation) {
             <td><small style="color:var(--text-muted);">${escapeHtml(v.note)}</small></td>
             <td class="num"><strong>${v.wf.overSIA} h/an</strong></td>
             <td class="num">${v.wf.dhSIA.toFixed(1)} Kh</td>
-            <td class="num">${v.wf.maxTop.toFixed(1)} °C</td>
+            <td class="num">${v.wf.minTop.toFixed(1)} / ${v.wf.maxTop.toFixed(1)} °C</td>
             <td class="num">${badge(v.wf.score >= 70, `${v.wf.score}/100`, `${v.wf.score}/100`)}</td>
           </tr>`
         )
@@ -333,15 +284,15 @@ export function renderResultsView(onEnsureSimulation) {
   // Onglet Synthèse par étage
   document.getElementById('sub-floors').innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>Étage</th><th class="num">Surface</th><th class="num">θ_op,max</th><th class="num">Surchauffe SIA</th><th class="num">PMV moy. été</th><th class="num">Froid fictif</th><th class="num">Score</th><th>Statut</th></tr></thead>
+      <thead><tr><th>Étage</th><th class="num">Surface</th><th class="num">θ_op Min / Max</th><th class="num">Été Min / Max</th><th class="num">Surchauffe SIA</th><th class="num">Froid fictif</th><th class="num">Score</th><th>Statut</th></tr></thead>
       <tbody>${res.floorResults
         .map(
           fr => `<tr>
             <td><strong>${escapeHtml(fr.floor.name)}</strong></td>
             <td class="num">${fr.floor.area.toFixed(0)} m²</td>
-            <td class="num">${fr.maxTop.toFixed(1)} °C</td>
+            <td class="num">${fr.minTop.toFixed(1)} / ${fr.maxTop.toFixed(1)} °C</td>
+            <td class="num">${fr.summerMinTop.toFixed(1)} / ${fr.summerMaxTop.toFixed(1)} °C</td>
             <td class="num"><strong>${fr.overSIA} h/an</strong></td>
-            <td class="num">${fr.comfort.fanger.meanPmv >= 0 ? '+' : ''}${fr.comfort.fanger.meanPmv.toFixed(2)}</td>
             <td class="num">${fr.maxCoolWm2.toFixed(1)} W/m²</td>
             <td class="num">${fr.score}/100</td>
             <td>${badge(fr.overSIA <= limH, 'Conforme', 'Non conforme')}</td>

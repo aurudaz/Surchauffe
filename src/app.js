@@ -5,7 +5,13 @@
 
 import { runFullSimulation } from './methodology/08-scenario-comparator.js';
 import { appState } from './state/project-store.js';
-import { bindConfigEvents, renderLibrary, syncAllUI, updateInspector } from './ui/config-view.js';
+import {
+  bindConfigEvents,
+  refresh3DViewers,
+  renderLibrary,
+  syncAllUI,
+  updateInspector
+} from './ui/config-view.js';
 import { bindResultsEvents, renderResultsView } from './ui/results-view.js';
 
 function runSimulation() {
@@ -51,6 +57,8 @@ document.getElementById('btnThemeToggle').addEventListener('click', () => {
 window.addEventListener('resize', () => {
   if (!document.getElementById('view-results').classList.contains('hidden')) {
     refreshResults();
+  } else {
+    refresh3DViewers();
   }
 });
 

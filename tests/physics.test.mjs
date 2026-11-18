@@ -128,10 +128,14 @@ test('05-thermal-5r1c-engine : pas de NaN si zone sans vitrage/ventilation & con
 
 test('06-sia180 & 08-comparator : simulation complète des 4 bâtiments types', () => {
   const lib = createHouseLibrary();
+  assert.equal(lib.length, 5, 'La bibliothèque doit inclure les 5 modèles dont le Constructeur 3D');
   for (const item of lib) {
     const proj = item.build();
     const res = runFullSimulation(proj);
     assert.ok(res.worstFloor.overSIA >= 0);
+    assert.ok(res.worstFloor.minTop <= res.worstFloor.maxTop, 'minTop doit être ≤ maxTop');
+    assert.ok(res.worstFloor.summerMinTop <= res.worstFloor.summerMaxTop, 'summerMinTop ≤ summerMaxTop');
+    assert.ok(res.minTe <= res.maxTe, 'minTe ≤ maxTe');
     assert.ok(res.worstFloor.maxTop > 20 && res.worstFloor.maxTop < 45);
     assert.equal(res.variants.length, 4);
     assert.ok(
@@ -141,6 +145,13 @@ test('06-sia180 & 08-comparator : simulation complète des 4 bâtiments types', 
     const presc = evaluateSIA180PrescriptiveMethods(res.worstFloor);
     assert.equal(presc.method1.criteria.length, 6, 'Méthode 1 doit vérifier les 6 critères Tab. 8');
   }
+
+  // Vérification spécifique du modèle Constructeur 3D (4x5x2.5 m)
+  const boxProj = lib.find(x => x.id === 'local_bureau_box3d').build();
+  assert.equal(boxProj.floors[0].area, 20);
+  assert.ok(boxProj.floors[0].wallExtArea > 5 && boxProj.floors[0].wallExtArea < 7, 'Surface opaque façade Sud nette ~6.2 m²');
+  assert.equal(boxProj.floors[0].roofExtArea, 0, 'Plafond adiabatique => 0 m² vers extérieur');
+  assert.equal(boxProj.openings.length, 1);
 
   const f3 = getSIA180Limits(20, 'fig3');
   assert.ok(Math.abs(f3.upper - (0.33 * 20 + 21.8)) < 1e-6);
@@ -168,6 +179,8 @@ test('07-thermal-comfort : Fanger PMV/PPD (ISO 7730), Seppänen 2006, TM52, EN 1
   const raw = executeEngine(villa, w.data, true, true);
   const comfort = evaluateThermalComfort(raw.floorRaw[0].series);
   assert.ok(comfort.en16798.occHoursEvaluated > 1000);
+  assert.ok(comfort.secoOlt3.occTotalH > 1000);
+  assert.ok(comfort.secoOlt3.occWithin26Pct >= 0 && comfort.secoOlt3.occWithin26Pct <= 100);
   assert.ok(comfort.ashrae55.occHoursEvaluated > 1000);
   assert.ok(typeof comfort.cibse.tm52Pass === 'boolean');
   assert.ok(typeof comfort.cibse.tm59Pass === 'boolean');

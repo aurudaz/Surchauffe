@@ -217,6 +217,7 @@ export function applySimpleGlazingFromInputs() {
 
   renderSimpleOpeningsForFloor(fl);
   updateInspector();
+  refresh3DViewers();
   document.getElementById('railOpeningCount').textContent = project.openings.reduce(
     (s, o) => s + o.qty,
     0
@@ -320,6 +321,7 @@ export function renderOpenings() {
         if (k === 'qty') renderOpenings();
       }
       updateInspector();
+      refresh3DViewers();
     });
   });
 
@@ -328,6 +330,7 @@ export function renderOpenings() {
       project.openings = project.openings.filter(o => o.id !== btn.dataset.delOp);
       renderOpenings();
       updateInspector();
+      refresh3DViewers();
     });
   });
 
@@ -335,17 +338,265 @@ export function renderOpenings() {
     (s, o) => s + o.qty,
     0
   );
+  refresh3DViewers();
+}
+
+function renderBox3dBuilder(wrap) {
+  const { project } = appState;
+  const activeFl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  const flOps = project.openings.filter(o => o.floorId === activeFl.id);
+  const b3 = ensureBox3dDefaults(activeFl, flOps);
+  const orients = getWallOrientations(b3.frontOrient || 'S');
+
+  const faceLabels = [
+    ['front', `Mur Devant (${orients.front})`],
+    ['back', `Mur Fond (${orients.back})`],
+    ['right', `Mur Droit (${orients.right})`],
+    ['left', `Mur Gauche (${orients.left})`],
+    ['ceiling', 'Plafond (X–Y)'],
+    ['floor', 'Plancher (X–Y)']
+  ];
+
+  const card = document.createElement('div');
+  card.className = 'well';
+  card.innerHTML = `
+    <div class="well-head">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:1;">
+        <strong style="color:var(--primary);">Étage actif :</strong>
+        <select id="b3FloorSel" style="width:220px;font-weight:600;">
+          ${project.floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === activeFl.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
+        </select>
+        <span class="pill neutral">Surface : ${activeFl.area.toFixed(1)} m² • Inertie estimée : ${activeFl.cSpec} Wh/m²K</span>
+      </div>
+      ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(activeFl.id)}">Supprimer</button>` : ''}
+    </div>
+
+    <div class="box3d-grid">
+      <div>
+        <div class="wall-panel">
+          <div class="wall-panel-head"><strong>Dimensions &amp; Orientation du volume</strong></div>
+          <div class="g3">
+            <div class="field"><label>Largeur X [m]</label><input type="number" id="b3DimX" step="0.2" min="1" value="${b3.dimX}" /></div>
+            <div class="field"><label>Profondeur Y [m]</label><input type="number" id="b3DimY" step="0.2" min="1" value="${b3.dimY}" /></div>
+            <div class="field"><label>Hauteur Z [m]</label><input type="number" id="b3DimZ" step="0.05" min="1.8" value="${activeFl.height}" /></div>
+          </div>
+          <div class="g2" style="margin-top:8px;">
+            <div class="field">
+              <label>Orient. Mur Devant</label>
+              <select id="b3FrontOrient">
+                ${Object.keys(ORIENTATIONS).filter(o => o !== 'R').map(o => `<option value="${o}" ${o === b3.frontOrient ? 'selected' : ''}>${o} (${ORIENTATIONS[o].label})</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label>Albédo sol [-]</label>
+              <input type="number" id="b3Albedo" step="0.05" min="0.05" max="0.80" value="${project.albedo ?? 0.20}" />
+            </div>
+          </div>
+        </div>
+
+        <div class="viewer3d-card">
+          <div class="viewer3d-toolbar">
+            <strong>Visualisation 3D interactive</strong>
+            <span style="display:flex;gap:4px;">
+              <button class="btn btn-sm" id="b3ViewIso" style="padding:2px 8px;font-size:11px;">Iso</button>
+              <button class="btn btn-sm" id="b3ViewFront" style="padding:2px 8px;font-size:11px;">Face</button>
+              <button class="btn btn-sm" id="b3ViewTop" style="padding:2px 8px;font-size:11px;">Haut</button>
+            </span>
+          </div>
+          <div class="viewer3d-box" style="height:270px;"><canvas id="box3dMainCanvas"></canvas></div>
+        </div>
+      </div>
+
+      <div>
+        ${faceLabels
+          .map(([fk, flabel]) => {
+            const w = b3.walls[fk];
+            const isFloor = fk === 'floor';
+            const showCustomU = w.preset === 'custom';
+            const showCustomWin = !isFloor && w.winPreset === 'custom';
+            return `
+            <div class="wall-panel">
+              <div class="wall-panel-head">
+                <strong>${flabel}</strong>
+                <span class="pill neutral" style="font-size:10.5px;">U=${(w.preset === 'custom' ? w.u : (BOX3D_WALL_PRESETS[w.preset]?.u ?? 0.2)).toFixed(2)} W/m²K</span>
+              </div>
+              <div class="g2">
+                <div class="field">
+                  <label>Condition limite</label>
+                  <select data-b3wall="${fk}" data-k="contact">
+                    ${Object.entries(BOX3D_CONTACTS)
+                      .map(([ck, cv]) => `<option value="${ck}" ${w.contact === ck ? 'selected' : ''}>${cv.label}</option>`)
+                      .join('')}
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Paroi / Composition</label>
+                  <select data-b3wall="${fk}" data-k="preset">
+                    ${Object.entries(BOX3D_WALL_PRESETS)
+                      .map(([pk, pv]) => `<option value="${pk}" ${w.preset === pk ? 'selected' : ''}>${pv.label}</option>`)
+                      .join('')}
+                  </select>
+                </div>
+              </div>
+              ${
+                showCustomU
+                  ? `<div class="g2" style="margin-top:6px;">
+                      <div class="field"><label>Valeur U paroi [W/(m²·K)]</label><input type="number" step="0.02" min="0.05" value="${w.u}" data-b3wall="${fk}" data-k="u" /></div>
+                     </div>`
+                  : ''
+              }
+              ${
+                !isFloor
+                  ? `<div class="g2" style="margin-top:6px;">
+                      <div class="field">
+                        <label>Vitrage / Ouverture</label>
+                        <select data-b3wall="${fk}" data-k="winPreset">
+                          ${Object.entries(BOX3D_WINDOW_PRESETS)
+                            .map(([wk, wv]) => `<option value="${wk}" ${w.winPreset === wk ? 'selected' : ''}>${wv.label}</option>`)
+                            .join('')}
+                        </select>
+                      </div>
+                      ${
+                        w.winPreset !== 'none'
+                          ? `<div class="field">
+                              <label>Store (g_store / commande)</label>
+                              <div style="display:flex;gap:4px;">
+                                <input type="number" step="0.02" min="0.02" max="1" value="${w.gStore ?? 0.12}" data-b3wall="${fk}" data-k="gStore" title="g_store" />
+                                <select data-b3wall="${fk}" data-k="blindMode">
+                                  <option value="auto" ${(w.blindMode || 'auto') === 'auto' ? 'selected' : ''}>Auto</option>
+                                  <option value="always_down" ${w.blindMode === 'always_down' ? 'selected' : ''}>Fermé</option>
+                                  <option value="always_up" ${w.blindMode === 'always_up' ? 'selected' : ''}>Sans</option>
+                                </select>
+                              </div>
+                            </div>`
+                          : '<div></div>'
+                      }
+                    </div>`
+                  : ''
+              }
+              ${
+                showCustomWin
+                  ? `<div class="g4" style="margin-top:6px;">
+                      <div class="field"><label>Larg. [m]</label><input type="number" step="0.1" min="0.2" value="${w.winW}" data-b3wall="${fk}" data-k="winW" /></div>
+                      <div class="field"><label>Haut. [m]</label><input type="number" step="0.1" min="0.2" value="${w.winH}" data-b3wall="${fk}" data-k="winH" /></div>
+                      <div class="field"><label>Qté</label><input type="number" step="1" min="1" value="${w.winQty}" data-b3wall="${fk}" data-k="winQty" /></div>
+                      <div class="field"><label>Casq. [m]</label><input type="number" step="0.1" min="0" value="${w.overhang ?? 0}" data-b3wall="${fk}" data-k="overhang" /></div>
+                    </div>`
+                  : ''
+              }
+            </div>`;
+          })
+          .join('')}
+      </div>
+    </div>
+  `;
+
+  wrap.appendChild(card);
+
+  const commitBox3d = (rerender = false) => {
+    applyBox3dToFloor(activeFl, project);
+    document.getElementById('railOpeningCount').textContent = project.openings.reduce(
+      (s, o) => s + o.qty,
+      0
+    );
+    updateInspector();
+    if (rerender) renderFloors();
+    else refresh3DViewers();
+  };
+
+  card.querySelector('#b3FloorSel').addEventListener('change', e => {
+    appState.activeFloorId = e.target.value;
+    renderFloorSelectors();
+    renderFloors();
+    renderOpenings();
+    loadSiaFloorInputs();
+  });
+
+  card.querySelector('#b3DimX').addEventListener('change', e => {
+    b3.dimX = Math.max(1, Number(e.target.value) || 4);
+    commitBox3d(true);
+  });
+  card.querySelector('#b3DimY').addEventListener('change', e => {
+    b3.dimY = Math.max(1, Number(e.target.value) || 5);
+    commitBox3d(true);
+  });
+  card.querySelector('#b3DimZ').addEventListener('change', e => {
+    activeFl.height = Math.max(1.8, Number(e.target.value) || 2.5);
+    commitBox3d(true);
+  });
+  card.querySelector('#b3FrontOrient').addEventListener('change', e => {
+    b3.frontOrient = e.target.value;
+    commitBox3d(true);
+  });
+  card.querySelector('#b3Albedo').addEventListener('change', e => {
+    project.albedo = Math.max(0.05, Math.min(0.8, Number(e.target.value) || 0.2));
+    const advAlb = document.getElementById('projAlbedo');
+    if (advAlb) advAlb.value = project.albedo;
+  });
+
+  card.querySelectorAll('[data-b3wall]').forEach(el => {
+    el.addEventListener('change', e => {
+      const fk = e.target.dataset.b3wall;
+      const k = e.target.dataset.k;
+      const w = b3.walls[fk];
+      if (!w) return;
+      if (['contact', 'preset', 'winPreset', 'blindMode'].includes(k)) {
+        w[k] = e.target.value;
+        if (k === 'preset' && BOX3D_WALL_PRESETS[w.preset]) {
+          w.u = BOX3D_WALL_PRESETS[w.preset].u;
+        }
+        if (k === 'winPreset' && BOX3D_WINDOW_PRESETS[w.winPreset]) {
+          const wp = BOX3D_WINDOW_PRESETS[w.winPreset];
+          w.winW = wp.w;
+          w.winH = wp.h;
+          w.winQty = wp.qty;
+          w.uWin = wp.uWin;
+          w.gVit = wp.gVit;
+          w.gStore = wp.gStore;
+        }
+        commitBox3d(true);
+      } else {
+        w[k] = Number(e.target.value);
+        commitBox3d(false);
+      }
+    });
+  });
+
+  card.querySelector('#b3ViewIso').addEventListener('click', () => viewerMain3D?.setView('iso'));
+  card.querySelector('#b3ViewFront').addEventListener('click', () => viewerMain3D?.setView('front'));
+  card.querySelector('#b3ViewTop').addEventListener('click', () => viewerMain3D?.setView('top'));
+
+  requestAnimationFrame(() => refresh3DViewers());
 }
 
 export function renderFloors() {
   const { project, uiModes } = appState;
-  const isAdv = uiModes.floors === 'advanced';
-  document.getElementById('floorsSubtitle').textContent = isAdv
-    ? 'Mode Avancé : édition manuelle de toutes les surfaces opaques, facteurs b, valeurs U et ponts thermiques.'
-    : 'Mode Simple : choisissez uniquement la surface, la hauteur, la position de l’étage, le standard SIA et l’inertie.';
+  const mode = uiModes.floors;
+  const isAdv = mode === 'advanced';
+  document.getElementById('floorsSubtitle').textContent =
+    mode === 'box3d'
+      ? 'Constructeur 3D (Paroi par paroi) : définissez X, Y, Z, les 6 parois (contact, composition, vitrages) avec aperçu 3D interactif.'
+      : isAdv
+        ? 'Mode Avancé : édition manuelle de toutes les surfaces opaques, facteurs b, valeurs U et ponts thermiques.'
+        : 'Mode Simple : choisissez uniquement la surface, la hauteur, la position de l’étage, le standard SIA et l’inertie.';
 
   const wrap = document.getElementById('floorsList');
   wrap.innerHTML = '';
+
+  if (mode === 'box3d') {
+    renderBox3dBuilder(wrap);
+    wrap.querySelectorAll('[data-del-floor]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.delFloor;
+        project.floors = project.floors.filter(f => f.id !== id);
+        project.openings = project.openings.filter(o => o.floorId !== id);
+        if (appState.activeFloorId === id) appState.activeFloorId = project.floors[0].id;
+        syncAllUI();
+      });
+    });
+    document.getElementById('railFloorCount').textContent = project.floors.length;
+    return;
+  }
 
   project.floors.forEach((fl, idx) => {
     const opsCount = project.openings.filter(o => o.floorId === fl.id).length;
@@ -465,6 +716,7 @@ export function renderFloors() {
         renderOpenings();
       }
       updateInspector();
+      refresh3DViewers();
     });
   });
 
@@ -479,6 +731,7 @@ export function renderFloors() {
   });
 
   document.getElementById('railFloorCount').textContent = project.floors.length;
+  refresh3DViewers();
 }
 
 export function loadSiaFloorInputs() {
@@ -654,6 +907,8 @@ export function syncAllUI(onResultsRefresh) {
   document.getElementById('projectType').value = project.projectType;
   document.getElementById('siaCurveMode').value = project.siaCurveMode;
   document.getElementById('stackCoupling').checked = project.stackCoupling;
+  const albEl = document.getElementById('projAlbedo');
+  if (albEl) albEl.value = project.albedo ?? 0.20;
 
   renderFloorSelectors();
   renderFloors();
@@ -662,6 +917,7 @@ export function syncAllUI(onResultsRefresh) {
   syncPvgisUI();
   updateInspector();
   Object.keys(appState.uiModes).forEach(part => applyPartModeUI(part, onResultsRefresh));
+  refresh3DViewers();
 }
 
 export function renderLibrary(onLoadProject) {
@@ -675,6 +931,11 @@ export function renderLibrary(onLoadProject) {
       appState.project = item.build();
       appState.activeFloorId = appState.project.floors[0].id;
       appState.customWeather = null;
+      if (item.id === 'local_bureau_box3d') {
+        appState.uiModes.floors = 'box3d';
+      } else if (appState.uiModes.floors === 'box3d') {
+        appState.uiModes.floors = 'simple';
+      }
       syncAllUI();
       onLoadProject();
     });
@@ -702,7 +963,12 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
       btn.classList.add('active');
       document.querySelectorAll('.step-section').forEach(s => s.classList.add('hidden'));
       document.getElementById(btn.dataset.step).classList.remove('hidden');
+      if (btn.dataset.step === 'step-floors') {
+        renderFloors();
+        requestAnimationFrame(refresh3DViewers);
+      }
       if (btn.dataset.step === 'step-openings') renderOpenings();
+      requestAnimationFrame(refresh3DViewers);
     });
   });
 
@@ -719,6 +985,16 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   document.getElementById('stackCoupling').addEventListener('change', e => {
     appState.project.stackCoupling = e.target.checked;
     renderOpenings();
+  });
+
+  document.getElementById('projAlbedo')?.addEventListener('change', e => {
+    appState.project.albedo = Math.max(0.05, Math.min(0.8, Number(e.target.value) || 0.2));
+  });
+
+  document.querySelectorAll('[data-3d-preset]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      viewerInspector?.setView(btn.dataset['3dPreset']);
+    });
   });
 
   document.getElementById('btnAddFloor').addEventListener('click', () => {
@@ -739,8 +1015,10 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     document.getElementById(id).addEventListener('change', e => {
       appState.activeFloorId = e.target.value;
       renderFloorSelectors();
+      renderFloors();
       renderOpenings();
       loadSiaFloorInputs();
+      refresh3DViewers();
     });
   });
 

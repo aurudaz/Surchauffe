@@ -193,8 +193,8 @@ body {
 
 @media print {
   body { background: #fff !important; color: #000 !important; overflow: visible !important; height: auto !important; }
-  .studio-header, .left-rail, .right-inspector, #view-config, .btn, select, input { display: none !important; }
+  .studio-header, .left-rail, .right-inspector, #view-config, .btn, select, input, .seg-pill { display: none !important; }
   .results-pane { overflow: visible !important; padding: 0 !important; }
-  .card, .kpi-box, .comfort-card { border: 1px solid #ccc !important; background: #fff !important; break-inside: avoid; }
-  .hidden { display: block !important; }
+  .card, .kpi-box, .comfort-card, .verdict-banner, .scenario-row { border: 1px solid #ccc !important; background: #fff !important; break-inside: avoid; }
+  .hidden { display: none !important; }
 }

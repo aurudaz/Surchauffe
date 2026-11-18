@@ -130,6 +130,8 @@ export function renderSimpleOpeningsForFloor(fl) {
     document.getElementById('simpBlindMode').value = firstOp.blindMode;
     document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
   }
+  const horEl = document.getElementById('simpHorizon');
+  if (horEl) horEl.value = appState.project.horizonDeg ?? 0;
 
   const totalWin = ops.reduce((s, o) => s + o.width * o.height * o.qty, 0);
   document.getElementById('simpleGlazingSummary').textContent =
@@ -171,6 +173,10 @@ export function applySimpleGlazingFromInputs() {
 
   const blindMode = document.getElementById('simpBlindMode').value;
   const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
+  const horEl = document.getElementById('simpHorizon');
+  if (horEl) {
+    project.horizonDeg = Math.max(0, Math.min(60, parseFloat(horEl.value) || 0));
+  }
 
   project.openings = project.openings.filter(o => o.floorId !== fl.id);
   const labels = {
@@ -202,7 +208,7 @@ export function applySimpleGlazingFromInputs() {
       frameFactor: 0.78,
       shadingFactor: 0.95,
       blindMode,
-      blindThreshI: 150,
+      blindThreshI: 200,
       blindThreshT: 23.0,
       windSafe: true,
       operable: true,
@@ -263,7 +269,9 @@ export function renderOpenings() {
         <option value="product" ${op.gtotMode === 'product' ? 'selected' : ''}>g×g</option>
         <option value="direct" ${op.gtotMode === 'direct' ? 'selected' : ''}>g_tot</option>
       </select></td>
-      <td><input type="number" step="0.1" min="0" value="${op.overhangDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="overhangDepth" style="width:56px;" /></td>
+      <td><input type="number" step="0.1" min="0" value="${op.overhangDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="overhangDepth" style="width:52px;" /></td>
+      <td><input type="number" step="0.1" min="0" value="${op.leftFinDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="sideFinDepth" style="width:52px;" title="Profondeur écrans latéraux G/D [m]" /></td>
+      <td><input type="number" step="5" min="0" max="60" value="${op.horizonDeg ?? project.horizonDeg ?? 0}" data-op="${escapeHtml(op.id)}" data-k="horizonDeg" style="width:48px;" title="Angle d'horizon [°]" /></td>
       <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:82px;">
         <option value="auto" ${op.blindMode === 'auto' ? 'selected' : ''}>Auto</option>
         <option value="manual_day" ${op.blindMode === 'manual_day' ? 'selected' : ''}>Manuel</option>
@@ -316,6 +324,10 @@ export function renderOpenings() {
       } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'openType'].includes(k)) {
         op[k] = e.target.value;
         if (['name', 'openType', 'floorId'].includes(k)) renderOpenings();
+      } else if (k === 'sideFinDepth') {
+        const v = Math.max(0, Number(e.target.value) || 0);
+        op.leftFinDepth = v;
+        op.rightFinDepth = v;
       } else {
         op[k] = Number(e.target.value);
         if (k === 'qty') renderOpenings();
@@ -832,6 +844,11 @@ export function syncPvgisUI() {
   document.getElementById('pvLat').value = project.climate.lat;
   document.getElementById('pvLon').value = project.climate.lon;
   document.getElementById('pvTzMode').value = project.climate.tzMode || 'cet_cest';
+  const uhi = Boolean(project.climate.urbanHeatIsland);
+  const cUhi = document.getElementById('climateUHI');
+  const pUhi = document.getElementById('projUHI');
+  if (cUhi) cUhi.checked = uhi;
+  if (pUhi) pUhi.checked = uhi;
 
   const badge = document.getElementById('weatherStatusBadge');
   if (customWeather) {
@@ -839,7 +856,7 @@ export function syncPvgisUI() {
     badge.className = 'pill ok';
   } else {
     const st = SWISS_STATIONS[project.climate.station] || SWISS_STATIONS.SIO;
-    badge.textContent = `Climat actif : ${st.name} (${project.climate.scenario})`;
+    badge.textContent = `Climat actif : ${st.name} (${project.climate.scenario}${uhi ? ' + Îlot chaleur' : ''})`;
     badge.className = 'pill neutral';
   }
 
@@ -878,14 +895,11 @@ export function applyPartModeUI(part, onResultsRefresh) {
     document.getElementById('climateAdvBox').classList.toggle('hidden', mode === 'simple');
   } else if (part === 'results') {
     const isAdv = mode === 'advanced';
+    const simpleView = document.getElementById('resultsSimpleView');
+    const advView = document.getElementById('resultsAdvView');
+    if (simpleView) simpleView.classList.toggle('hidden', isAdv);
+    if (advView) advView.classList.toggle('hidden', !isAdv);
     document.querySelectorAll('.res-adv-only').forEach(el => el.classList.toggle('hidden', !isAdv));
-    if (!isAdv) {
-      const activeSub = document.querySelector('.sub-tab.active');
-      if (activeSub && activeSub.classList.contains('res-adv-only')) {
-        const m3Btn = document.querySelector('.sub-tab[data-sub="m3"]');
-        if (m3Btn) m3Btn.click();
-      }
-    }
     if (!document.getElementById('view-results').classList.contains('hidden') && onResultsRefresh) {
       onResultsRefresh();
     }
@@ -907,6 +921,8 @@ export function syncAllUI(onResultsRefresh) {
   document.getElementById('projectType').value = project.projectType;
   document.getElementById('siaCurveMode').value = project.siaCurveMode;
   document.getElementById('stackCoupling').checked = project.stackCoupling;
+  const foehnEl = document.getElementById('projFoehn');
+  if (foehnEl) foehnEl.checked = Boolean(project.foehnExposed);
   const albEl = document.getElementById('projAlbedo');
   if (albEl) albEl.value = project.albedo ?? 0.20;
 
@@ -978,7 +994,18 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   });
   document.getElementById('projectType').addEventListener('change', e => {
     appState.project.projectType = e.target.value;
+    onRunSimulation();
   });
+  document.getElementById('projFoehn')?.addEventListener('change', e => {
+    appState.project.foehnExposed = e.target.checked;
+  });
+  const syncUhiCheckboxes = checked => {
+    appState.project.climate.urbanHeatIsland = checked;
+    syncPvgisUI();
+    updateInspector();
+  };
+  document.getElementById('projUHI')?.addEventListener('change', e => syncUhiCheckboxes(e.target.checked));
+  document.getElementById('climateUHI')?.addEventListener('change', e => syncUhiCheckboxes(e.target.checked));
   document.getElementById('siaCurveMode').addEventListener('change', e => {
     appState.project.siaCurveMode = e.target.value;
   });
@@ -1022,8 +1049,8 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     });
   });
 
-  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindMode', 'simpOverhang'].forEach(id => {
-    document.getElementById(id).addEventListener('change', applySimpleGlazingFromInputs);
+  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindMode', 'simpOverhang', 'simpHorizon'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', applySimpleGlazingFromInputs);
   });
 
   ['simpOpenBasis', 'simpOpenPct', 'simpOpenEff', 'simpOpenCross'].forEach(id => {
@@ -1060,7 +1087,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
       frameFactor: 0.78,
       shadingFactor: 0.95,
       blindMode: 'auto',
-      blindThreshI: 150,
+      blindThreshI: 200,
       blindThreshT: 23.0,
       windSafe: true,
       operable: true,

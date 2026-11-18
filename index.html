@@ -64,14 +64,25 @@
           <div class="g2">
             <div class="field"><label>Nom du projet</label><input type="text" id="projName" value="Villa individuelle R+1" /></div>
             <div class="field">
-              <label>Exigence de tolérance (SIA 180 / Minergie)</label>
+              <label>Exigence de tolérance (Minergie / SIA 180)</label>
               <select id="projectType">
-                <option value="new" selected>Bureau / École / Minergie / Stricte (≤ 100 h/an)</option>
+                <option value="minergie">Minergie — Confort estival (≤ 100 h/an &gt; 26.5 °C)</option>
+                <option value="new" selected>Bureau / École / SIA 180 stricte (≤ 100 h/an)</option>
                 <option value="residential_400">Habitation SIA 180 standard (≤ 400 h/an)</option>
                 <option value="reno">Transformation / Rénovation SIA 180 (≤ 400 h/an)</option>
                 <option value="zero">Exigence zéro surchauffe / EN-102 strict (0 h/an)</option>
               </select>
             </div>
+          </div>
+          <div class="g2" style="margin-top:10px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;">
+              <input type="checkbox" id="projUHI" />
+              Effet « Îlot de chaleur » urbain (Minergie villes : nuits +1.8 °C)
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;">
+              <input type="checkbox" id="projFoehn" />
+              Zone exposée au föhn (résistance au vent stores SIA 342)
+            </label>
           </div>
           <div id="houseAdvBox" class="hidden" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
             <div class="g3">
@@ -160,7 +171,7 @@
                 <div class="field"><label>Nord [%]</label><input type="number" id="simpPctN" min="0" max="95" step="5" /></div>
                 <div class="field"><label>Toiture [% sol]</label><input type="number" id="simpPctR" min="0" max="40" step="1" /></div>
               </div>
-              <div class="g3" style="margin-top:12px;">
+              <div class="g4" style="margin-top:12px;">
                 <div class="field">
                   <label>Protection solaire (stores) sur l'étage</label>
                   <select id="simpShading">
@@ -176,7 +187,7 @@
                 <div class="field">
                   <label>Commande des stores</label>
                   <select id="simpBlindMode">
-                    <option value="auto">Automatique (selon soleil / T°)</option>
+                    <option value="auto">Automatique (seuil 200 W/m²)</option>
                     <option value="manual_day">Manuelle (pendant occupation)</option>
                     <option value="always_down">Toujours baissés</option>
                     <option value="always_up">Toujours levés</option>
@@ -185,6 +196,11 @@
                 <div class="field">
                   <label>Casquette / avant-toit moyen [m]</label>
                   <input type="number" id="simpOverhang" min="0" max="4" step="0.1" value="0" />
+                </div>
+                <div class="field">
+                  <label>Angle d'horizon [°]</label>
+                  <input type="number" id="simpHorizon" min="0" max="60" step="5" value="0" />
+                  <small>0° dégagé • 20° défaut Minergie</small>
                 </div>
               </div>
             </div>
@@ -249,7 +265,7 @@
                 <thead>
                   <tr>
                     <th>Étage</th><th>Nom</th><th>Orient.</th><th>L [m]</th><th>H [m]</th><th>Qté</th>
-                    <th>U_fen</th><th>g_vit</th><th>g_store</th><th>Mode</th><th>Casq. [m]</th><th>Store</th><th>Nuit</th><th></th>
+                    <th>U_fen</th><th>g_vit</th><th>g_store</th><th>Mode</th><th>Casq. [m]</th><th>Écr. lat [m]</th><th>Hor. [°]</th><th>Store</th><th>Nuit</th><th></th>
                   </tr>
                 </thead>
                 <tbody id="openingsTableBody"></tbody>
@@ -367,25 +383,32 @@
               <label>Station climatique suisse</label>
               <select id="climateStation">
                 <option value="SIO" selected>Sion (46.22°N, 7.33°E)</option>
+                <option value="GVE">Genève (46.25°N, 6.13°E — ville UHI)</option>
+                <option value="LSN">Lausanne (46.52°N, 6.63°E — ville UHI)</option>
+                <option value="BER">Berne (46.99°N, 7.46°E — ville UHI)</option>
+                <option value="BAS">Bâle (47.54°N, 7.58°E — ville UHI)</option>
+                <option value="ZRH">Zurich (47.38°N, 8.57°E — ville UHI)</option>
+                <option value="LUG">Lugano (46.00°N, 8.96°E)</option>
                 <option value="MVE">Montana (46.30°N, 7.46°E)</option>
                 <option value="ZER">Zermatt (46.02°N, 7.75°E)</option>
                 <option value="GSB">Grand-St-Bernard (45.87°N, 7.17°E)</option>
-                <option value="GVE">Genève (46.25°N, 6.13°E)</option>
-                <option value="LSN">Lausanne (46.52°N, 6.63°E)</option>
-                <option value="ZRH">Zurich (47.38°N, 8.57°E)</option>
-                <option value="LUG">Lugano (46.00°N, 8.96°E)</option>
               </select>
             </div>
             <div class="field">
               <label>Scénario climatique</label>
               <select id="climateScenario">
-                <option value="REF" selected>Climat de référence (REF)</option>
-                <option value="2050">Projection 2050 (+1.5 °C)</option>
-                <option value="2100">Projection 2100 (+4.2 °C)</option>
+                <option value="REF" selected>Climat de référence (2010 / SIA 2028)</option>
+                <option value="2035">Projection Minergie 2035 (+1.1 °C / +1.5 °C été)</option>
+                <option value="2050">Projection 2050 (+1.5 °C / +2.0 °C été)</option>
+                <option value="2100">Projection 2100 (+4.2 °C / +5.2 °C été)</option>
               </select>
             </div>
           </div>
-          <div style="margin-top:10px;">
+          <div style="margin-top:10px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12.5px;">
+              <input type="checkbox" id="climateUHI" />
+              Effet « Îlot de chaleur » urbain (nuit +1.8 °C / jour +0.4 °C)
+            </label>
             <span class="pill neutral" id="weatherStatusBadge">Climat actif : Synthétique calibré</span>
           </div>
         </div>
@@ -474,8 +497,8 @@
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <div class="seg-pill" data-part-toggle="results">
-          <button class="seg-btn active-blue" data-mode="simple">Vue Simple</button>
-          <button class="seg-btn" data-mode="advanced">Vue Avancée</button>
+          <button class="seg-btn active-blue" data-mode="simple">Rapport Simple (Minergie)</button>
+          <button class="seg-btn" data-mode="advanced">Vue Avancée (Détails)</button>
         </div>
         <select id="resFloorSelect" style="width:220px;"></select>
         <button class="btn btn-sm" id="btnExportCSV">Exporter .csv</button>
@@ -483,70 +506,97 @@
       </div>
     </div>
 
-    <div class="kpi-row" id="kpiGrid"></div>
-
-    <!-- DIAGNOSTIC & JUSTIFICATIFS SIA 180 + MÉTHODOLOGIE -->
-    <div class="card">
-      <h3 class="card-title">Diagnostic SIA 180, Comparateur &amp; Méthodologie de calcul</h3>
-      <div class="sub-tabs" id="resSubTabs">
-        <button class="sub-tab active" data-sub="m3">Méthode 3 — Simulation &amp; Recommandations</button>
-        <button class="sub-tab" data-sub="compare">Comparateur (Actuel / Optimal / Oubli / 2050)</button>
-        <button class="sub-tab res-adv-only" data-sub="m2">Méthode 2 — Figure 12</button>
-        <button class="sub-tab res-adv-only" data-sub="m1">Méthode 1 — Tableau 8</button>
-        <button class="sub-tab" data-sub="floors">Synthèse par étage</button>
-        <button class="sub-tab" data-sub="methodology">Méthodologie &amp; Traçabilité</button>
-      </div>
-      <div id="sub-m3"></div>
-      <div id="sub-compare" class="hidden"></div>
-      <div id="sub-m2" class="hidden"></div>
-      <div id="sub-m1" class="hidden"></div>
-      <div id="sub-floors" class="hidden"></div>
-      <div id="sub-methodology" class="hidden"></div>
-    </div>
-
-    <!-- SECTION CONFORT THERMIQUE CIBLÉE (SUISSE + OMS + 2 RÉFÉRENCES) -->
-    <div class="card">
-      <h3 class="card-title">
-        <span>Confort thermique — Normes suisses, OMS &amp; Références clés</span>
-        <span class="pill neutral">SIA 180 &amp; SECO (CH) • OMS (Santé/Sommeil) • EN 16798-1 • ISO 7730 (PMV/PPD)</span>
-      </h3>
-      <div id="comfortSectionBody"></div>
-    </div>
-
-    <!-- GRAPHIQUE 1 -->
-    <div class="card">
-      <h3 class="card-title">
-        <span>Évolution horaire : θ_op(t), θ_e(t) et limite SIA 180</span>
-        <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <label style="font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;">
-            <input type="checkbox" id="plotCompareFloors" checked /> Comparer étages
-          </label>
-          <select id="plotWindow" style="width:185px;padding:4px 8px;font-size:12px;">
-            <option value="hottest14" selected>14 jours autour du pic</option>
-            <option value="summer">Été complet (juin–août)</option>
-            <option value="year">Année complète (8760 h)</option>
-          </select>
-        </span>
-      </h3>
-      <div class="chart-box"><canvas id="chartTime"></canvas></div>
-    </div>
-
-    <!-- GRAPHIQUES 2 & 3 -->
-    <div class="charts-two">
+    <!-- ==================== VUE SIMPLE : RAPPORT MINERGIE (2 MIN) ==================== -->
+    <div id="resultsSimpleView" style="display:flex;flex-direction:column;gap:16px;">
+      <div id="simpleReportBody" style="display:flex;flex-direction:column;gap:16px;"></div>
       <div class="card">
-        <h3 class="card-title">Domaine adaptatif SIA 180 (θ_op vs θ_rm,48h)</h3>
-        <div class="chart-box"><canvas id="chartSIA"></canvas></div>
-      </div>
-      <div class="card res-adv-only">
-        <h3 class="card-title">Bilan thermique estival (Mai–Septembre) [kWh]</h3>
-        <div class="chart-box"><canvas id="chartBalance"></canvas></div>
+        <h3 class="card-title">
+          <span>Températures pendant les 14 jours les plus chauds</span>
+          <span class="pill neutral" id="simpleChartBadge">Zone rouge = dépassement du seuil de confort</span>
+        </h3>
+        <div class="chart-box" style="height:260px;"><canvas id="chartSimpleHeatwave"></canvas></div>
       </div>
     </div>
 
-    <!-- GRAPHIQUE 4 -->
-    <div class="card res-adv-only">
-      <h3 class="card-title">Apports solaires estivaux transmis par orientation [kWh]</h3>
-      <div class="chart-box" style="height:210px;"><canvas id="chartOrient"></canvas></div>
+    <!-- ==================== VUE AVANCÉE : INGÉNIERIE & DÉTAILS ==================== -->
+    <div id="resultsAdvView" class="hidden" style="display:flex;flex-direction:column;gap:16px;">
+      <div class="kpi-row" id="kpiGrid"></div>
+
+      <!-- PUISSANCE DES GAINS & DÉTAIL COMPLET DES APPORTS -->
+      <div class="card">
+        <h3 class="card-title">
+          <span>Puissance des gains &amp; Détail complet des apports thermiques</span>
+          <span class="pill neutral" id="advGainsSummaryBadge"></span>
+        </h3>
+        <div id="advGainsBody"></div>
+        <div class="chart-box" style="height:220px;margin-top:12px;"><canvas id="chartGainsDetail"></canvas></div>
+      </div>
+
+      <!-- DIAGNOSTIC & JUSTIFICATIFS SIA 180 / MINERGIE + MÉTHODOLOGIE -->
+      <div class="card">
+        <h3 class="card-title">Justificatifs Minergie &amp; SIA 180, Scénarios &amp; Méthodologie</h3>
+        <div class="sub-tabs" id="resSubTabs">
+          <button class="sub-tab active" data-sub="m3">Méthode 3 — Simulation &amp; Recommandations</button>
+          <button class="sub-tab" data-sub="minergie">Justificatif Minergie (Variante 2)</button>
+          <button class="sub-tab" data-sub="compare">Comparateur (Scénarios d'usage &amp; climat)</button>
+          <button class="sub-tab" data-sub="m2">Méthode 2 — Figure 12</button>
+          <button class="sub-tab" data-sub="m1">Méthode 1 — Tableau 8</button>
+          <button class="sub-tab" data-sub="floors">Synthèse par étage</button>
+          <button class="sub-tab" data-sub="methodology">Méthodologie &amp; Traçabilité</button>
+        </div>
+        <div id="sub-m3"></div>
+        <div id="sub-minergie" class="hidden"></div>
+        <div id="sub-compare" class="hidden"></div>
+        <div id="sub-m2" class="hidden"></div>
+        <div id="sub-m1" class="hidden"></div>
+        <div id="sub-floors" class="hidden"></div>
+        <div id="sub-methodology" class="hidden"></div>
+      </div>
+
+      <!-- SECTION CONFORT THERMIQUE CIBLÉE (SUISSE + OMS + EN 16798-1 + FANGER) -->
+      <div class="card">
+        <h3 class="card-title">
+          <span>Confort thermique — Normes suisses, OMS &amp; Références scientifiques</span>
+          <span class="pill neutral">SIA 180 &amp; SECO (CH) • OMS (Santé/Sommeil) • EN 16798-1 • ISO 7730 (PMV/PPD) • CIBSE • Seppänen</span>
+        </h3>
+        <div id="comfortSectionBody"></div>
+      </div>
+
+      <!-- GRAPHIQUE 1 -->
+      <div class="card">
+        <h3 class="card-title">
+          <span>Évolution horaire : θ_op(t), θ_e(t) et limite SIA 180</span>
+          <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <label style="font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:5px;cursor:pointer;">
+              <input type="checkbox" id="plotCompareFloors" checked /> Comparer étages
+            </label>
+            <select id="plotWindow" style="width:185px;padding:4px 8px;font-size:12px;">
+              <option value="hottest14" selected>14 jours autour du pic</option>
+              <option value="summer">Été complet (juin–août)</option>
+              <option value="year">Année complète (8760 h)</option>
+            </select>
+          </span>
+        </h3>
+        <div class="chart-box"><canvas id="chartTime"></canvas></div>
+      </div>
+
+      <!-- GRAPHIQUES 2 & 3 -->
+      <div class="charts-two">
+        <div class="card">
+          <h3 class="card-title">Domaine adaptatif SIA 180 (θ_op vs θ_rm,48h)</h3>
+          <div class="chart-box"><canvas id="chartSIA"></canvas></div>
+        </div>
+        <div class="card">
+          <h3 class="card-title">Bilan thermique estival (Mai–Septembre) [kWh]</h3>
+          <div class="chart-box"><canvas id="chartBalance"></canvas></div>
+        </div>
+      </div>
+
+      <!-- GRAPHIQUE 4 -->
+      <div class="card">
+        <h3 class="card-title">Apports solaires estivaux transmis par orientation [kWh &amp; pic W]</h3>
+        <div class="chart-box" style="height:210px;"><canvas id="chartOrient"></canvas></div>
+      </div>
     </div>
 
   </div>

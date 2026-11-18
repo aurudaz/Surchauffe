@@ -8,8 +8,9 @@
  * Note : les clés 'new' et 'reno' sont conservées pour compatibilité rétroactive JSON.
  */
 export const SIA180_TOLERANCE_PROFILES = {
-  new:             { hours: 100, label: 'Bureau / École / Minergie / Exigence stricte (≤ 100 h/an)' },
-  strict_100:      { hours: 100, label: 'Bureau / École / Minergie / Exigence stricte (≤ 100 h/an)' },
+  minergie:        { hours: 100, tempLimitC: 26.5, label: 'Minergie — Confort estival (≤ 100 h/an > 26.5 °C)' },
+  new:             { hours: 100, label: 'Bureau / École / SIA 180 stricte (≤ 100 h/an)' },
+  strict_100:      { hours: 100, label: 'Bureau / École / SIA 180 stricte (≤ 100 h/an)' },
   residential_400: { hours: 400, label: 'Habitation SIA 180 standard (≤ 400 h/an)' },
   reno:            { hours: 400, label: 'Transformation / Rénovation / Habitation SIA 180 (≤ 400 h/an)' },
   zero:            { hours: 0,   label: 'Exigence zéro surchauffe / Froid fictif (0 h/an)' }

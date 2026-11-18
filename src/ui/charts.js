@@ -451,3 +451,213 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
     lx += itemW + 6;
   }
 }
+
+/**
+ * Graphique simplifié (Vue Rapport Minergie) :
+ * Évolution de la température intérieure vs extérieure sur les 14 jours les plus chauds,
+ * avec seuil de confort fixe (26.5 °C) et mise en évidence visuelle des zones de surchauffe.
+ */
+export function drawSimpleHeatwaveChart(activeFR, thresholdC = 26.5) {
+  const prep = prepCanvas('chartSimpleHeatwave');
+  if (!prep || !activeFR.series || activeFR.series.length < 2) return null;
+  const { c, ctx, w, h } = prep;
+  const pad = { l: 46, r: 16, t: 28, b: 28 };
+  const pw = w - pad.l - pad.r;
+  const ph = h - pad.t - pad.b;
+  const S = activeFR.series;
+
+  let i0 = Math.max(0, activeFR.maxTopHour - 7 * 24);
+  let i1 = Math.min(S.length - 1, i0 + 14 * 24);
+  if (i1 - i0 < 24) {
+    i0 = Math.max(0, S.length - 14 * 24);
+    i1 = S.length - 1;
+  }
+  const len = i1 - i0 + 1;
+  if (len < 2) return null;
+
+  let yMin = 100;
+  let yMax = -100;
+  for (let i = i0; i <= i1; i++) {
+    yMin = Math.min(yMin, S[i].Te, S[i].Top);
+    yMax = Math.max(yMax, S[i].Te, S[i].Top, thresholdC + 1);
+  }
+  yMin = Math.floor((yMin - 1) / 5) * 5;
+  yMax = Math.ceil((yMax + 1) / 5) * 5;
+  if (yMax <= yMin) yMax = yMin + 10;
+
+  const xOf = r => pad.l + (r / (len - 1)) * pw;
+  const yOf = v => pad.t + ph - ((v - yMin) / (yMax - yMin)) * ph;
+
+  ctx.font = '11px Inter, sans-serif';
+  const gridCol = cssVar('--grid-line');
+  const txtCol = cssVar('--text-muted');
+
+  for (let y = yMin; y <= yMax; y += 5) {
+    const py = yOf(y);
+    ctx.strokeStyle = gridCol;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, py);
+    ctx.lineTo(w - pad.r, py);
+    ctx.stroke();
+    ctx.fillStyle = txtCol;
+    ctx.textAlign = 'right';
+    ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
+  }
+
+  const totalD = Math.max(1, Math.round(len / 24));
+  for (let d = 0; d <= totalD; d += 2) {
+    const rel = Math.min(len - 1, d * 24);
+    ctx.fillStyle = txtCol;
+    ctx.textAlign = 'center';
+    ctx.fillText(`J${S[i0 + rel].d + 1}`, xOf(rel), h - 8);
+  }
+
+  // Remplissage rouge là où θ_op dépasse le seuil de confort
+  const yThresh = yOf(thresholdC);
+  ctx.fillStyle = 'rgba(242, 139, 130, 0.28)';
+  ctx.beginPath();
+  let inHot = false;
+  for (let i = i0; i <= i1; i++) {
+    const px = xOf(i - i0);
+    const val = S[i].Top;
+    if (val > thresholdC) {
+      if (!inHot) {
+        ctx.moveTo(px, yThresh);
+        inHot = true;
+      }
+      ctx.lineTo(px, yOf(val));
+    } else if (inHot) {
+      ctx.lineTo(px, yThresh);
+      ctx.closePath();
+      inHot = false;
+    }
+  }
+  if (inHot) {
+    ctx.lineTo(xOf(len - 1), yThresh);
+    ctx.closePath();
+  }
+  ctx.fill();
+
+  // Température extérieure
+  ctx.strokeStyle = '#9aa0a6';
+  ctx.lineWidth = 1.3;
+  ctx.beginPath();
+  for (let i = i0; i <= i1; i++) {
+    const px = xOf(i - i0);
+    const py = yOf(S[i].Te);
+    if (i === i0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // Ligne seuil 26.5 °C
+  ctx.strokeStyle = '#81c995';
+  ctx.lineWidth = 1.8;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(pad.l, yThresh);
+  ctx.lineTo(w - pad.r, yThresh);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Température intérieure
+  ctx.strokeStyle = '#4285f4';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  for (let i = i0; i <= i1; i++) {
+    const px = xOf(i - i0);
+    const py = yOf(S[i].Top);
+    if (i === i0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  const leg = [
+    ['Temp. intérieure', '#4285f4'],
+    ['Temp. extérieure', '#9aa0a6'],
+    [`Seuil confort (${thresholdC.toFixed(1)} °C)`, '#81c995'],
+    ['Dépassement', '#f28b82']
+  ];
+  let lx = pad.l + 4;
+  for (const [lbl, col] of leg) {
+    const itemW = ctx.measureText(lbl).width + 26;
+    if (lx + itemW > w - pad.r) break;
+    ctx.fillStyle = col;
+    ctx.fillRect(lx, 8, 12, 4);
+    ctx.fillStyle = cssVar('--text');
+    ctx.textAlign = 'left';
+    ctx.fillText(lbl, lx + 16, 13);
+    lx += itemW + 10;
+  }
+
+  return { c, i0, i1, pad, pw, activeFR, thresholdC };
+}
+
+/**
+ * Graphique détaillé des puissances de pointe [W] et apports estivaux [kWh] par source de gain
+ * (Personnes, Lampes, Appareils, Solaire transmis vs brut hors stores, Conduction entrante).
+ */
+export function drawGainsDetailChart(activeFR) {
+  const prep = prepCanvas('chartGainsDetail');
+  if (!prep || !activeFR.gains) return;
+  const { ctx, w, h } = prep;
+  const g = activeFR.gains;
+
+  const items = [
+    { lbl: 'Personnes (occupants)', peakW: g.people.peakW, kwh: g.people.summerKWh, col: '#c58af9' },
+    { lbl: 'Lampes (éclairage)', peakW: g.lighting.peakW, kwh: g.lighting.summerKWh, col: '#fdd663' },
+    { lbl: 'Appareils (appliances)', peakW: g.appliances.peakW, kwh: g.appliances.summerKWh, col: '#ffab70' },
+    {
+      lbl: 'Solaire transmis (avec stores)',
+      peakW: g.solarTransmitted.peakW,
+      kwh: g.solarTransmitted.summerKWh,
+      col: '#f28b82',
+      ghostW: g.solarUnshaded.peakW
+    },
+    { lbl: 'Conduction entrante', peakW: g.conductionIn.peakW, kwh: g.conductionIn.summerKWh, col: '#78d9ec' }
+  ];
+
+  const maxW = Math.max(50, ...items.map(x => Math.max(x.peakW, x.ghostW || 0)));
+  const padL = 190;
+  const padR = 175;
+  const padT = 22;
+  const padB = 10;
+  const rowH = (h - padT - padB) / items.length;
+  const barMaxW = Math.max(40, w - padL - padR);
+
+  ctx.font = '11px Inter, sans-serif';
+  ctx.fillStyle = cssVar('--text-muted');
+  ctx.textAlign = 'left';
+  ctx.fillText('Puissance de pointe [W] (contour = solaire brut sans stores)', padL, 13);
+
+  items.forEach((it, i) => {
+    const y = padT + i * rowH;
+    const bh = Math.max(10, rowH - 13);
+    const by = y + 4;
+
+    ctx.fillStyle = cssVar('--text-muted');
+    ctx.textAlign = 'right';
+    ctx.fillText(it.lbl, padL - 10, by + bh * 0.72);
+
+    if (it.ghostW && it.ghostW > it.peakW) {
+      const gw = (it.ghostW / maxW) * barMaxW;
+      ctx.strokeStyle = 'rgba(129, 201, 149, 0.75)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(padL, by, gw, bh);
+      ctx.setLineDash([]);
+    }
+
+    const bw = (Math.max(0, it.peakW) / maxW) * barMaxW;
+    ctx.fillStyle = it.col;
+    if (bw > 0) fillRoundedRect(ctx, padL, by, bw, bh, 4);
+
+    const endX = padL + Math.max(bw, (it.ghostW || 0) > it.peakW ? (it.ghostW / maxW) * barMaxW : 0) + 8;
+    ctx.fillStyle = cssVar('--text');
+    ctx.textAlign = 'left';
+    const labelTxt = it.ghostW && it.ghostW > it.peakW
+      ? `${it.peakW.toFixed(0)} W (brut ${it.ghostW.toFixed(0)} W) • ${it.kwh.toFixed(0)} kWh`
+      : `${it.peakW.toFixed(0)} W • ${it.kwh.toFixed(0)} kWh`;
+    ctx.fillText(labelTxt, endX, by + bh * 0.72);
+  });
+}

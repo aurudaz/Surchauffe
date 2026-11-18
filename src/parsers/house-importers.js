@@ -85,7 +85,13 @@ export function parseHouseFile(text, filename, fallbackClimate = null) {
       if (o.overhangDepth === undefined) o.overhangDepth = 0;
       if (o.frameFactor === undefined) o.frameFactor = 0.78;
       if (o.shadingFactor === undefined) o.shadingFactor = 0.95;
+      if (o.blindThreshI === undefined) o.blindThreshI = 200;
     });
+    if (obj.horizonDeg === undefined) obj.horizonDeg = 0;
+    if (obj.foehnExposed === undefined) obj.foehnExposed = false;
+    if (obj.climate && obj.climate.urbanHeatIsland === undefined) {
+      obj.climate.urbanHeatIsland = false;
+    }
     return {
       proj: obj,
       msg: `Projet JSON importé : ${obj.floors.length} étage(s), ${obj.openings.length} ouverture(s).`

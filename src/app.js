@@ -19,8 +19,10 @@ function runSimulation() {
   appState.lastResults = res;
 
   const badge = document.getElementById('navBadgeHours');
-  badge.textContent = `${res.worstFloor.overSIA} h/an`;
-  badge.className = `pill ${res.worstFloor.overSIA <= res.limHours ? 'ok' : 'ko'}`;
+  const isMinergie = appState.project.projectType === 'minergie';
+  const hrs = isMinergie ? res.worstFloor.overMinergie265 : res.worstFloor.overSIA;
+  badge.textContent = `${hrs} h/an`;
+  badge.className = `pill ${hrs <= res.limHours ? 'ok' : 'ko'}`;
   updateInspector();
   return res;
 }

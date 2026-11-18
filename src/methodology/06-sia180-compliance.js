@@ -3,6 +3,7 @@
  * score de résilience estivale et recommandations automatiques.
  */
 
+import { evaluateMinergieVariante2 } from '../standards/minergie.js';
 import {
   getMethod1MaxGlazingRatio,
   getMethod2GtotLimit,
@@ -12,14 +13,15 @@ import {
 /**
  * Calcule le score de résilience estivale [0..100] calibré sur les grandeurs physiques 5R1C.
  */
-export function computeResilienceScore(fr, limHours = 100) {
+export function computeResilienceScore(fr, limHours = 100, projectType = 'new') {
   const refLim = Math.max(100, limHours);
+  const overVal = projectType === 'minergie' ? (fr.overMinergie265 ?? fr.overSIA) : fr.overSIA;
   const sHours =
-    fr.overSIA === 0
+    overVal === 0
       ? 50
-      : fr.overSIA <= refLim
-        ? 50 - 35 * (fr.overSIA / refLim)
-        : Math.max(0, 15 - 0.05 * (fr.overSIA - refLim));
+      : overVal <= refLim
+        ? 50 - 35 * (overVal / refLim)
+        : Math.max(0, 15 - 0.05 * (overVal - refLim));
 
   const sPeak = fr.maxTop <= 25.5 ? 20 : Math.max(0, 20 * (1 - (fr.maxTop - 25.5) / 6.0));
   const sSolar = fr.avgGtot <= 0.10 ? 15 : Math.max(0, 15 * (1 - (fr.avgGtot - 0.10) / 0.45));
@@ -113,8 +115,13 @@ export function evaluateSIA180PrescriptiveMethods(fr) {
 /**
  * Génère les recommandations techniques prioritaires pour un étage.
  */
-export function buildRecommendations(fr, limHours) {
+export function buildRecommendations(fr, limHours, projectType = 'new') {
   const recos = [];
+  if (projectType === 'minergie' && fr.overMinergie265 > 100) {
+    recos.push(
+      `<strong>Dépassement Minergie :</strong> ${fr.overMinergie265} h/an dépassent 26.5 °C (limite Minergie : 100 h/an). Renforcez les protections solaires extérieures (g_tot ≤ 0.10) et le rafraîchissement nocturne.`
+    );
+  }
   if (fr.overSIA > limHours) {
     recos.push(
       `<strong>Dépassement SIA 180 :</strong> ${fr.overSIA} h/an dépassent la tolérance (${limHours} h/an). Combinez protections solaires extérieures performantes et surventilation nocturne.`
@@ -137,34 +144,45 @@ export function buildRecommendations(fr, limHours) {
   }
   if (recos.length === 0) {
     recos.push(
-      `<strong>Conception passive performante :</strong> cet étage respecte les critères de protection estivale SIA 180 avec une marge confortable.`
+      `<strong>Conception passive performante :</strong> cet étage respecte les critères de protection estivale avec une marge confortable.`
     );
   }
   return recos;
 }
 
 /**
- * Enrichit les résultats bruts du moteur 5R1C avec les verdicts SIA 180 et sélectionne l'étage critique.
+ * Enrichit les résultats bruts du moteur 5R1C avec les verdicts SIA 180 & Minergie et sélectionne l'étage critique.
  */
-export function enrichWithSIA180(engineRes, projectType) {
+export function enrichWithSIA180(engineRes, projectType, project = null, sim2035Raw = null) {
   const limHours = getSIA180ToleranceHours(projectType);
 
   const floorResults = engineRes.floorRaw.map(fr => {
-    const score = computeResilienceScore(fr, limHours);
+    const score = computeResilienceScore(fr, limHours, projectType);
     const prescriptive = evaluateSIA180PrescriptiveMethods(fr);
-    const recos = buildRecommendations(fr, limHours);
+    const recos = buildRecommendations(fr, limHours, projectType);
+    const sim2035Floor = sim2035Raw
+      ? sim2035Raw.floorRaw.find(x => x.floor.id === fr.floor.id)
+      : null;
+    const minergie = project ? evaluateMinergieVariante2(fr, project, sim2035Floor) : null;
     return {
       ...fr,
       score,
       limHours,
       passSIA: fr.overSIA <= limHours,
+      passMinergie265: (fr.overMinergie265 ?? 0) <= 100,
       prescriptive,
+      minergie,
       recos
     };
   });
 
+  const metricKey = projectType === 'minergie' ? 'overMinergie265' : 'overSIA';
   const worstFloor = floorResults.reduce(
-    (a, b) => (b.overSIA > a.overSIA || (b.overSIA === a.overSIA && b.maxTop > a.maxTop) ? b : a),
+    (a, b) =>
+      (b[metricKey] ?? 0) > (a[metricKey] ?? 0) ||
+      ((b[metricKey] ?? 0) === (a[metricKey] ?? 0) && b.maxTop > a.maxTop)
+        ? b
+        : a,
     floorResults[0]
   );
 

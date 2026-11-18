@@ -14,7 +14,8 @@ import {
 import {
   buildFloorThermalParams,
   computeAutoEnvelopeFromFloor,
-  computeHourlyInternalGains
+  computeHourlyInternalGains,
+  computeHourlyInternalGainsBreakdown
 } from '../src/methodology/03-envelope-and-gains.js';
 import {
   calcOpeningFlowM3s,
@@ -32,6 +33,7 @@ import {
 } from '../src/methodology/07-thermal-comfort.js';
 import { runFullSimulation } from '../src/methodology/08-scenario-comparator.js';
 import { getSIA180Limits } from '../src/standards/sia180.js';
+import { getMinergieRecommendedWindClass } from '../src/standards/minergie.js';
 import { createHouseLibrary } from '../src/state/house-library.js';
 import { parseHouseFile } from '../src/parsers/house-importers.js';
 
@@ -214,4 +216,58 @@ test('house-importers : IDF vertices avec View Factor numérique correctement pa
   assert.equal(proj.openings.length, 1);
   assert.equal(proj.openings[0].width, 2);
   assert.equal(proj.openings[0].height, 1.4);
+});
+
+test('Minergie Variante 2 : horizon, écrans latéraux, UHI, détail gains & scénarios oublis', () => {
+  // 1. Géométrie solaire : horizon & écrans latéraux réduisent l'irradiance directe
+  const lowSun = solarPosition(172, 7.0, 46.22, 7.33, 1);
+  const openHor = incidentIrradiance(400, 500, 80, lowSun, 90, 90, 0, 1.5, 0.2, { horizonDeg: 0 });
+  const blockedHor = incidentIrradiance(400, 500, 80, lowSun, 90, 90, 0, 1.5, 0.2, { horizonDeg: 30 });
+  assert.ok(blockedHor.direct < openHor.direct || openHor.direct === 0, 'Un horizon élevé doit masquer le rayonnement direct bas');
+
+  const middaySun = solarPosition(172, 10.0, 46.22, 7.33, 1); // Sud-Est (az < 180)
+  const noFin = incidentIrradiance(700, 750, 120, middaySun, 180, 90, 0, 1.5, 0.2);
+  const withFin = incidentIrradiance(700, 750, 120, middaySun, 180, 90, 0, 1.5, 0.2, {
+    leftFinDepth: 0.8,
+    winWidth: 1.2
+  });
+  assert.ok(withFin.direct < noFin.direct, 'Un écran latéral gauche doit réduire le soleil matinal Sud-Est');
+
+  // 2. Climat 2035 & Îlot de chaleur urbain (UHI)
+  const wRef = generateSyntheticWeather('GVE', 'REF', false);
+  const w2035 = generateSyntheticWeather('GVE', '2035', false);
+  const w2035Uhi = generateSyntheticWeather('GVE', '2035', true);
+  assert.ok(w2035.data[190 * 24 + 12].Te > wRef.data[190 * 24 + 12].Te, '2035 doit être plus chaud que REF');
+  const uhiNightDelta = w2035Uhi.data[190 * 24 + 3].Te - w2035.data[190 * 24 + 3].Te;
+  const uhiDayDelta = w2035Uhi.data[190 * 24 + 15].Te - w2035.data[190 * 24 + 15].Te;
+  assert.ok(uhiNightDelta > uhiDayDelta + 0.5, 'UHI doit réchauffer nettement plus la nuit que le jour');
+
+  // 3. Détail des gains internes (personnes + lampes + appareils === total)
+  const villa = createHouseLibrary()[0].build();
+  const rdc = villa.floors[0];
+  const bd = computeHourlyInternalGainsBreakdown(rdc, true);
+  assert.ok(bd.people > 0 && bd.lighting > 0 && bd.appliances > 0);
+  assert.ok(Math.abs(bd.people + bd.lighting + bd.appliances - bd.total) < 1e-9);
+  assert.equal(computeHourlyInternalGains(rdc, true), bd.total);
+
+  // 4. Simulation complète : puissances de gains, validation Minergie & scénarios d'oubli
+  const res = runFullSimulation(villa);
+  const wf = res.worstFloor;
+  assert.ok(wf.gains.totalGainPeakW > wf.gains.internalTotal.peakW);
+  assert.ok(wf.gains.people.peakW > 0 && wf.gains.lighting.peakW > 0 && wf.gains.appliances.peakW > 0);
+  assert.ok(wf.gains.solarBlockedByBlinds.summerKWh > 0, 'Les stores doivent bloquer une part mesurable du solaire');
+  assert.ok(wf.minergie && typeof wf.minergie.constructivePass === 'boolean');
+  assert.ok(wf.minergie.windRec.minClass >= 5);
+
+  const windFoehn = getMinergieRecommendedWindClass(6, 'residential', true);
+  assert.equal(windFoehn.minClass, 6, 'Exposition au föhn doit recommander la classe vent 6');
+
+  assert.ok(Array.isArray(res.behavioralScenarios) && res.behavioralScenarios.length >= 6);
+  const sCurr = res.behavioralScenarios.find(s => s.id === 'current');
+  const sNoBlinds = res.behavioralScenarios.find(s => s.id === 'no_blinds');
+  const sNoNight = res.behavioralScenarios.find(s => s.id === 'no_night');
+  const sBothBad = res.behavioralScenarios.find(s => s.id === 'both_bad');
+  assert.ok(sNoBlinds.wf.overMinergie265 >= sCurr.wf.overMinergie265, 'Oublier les stores ne doit pas réduire la surchauffe');
+  assert.ok(sNoNight.wf.overMinergie265 >= sCurr.wf.overMinergie265, 'Oublier la nuit ne doit pas réduire la surchauffe');
+  assert.ok(sBothBad.wf.overMinergie265 >= sNoBlinds.wf.overMinergie265);
 });

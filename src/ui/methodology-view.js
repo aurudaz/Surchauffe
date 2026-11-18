@@ -11,6 +11,8 @@ export function renderMethodologyPanel(activeFR, project) {
   const fl = activeFR.floor;
   const comfort = activeFR.comfort;
 
+  const g = activeFR.gains;
+
   return `
     <p class="subtitle" style="margin-top:0;margin-bottom:12px;">
       Chaque étape du calcul correspond directement à un module numéroté dans <code>src/methodology/</code>.
@@ -19,23 +21,24 @@ export function renderMethodologyPanel(activeFR, project) {
 
     <div class="method-step">
       <div class="method-step-head">
-        <strong>1. Géométrie solaire &amp; Ombrage casquette</strong>
+        <strong>1. Géométrie solaire &amp; Ombrage proche / horizon (EN 13790 / Minergie)</strong>
         <span class="method-file">src/methodology/01-solar-geometry.js</span>
       </div>
-      <div class="formula-box">I_inc(t) = I_bn · max(0, cos θ_i) · (1 − f_ombre) + I_dh · (1 + cos β)/2 + 0.20 · I_gh · (1 − cos β)/2
-f_ombre = min(1, D_casq · tan(α_sol) / (cos(γ_s − γ_p) · H_fen))</div>
+      <div class="formula-box">I_inc(t) = I_bn · max(0, cos θ_i) · (1 − f_ombre) + I_dh · F_sky + ρ · I_gh · (1 − cos β)/2
+f_ombre = 1 − (1 − f_casq) · (1 − f_écrans_lat)  |  Horizon bloqué si α_sol ≤ α_hor (${project.horizonDeg ?? 0}°)</div>
       <small style="color:var(--text-muted);">
-        Calcul horaire à la demi-heure solaire locale (latitude ${project.climate.lat.toFixed(2)}°N, longitude ${project.climate.lon.toFixed(2)}°E).
+        Calcul horaire à la demi-heure solaire locale (${project.climate.lat.toFixed(2)}°N, ${project.climate.lon.toFixed(2)}°E). Automatisation des stores à 200 W/m² (SIA 380/2 §3.2.3.1 &amp; 7.1.2).
       </small>
     </div>
 
     <div class="method-step">
       <div class="method-step-head">
-        <strong>2. Données climatiques &amp; Moyennes glissantes</strong>
+        <strong>2. Données climatiques, Scénario 2035 &amp; Îlot de chaleur (UHI)</strong>
         <span class="method-file">src/methodology/02-weather-model.js</span>
       </div>
       <div class="formula-box">θ_rm,48h(t) = (1/48) · Σ θ_e(t − j)   [SIA 180]
-θ_rm,EN(d) = (1 − α) · θ_e,d-1 + α · θ_rm,EN(d−1)   (α = 0.8)   [EN 16798-1]</div>
+θ_rm,EN(d) = (1 − α) · θ_e,d-1 + α · θ_rm,EN(d−1)   (α = 0.8)   [EN 16798-1]
+Scénario : ${escapeHtml(project.climate.scenario)} | Îlot de chaleur urbain : ${project.climate.urbanHeatIsland ? 'Actif (+0.4 °C jour / +1.8 °C nuit)' : 'Inactif'}</div>
       <small style="color:var(--text-muted);">
         Pré-amorçage circulaire sur les 48 dernières heures de l'année pour éliminer tout artefact au 1er janvier.
       </small>
@@ -43,15 +46,16 @@ f_ombre = min(1, D_casq · tan(α_sol) / (cos(γ_s − γ_p) · H_fen))</div>
 
     <div class="method-step">
       <div class="method-step-head">
-        <strong>3. Enveloppe 5R1C, Inertie &amp; Gains (ISO 13790 / SIA 380/1)</strong>
+        <strong>3. Enveloppe 5R1C, Inertie &amp; Détail des gains (ISO 13790 / SIA 380/1)</strong>
         <span class="method-file">src/methodology/03-envelope-and-gains.js</span>
       </div>
-      <div class="formula-box">A_tot = ${fp.A_tot.toFixed(1)} m²  |  A_m = ${fp.A_m.toFixed(1)} m²  |  C_m = ${(fp.C_m / 3600000).toFixed(2)} kWh/K (C_spec = ${fl.cSpec} Wh/m²K)
+      <div class="formula-box">A_tot = ${fp.A_tot.toFixed(1)} m²  |  A_m = ${fp.A_m.toFixed(1)} m²  |  C_m = ${(fp.C_m / 3600000).toFixed(2)} kWh/K (C_R/A_SNP = ${fl.cSpec} Wh/m²K)
 H_tr,w = ${fp.H_tr_w.toFixed(2)} W/K  |  H_tr,op = ${fp.H_tr_op.toFixed(2)} W/K  |  H_tr,em = ${fp.H_tr_em.toFixed(2)} W/K
-H_is = ${fp.H_is.toFixed(1)} W/K  |  H_ms = ${fp.H_ms.toFixed(1)} W/K  |  Constante de temps τ = ${fp.tauHours.toFixed(1)} h</div>
+H_is = ${fp.H_is.toFixed(1)} W/K  |  H_ms = ${fp.H_ms.toFixed(1)} W/K  |  Constante de temps τ = ${fp.tauHours.toFixed(1)} h
+Gains internes pointe : ${g ? `${g.internalTotal.peakW.toFixed(0)} W (Gens ${g.people.peakW.toFixed(0)} W + Lampes ${g.lighting.peakW.toFixed(0)} W + Appareils ${g.appliances.peakW.toFixed(0)} W)` : '—'}</div>
       <small style="color:var(--text-muted);">
-        Surface vitrée totale : ${fp.winArea.toFixed(2)} m² • Facteur g_tot moyen pondéré : ${activeFR.avgGtot.toFixed(3)} •
-        Facteur de présence occupant (t_p / plage) : ${(fl.occPresenceFactor ?? 1).toFixed(2)}.
+        Surface vitrée totale : ${fp.winArea.toFixed(2)} m² (Z_g = ${(fp.winArea / Math.max(1, fl.area)).toFixed(2)}) • Facteur g_tot moyen : ${activeFR.avgGtot.toFixed(3)} •
+        Présence occupant (t_p / plage) : ${(fl.occPresenceFactor ?? 1).toFixed(2)}.
       </small>
     </div>
 
@@ -82,11 +86,11 @@ H_ve(t) = 0.335 · (q_hyg + q_infil + q_nuit(t))   [W/K]</div>
 
     <div class="method-step">
       <div class="method-step-head">
-        <strong>6. Conformité SIA 180 (Méthodes 1, 2, 3) &amp; Score</strong>
-        <span class="method-file">src/methodology/06-sia180-compliance.js</span>
+        <strong>6. Conformité SIA 180 &amp; Minergie Variante 2</strong>
+        <span class="method-file">src/methodology/06-sia180-compliance.js + src/standards/minergie.js</span>
       </div>
-      <div class="formula-box">Fig. 3 : θ_sup = max(25.0, 0.33·θ_rm,48 + 21.8)  |  Fig. 4 : 24.5 → 26.5 °C
-Heures SIA : ${activeFR.overSIA} h/an (tolérance ${activeFR.limHours} h/an)  |  Score résilience : ${activeFR.score}/100</div>
+      <div class="formula-box">SIA 180 Fig. 3 : θ_sup = max(25.0, 0.33·θ_rm,48 + 21.8)  |  Minergie 2035 : θ_op ≤ 26.5 °C (max 100 h/an)
+Heures SIA : ${activeFR.overSIA} h/an  |  Heures Minergie (&gt;26.5 °C) : ${activeFR.overMinergie265} h/an  |  Score : ${activeFR.score}/100</div>
     </div>
 
     <div class="method-step">

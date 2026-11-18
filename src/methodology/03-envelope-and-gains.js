@@ -192,7 +192,7 @@ export function applyBox3dToFloor(fl, project) {
           frameFactor: 0.78,
           shadingFactor: 0.95,
           blindMode: w.blindMode || 'auto',
-          blindThreshI: 150,
+          blindThreshI: 200,
           blindThreshT: 23.0,
           windSafe: true,
           operable: true,
@@ -292,26 +292,61 @@ export function buildFloorThermalParams(fl, ops) {
 }
 
 /**
+ * Calcule le détail horaire des gains internes [W] d'un étage pour une heure donnée :
+ *  - people : chaleur métabolique des occupants (avec facteur de présence effectif tp / plage)
+ *  - lighting : éclairage / lampes
+ *  - appliances : appareils & équipements
+ */
+export function computeHourlyInternalGainsBreakdown(fl, isOcc) {
+  const gf = (fl.gainFactorPct ?? 100) / 100;
+  const presenceFactor = fl.occPresenceFactor ?? 1.0;
+  const standbyFrac = (fl.standbyPct ?? 0) / 100;
+
+  const people = isOcc ? fl.occCount * fl.occWatt * presenceFactor * gf : 0;
+  const lightBase = fl.lightWm2 * fl.area * gf;
+  const equipBase = fl.equipWatt * gf;
+
+  const lighting = isOcc ? lightBase : lightBase * standbyFrac;
+  const appliances = isOcc ? equipBase : equipBase * standbyFrac;
+
+  return {
+    people,
+    lighting,
+    appliances,
+    total: people + lighting + appliances
+  };
+}
+
+/**
  * Calcule les gains internes instantanés P_int [W] d'un étage pour une heure donnée.
  * Intègre le facteur de présence effectif (tp / durée d'occupation) afin de respecter
  * la charge journalière SIA 380/1 lorsque la plage horaire est 0h–24h (logement).
  */
 export function computeHourlyInternalGains(fl, isOcc) {
-  const gf = (fl.gainFactorPct ?? 100) / 100;
-  const presenceFactor = fl.occPresenceFactor ?? 1.0;
-  const P_occ = fl.occCount * fl.occWatt * presenceFactor * gf;
-  const P_el = (fl.lightWm2 * fl.area + fl.equipWatt) * gf;
-  return isOcc ? P_occ + P_el : P_el * ((fl.standbyPct ?? 0) / 100);
+  return computeHourlyInternalGainsBreakdown(fl, isOcc).total;
 }
 
 /**
- * Calcule les apports solaires transmis P_sol [W] et les apports ventilés par orientation.
- * Régulation des stores automatiques avec garde thermique hivernale (ne baisse pas les
- * stores en hiver lorsque θ_air < 21.5 °C et θ_rm,48 < 12 °C).
+ * Calcule les apports solaires transmis P_sol [W], les apports hors stores (bruts) et
+ * les apports ventilés par orientation. Régulation automatique à 200 W/m² (SIA 380/2 / Minergie)
+ * avec garde thermique hivernale (ne baisse pas les stores lorsque θ_air < 21.5 °C et θ_rm,48 < 12 °C).
  */
-export function computeHourlySolarGains(ops, hourWeather, tAirPrev, tRm48, isOcc, albedo = 0.20) {
+export function computeHourlySolarGains(
+  ops,
+  hourWeather,
+  tAirPrev,
+  tRm48,
+  isOcc,
+  albedo = 0.20,
+  horizonDeg = 0
+) {
   let totalW = 0;
+  let unshadedW = 0;
+  let irrBelow200SolW = 0;
+  let irrAbove200SolW = 0;
   const byOrientW = {};
+  const byOrientUnshadedW = {};
+  const byOrientIrrWm2 = {};
 
   for (const op of ops) {
     const g = ORIENTATIONS[op.orient] || ORIENTATIONS.S;
@@ -324,11 +359,20 @@ export function computeHourlySolarGains(ops, hourWeather, tAirPrev, tRm48, isOcc
       g.tilt,
       op.overhangDepth || 0,
       op.height,
-      albedo
+      albedo,
+      {
+        horizonDeg: op.horizonDeg ?? horizonDeg,
+        leftFinDepth: op.leftFinDepth || 0,
+        leftFinDist: op.leftFinDist || 0,
+        rightFinDepth: op.rightFinDepth || 0,
+        rightFinDist: op.rightFinDist || 0,
+        winWidth: op.width
+      }
     ).total;
 
+    const threshI = op.blindThreshI ?? 200;
     const warmEnoughForShading = tAirPrev >= 21.5 || tRm48 >= 12.0;
-    const trig = irr >= op.blindThreshI || (tAirPrev >= op.blindThreshT && irr > 50);
+    const trig = irr >= threshI || (tAirPrev >= (op.blindThreshT ?? 23.0) && irr > 50);
 
     let closed = false;
     if (op.blindMode === 'always_down') closed = true;
@@ -342,10 +386,28 @@ export function computeHourlySolarGains(ops, hourWeather, tAirPrev, tRm48, isOcc
         : op.gStore * op.frameFactor * op.shadingFactor
       : gVitEff;
 
-    const opSol = op.width * op.height * op.qty * gEff * irr;
+    const winArea = op.width * op.height * op.qty;
+    const opSol = winArea * gEff * irr;
+    const opSolUnshaded = winArea * gVitEff * irr;
+
     totalW += opSol;
+    unshadedW += opSolUnshaded;
+    if (irr >= 200) irrAbove200SolW += opSol;
+    else irrBelow200SolW += opSol;
+
     byOrientW[op.orient] = (byOrientW[op.orient] || 0) + opSol;
+    byOrientUnshadedW[op.orient] = (byOrientUnshadedW[op.orient] || 0) + opSolUnshaded;
+    if (irr > (byOrientIrrWm2[op.orient] || 0)) byOrientIrrWm2[op.orient] = irr;
   }
 
-  return { totalW, byOrientW };
+  return {
+    totalW,
+    unshadedW,
+    shadedSavedW: Math.max(0, unshadedW - totalW),
+    irrBelow200SolW,
+    irrAbove200SolW,
+    byOrientW,
+    byOrientUnshadedW,
+    byOrientIrrWm2
+  };
 }

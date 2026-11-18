@@ -60,6 +60,7 @@ export function solarPosition(dayOfYear, hourOfDay, latDeg, lonDeg, tzHours = 1)
  * @param {number} [overhangDepth=0] Profondeur de la casquette / avant-toit [m]
  * @param {number} [winHeight=1.5] Hauteur de la fenêtre sous casquette [m]
  * @param {number} [albedo=0.20] Albédo du sol environnant [-]
+ * @param {{ horizonDeg?: number, leftFinDepth?: number, leftFinDist?: number, rightFinDepth?: number, rightFinDist?: number, winWidth?: number }} [shadingOpts={}] Ombrages proches & horizon (EN 13790 / Minergie)
  * @returns {{ total: number, direct: number, diffRefl: number, shadedFrac: number }}
  */
 export function incidentIrradiance(
@@ -71,29 +72,51 @@ export function incidentIrradiance(
   surfTiltDeg,
   overhangDepth = 0,
   winHeight = 1.5,
-  albedo = 0.20
+  albedo = 0.20,
+  shadingOpts = {}
 ) {
   if (sun.cosZ <= 0.01) {
     return { total: 0, direct: 0, diffRefl: 0, shadedFrac: 0 };
   }
 
+  const horizonDeg = Math.max(0, Math.min(60, Number(shadingOpts.horizonDeg) || 0));
   const beta = surfTiltDeg * DEG_TO_RAD;
-  const cosGamma = Math.cos((sun.azDeg - surfAzDeg) * DEG_TO_RAD);
+  const relAzDeg = ((sun.azDeg - surfAzDeg + 540) % 360) - 180;
+  const relAzRad = relAzDeg * DEG_TO_RAD;
+  const cosGamma = Math.cos(relAzRad);
   const cosTheta = sun.cosZ * Math.cos(beta) + sun.sinZ * Math.sin(beta) * cosGamma;
 
-  let direct = Ibn * Math.max(0, cosTheta);
-  let shadedFrac = 0;
+  const altDeg = sun.altDeg ?? Math.asin(Math.max(-1, Math.min(1, sun.cosZ))) * RAD_TO_DEG;
+  let direct = altDeg <= horizonDeg ? 0 : Ibn * Math.max(0, cosTheta);
+  let shadedFracH = 0;
+  let shadedFracW = 0;
 
-  // Ombre portée géométrique sur fenêtre verticale : h_ombre = D · tan(alt) / cos(γ_s − γ_p)
-  if (overhangDepth > 0 && surfTiltDeg > 45 && direct > 0 && cosGamma > 0.05) {
-    const tanAlt = sun.cosZ / Math.max(0.02, sun.sinZ);
-    const shadowH = overhangDepth * (tanAlt / cosGamma);
-    shadedFrac = Math.min(1.0, Math.max(0.0, shadowH / Math.max(0.3, winHeight)));
-    direct *= 1.0 - shadedFrac;
+  // Ombre portée géométrique sur fenêtre verticale : casquette + écrans latéraux (EN 13790)
+  if (surfTiltDeg > 45 && direct > 0 && cosGamma > 0.05) {
+    if (overhangDepth > 0) {
+      const tanAlt = sun.cosZ / Math.max(0.02, sun.sinZ);
+      const shadowH = overhangDepth * (tanAlt / cosGamma);
+      shadedFracH = Math.min(1.0, Math.max(0.0, shadowH / Math.max(0.3, winHeight)));
+    }
+    const winW = Math.max(0.3, Number(shadingOpts.winWidth) || 1.4);
+    const leftD = Math.max(0, Number(shadingOpts.leftFinDepth) || 0);
+    const rightD = Math.max(0, Number(shadingOpts.rightFinDepth) || 0);
+    if (relAzDeg < 0 && leftD > 0) {
+      const shadowW = leftD * Math.abs(Math.tan(relAzRad)) - Math.max(0, Number(shadingOpts.leftFinDist) || 0);
+      shadedFracW = Math.min(1.0, Math.max(0.0, shadowW / winW));
+    } else if (relAzDeg > 0 && rightD > 0) {
+      const shadowW = rightD * Math.abs(Math.tan(relAzRad)) - Math.max(0, Number(shadingOpts.rightFinDist) || 0);
+      shadedFracW = Math.min(1.0, Math.max(0.0, shadowW / winW));
+    }
+    const sunlitFrac = (1.0 - shadedFracH) * (1.0 - shadedFracW);
+    direct *= sunlitFrac;
   }
 
+  const shadedFrac = 1.0 - (1.0 - shadedFracH) * (1.0 - shadedFracW);
+  const skyHorFactor = horizonDeg > 0 ? Math.max(0.5, 1.0 - 0.35 * Math.sin(horizonDeg * DEG_TO_RAD)) : 1.0;
+
   const diffRefl =
-    Idh * ((1 + Math.cos(beta)) / 2) +
+    Idh * ((1 + Math.cos(beta)) / 2) * skyHorFactor +
     albedo * Igh * ((1 - Math.cos(beta)) / 2);
 
   return {

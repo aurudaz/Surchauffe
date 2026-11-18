@@ -7,7 +7,7 @@
 import { getSIA180Limits } from '../standards/sia180.js';
 import {
   buildFloorThermalParams,
-  computeHourlyInternalGains,
+  computeHourlyInternalGainsBreakdown,
   computeHourlySolarGains
 } from './03-envelope-and-gains.js';
 import {
@@ -151,7 +151,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
   let TairCoolPrev = sortedFloors.map(() => 21.0);
 
   const runPass = (hoursArr, record) => {
-    const series = record ? sortedFloors.map(() => []) : null;
+    const series = record && recordSeries ? sortedFloors.map(() => []) : null;
     const stats = sortedFloors.map(() => ({
       minTop: 999,
       minTopHour: 0,
@@ -162,11 +162,51 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       overSIA: 0,
       dhSIA: 0,
       over26: 0,
+      overMinergie265: 0,
+      over265All: 0,
+      dhMinergie265: 0,
+      over28: 0,
       occH: 0,
+      summerHours: 0,
+      totalHours: 0,
       maxCoolW: 0,
       coolKWh: 0,
-      bal: { sol: 0, int: 0, trIn: 0, trOut: 0, slabNet: 0, veDayOut: 0, veNightOut: 0 },
-      solByOrient: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SO: 0, O: 0, NO: 0, R: 0 }
+      bal: {
+        sol: 0,
+        solUnshaded: 0,
+        solSavedByBlinds: 0,
+        int: 0,
+        intPeople: 0,
+        intLight: 0,
+        intEquip: 0,
+        trIn: 0,
+        trOut: 0,
+        slabIn: 0,
+        slabOut: 0,
+        slabNet: 0,
+        veDayOut: 0,
+        veNightOut: 0
+      },
+      annInt: { peopleKWh: 0, lightKWh: 0, equipKWh: 0, totalKWh: 0 },
+      peakW: {
+        people: 0,
+        light: 0,
+        equip: 0,
+        int: 0,
+        sol: 0,
+        solUnshaded: 0,
+        solSaved: 0,
+        trIn: 0,
+        trOut: 0,
+        slabIn: 0,
+        veDayOut: 0,
+        veNightOut: 0,
+        totalGain: 0
+      },
+      solIrrBelow200KWh: 0,
+      solIrrAbove200KWh: 0,
+      solByOrient: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SO: 0, O: 0, NO: 0, R: 0 },
+      solOrientStats: {}
     }));
 
     // Pré-amorçage circulaire sur les dernières 48 heures pour θ_rm,48h sans transitoire
@@ -196,7 +236,13 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
         air: 0,
         ts: 0,
         sol: 0,
+        solUnshaded: 0,
+        solBelow200: 0,
+        solAbove200: 0,
         int: 0,
+        people: 0,
+        light: 0,
+        equip: 0,
         tr: 0,
         slab: 0,
         veDay: 0,
@@ -228,14 +274,16 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
               : hr.hod >= fl.nightStart && hr.hod < fl.nightEnd;
           if (s === 0) acc[k].isOcc = isOcc;
 
-          const P_int = computeHourlyInternalGains(fl, isOcc);
+          const intBreakdown = computeHourlyInternalGainsBreakdown(fl, isOcc);
+          const P_int = intBreakdown.total;
           const solRes = computeHourlySolarGains(
             fp.ops,
             hr,
             TairPrev[k],
             tRm48,
             isOcc,
-            projObj.albedo ?? 0.20
+            projObj.albedo ?? 0.20,
+            projObj.horizonDeg ?? 0
           );
           const P_sol = solRes.totalW;
 
@@ -243,6 +291,22 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             for (const [orient, valW] of Object.entries(solRes.byOrientW)) {
               stats[k].solByOrient[orient] =
                 (stats[k].solByOrient[orient] || 0) + valW / subSteps / 1000;
+              if (!stats[k].solOrientStats[orient]) {
+                stats[k].solOrientStats[orient] = {
+                  energyKWh: 0,
+                  unshadedKWh: 0,
+                  peakW: 0,
+                  peakIrrWm2: 0,
+                  hoursOver200: 0
+                };
+              }
+              const os = stats[k].solOrientStats[orient];
+              os.energyKWh += valW / subSteps / 1000;
+              os.unshadedKWh += (solRes.byOrientUnshadedW[orient] || 0) / subSteps / 1000;
+              if (valW > os.peakW) os.peakW = valW;
+              const irrVal = solRes.byOrientIrrWm2[orient] || 0;
+              if (irrVal > os.peakIrrWm2) os.peakIrrWm2 = irrVal;
+              if (s === 0 && irrVal >= 200) os.hoursOver200++;
             }
           }
 
@@ -283,7 +347,13 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           acc[k].air += out.Tair;
           acc[k].ts += out.Ts;
           acc[k].sol += P_sol;
+          acc[k].solUnshaded += solRes.unshadedW;
+          acc[k].solBelow200 += solRes.irrBelow200SolW;
+          acc[k].solAbove200 += solRes.irrAbove200SolW;
           acc[k].int += P_int;
+          acc[k].people += intBreakdown.people;
+          acc[k].light += intBreakdown.lighting;
+          acc[k].equip += intBreakdown.appliances;
           acc[k].tr += fp.H_tr_w * (hr.Te - out.Ts) + fp.H_tr_em * (hr.Te - out.TmAvg);
           acc[k].slab += slabFlux[k];
           acc[k].veDay += H_ve_day * (hr.Te - out.Tair);
@@ -359,6 +429,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           const st = stats[k];
           const isOver = acc[k].isOcc && Top > lim.upper;
 
+          st.totalHours++;
           if (Top < st.minTop) {
             st.minTop = Top;
             st.minTopHour = hr.h;
@@ -368,10 +439,19 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             st.maxTopHour = hr.h;
           }
           if (isSummer) {
+            st.summerHours++;
             if (Top < st.summerMinTop) st.summerMinTop = Top;
             if (Top > st.summerMaxTop) st.summerMaxTop = Top;
           }
-          if (acc[k].isOcc) st.occH++;
+          if (acc[k].isOcc) {
+            st.occH++;
+            if (Top > 26.5) {
+              st.overMinergie265++;
+              st.dhMinergie265 += Top - 26.5;
+            }
+            if (Top > 28.0) st.over28++;
+          }
+          if (Top > 26.5) st.over265All++;
           if (isOver) {
             st.overSIA++;
             st.dhSIA += Top - lim.upper;
@@ -379,17 +459,53 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           if (Top > 26.0) st.over26++;
 
           const qSol = acc[k].sol / subSteps;
+          const qSolUnshaded = acc[k].solUnshaded / subSteps;
+          const qSolSaved = Math.max(0, qSolUnshaded - qSol);
+          const qSolBelow200 = acc[k].solBelow200 / subSteps;
+          const qSolAbove200 = acc[k].solAbove200 / subSteps;
           const qInt = acc[k].int / subSteps;
+          const qPeople = acc[k].people / subSteps;
+          const qLight = acc[k].light / subSteps;
+          const qEquip = acc[k].equip / subSteps;
           const qTr = acc[k].tr / subSteps;
           const qSlab = acc[k].slab / subSteps;
           const qVD = acc[k].veDay / subSteps;
           const qVN = acc[k].veNight / subSteps;
 
+          st.annInt.peopleKWh += qPeople / 1000;
+          st.annInt.lightKWh += qLight / 1000;
+          st.annInt.equipKWh += qEquip / 1000;
+          st.annInt.totalKWh += qInt / 1000;
+
           if (isSummer) {
+            if (qPeople > st.peakW.people) st.peakW.people = qPeople;
+            if (qLight > st.peakW.light) st.peakW.light = qLight;
+            if (qEquip > st.peakW.equip) st.peakW.equip = qEquip;
+            if (qInt > st.peakW.int) st.peakW.int = qInt;
+            if (qSol > st.peakW.sol) st.peakW.sol = qSol;
+            if (qSolUnshaded > st.peakW.solUnshaded) st.peakW.solUnshaded = qSolUnshaded;
+            if (qSolSaved > st.peakW.solSaved) st.peakW.solSaved = qSolSaved;
+            if (qTr > st.peakW.trIn) st.peakW.trIn = qTr;
+            if (-qTr > st.peakW.trOut) st.peakW.trOut = -qTr;
+            if (qSlab > st.peakW.slabIn) st.peakW.slabIn = qSlab;
+            if (-qVD > st.peakW.veDayOut) st.peakW.veDayOut = -qVD;
+            if (-qVN > st.peakW.veNightOut) st.peakW.veNightOut = -qVN;
+            const instTotalGain = qInt + qSol + Math.max(0, qTr) + Math.max(0, qSlab);
+            if (instTotalGain > st.peakW.totalGain) st.peakW.totalGain = instTotalGain;
+
             st.bal.sol += qSol / 1000;
+            st.bal.solUnshaded += qSolUnshaded / 1000;
+            st.bal.solSavedByBlinds += qSolSaved / 1000;
+            st.solIrrBelow200KWh += qSolBelow200 / 1000;
+            st.solIrrAbove200KWh += qSolAbove200 / 1000;
             st.bal.int += qInt / 1000;
+            st.bal.intPeople += qPeople / 1000;
+            st.bal.intLight += qLight / 1000;
+            st.bal.intEquip += qEquip / 1000;
             if (qTr >= 0) st.bal.trIn += qTr / 1000;
             else st.bal.trOut += -qTr / 1000;
+            if (qSlab >= 0) st.bal.slabIn += qSlab / 1000;
+            else st.bal.slabOut += -qSlab / 1000;
             st.bal.slabNet += qSlab / 1000;
             st.bal.veDayOut += -qVD / 1000;
             st.bal.veNightOut += -qVN / 1000;
@@ -413,7 +529,11 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
               isOverSIA: isOver,
               isSummer,
               qSol,
+              qSolUnshaded,
               qInt,
+              qPeople,
+              qLight,
+              qEquip,
               qTr,
               qSlab,
               qVeDay: qVD,
@@ -470,6 +590,45 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           }, 0) / fp.winArea
         : 0.1;
 
+    const area = Math.max(1, fl.area);
+    const numDays = Math.max(1, st.totalHours / 24);
+    const summerH = Math.max(1, st.summerHours);
+    const summerDays = Math.max(1, summerH / 24);
+    const totalSummerGainsKWh = Math.max(
+      0.001,
+      st.bal.sol + st.bal.int + st.bal.trIn + st.bal.slabIn
+    );
+
+    const mkGain = (peakW, summerKWh, annKWh = null) => ({
+      peakW,
+      peakWm2: peakW / area,
+      summerMeanW: (summerKWh * 1000) / summerH,
+      dailyWhm2d: annKWh !== null ? (annKWh * 1000) / (numDays * area) : (summerKWh * 1000) / (summerDays * area),
+      summerKWh,
+      summerKWhm2: summerKWh / area,
+      sharePct: (summerKWh / totalSummerGainsKWh) * 100
+    });
+
+    const gains = {
+      people: mkGain(st.peakW.people, st.bal.intPeople, st.annInt.peopleKWh),
+      lighting: mkGain(st.peakW.light, st.bal.intLight, st.annInt.lightKWh),
+      appliances: mkGain(st.peakW.equip, st.bal.intEquip, st.annInt.equipKWh),
+      internalTotal: mkGain(st.peakW.int, st.bal.int, st.annInt.totalKWh),
+      solarTransmitted: mkGain(st.peakW.sol, st.bal.sol),
+      solarUnshaded: mkGain(st.peakW.solUnshaded, st.bal.solUnshaded),
+      solarBlockedByBlinds: mkGain(st.peakW.solSaved, st.bal.solSavedByBlinds),
+      conductionIn: mkGain(st.peakW.trIn, st.bal.trIn),
+      conductionOut: mkGain(st.peakW.trOut, st.bal.trOut),
+      slabIn: mkGain(st.peakW.slabIn, st.bal.slabIn),
+      ventDayOut: mkGain(st.peakW.veDayOut, st.bal.veDayOut),
+      ventNightOut: mkGain(st.peakW.veNightOut, st.bal.veNightOut),
+      totalGainPeakW: st.peakW.totalGain,
+      totalGainPeakWm2: st.peakW.totalGain / area,
+      totalGainSummerKWh: totalSummerGainsKWh,
+      totalGainSummerKWhm2: totalSummerGainsKWh / area,
+      totalGainSummerMeanW: (totalSummerGainsKWh * 1000) / summerH
+    };
+
     return {
       floor: fl,
       fp,
@@ -483,12 +642,20 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       overSIA: st.overSIA,
       dhSIA: st.dhSIA,
       over26: st.over26,
+      overMinergie265: st.overMinergie265,
+      over265All: st.over265All,
+      dhMinergie265: st.dhMinergie265,
+      over28: st.over28,
       occH: st.occH,
       maxCoolW: st.maxCoolW,
-      maxCoolWm2: st.maxCoolW / Math.max(1, fl.area),
-      coolKWhm2: st.coolKWh / Math.max(1, fl.area),
+      maxCoolWm2: st.maxCoolW / area,
+      coolKWhm2: st.coolKWh / area,
       summerBal: st.bal,
+      gains,
+      solIrrBelow200KWh: st.solIrrBelow200KWh,
+      solIrrAbove200KWh: st.solIrrAbove200KWh,
       solByOrient: st.solByOrient,
+      solOrientStats: st.solOrientStats,
       nomNightM3h,
       nomNightSpec,
       avgGtot,

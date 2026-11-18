@@ -46,13 +46,23 @@ export function shiftUtcToLocal(raw, lat, lon, tzMode = 'cet_cest') {
 }
 
 /**
+ * Surcharge diurne de l'effet « Îlot de chaleur » urbain (UHI, Minergie / MétéoSuisse) :
+ * +0.4 °C en journée et jusqu'à +1.8 °C en fin de nuit (~03h00), réduisant le potentiel
+ * de rafraîchissement nocturne et augmentant les nuits tropicales.
+ */
+function uhiHourlyDelta(hod) {
+  return 0.4 + 1.4 * 0.5 * (1 + Math.cos((2 * Math.PI * (hod - 3.0)) / 24));
+}
+
+/**
  * Génère 8760 heures climatiques synthétiques calibrées sur une station suisse,
  * incluant deux épisodes de canicule estivale et un cycle diurne réaliste.
  *
  * @param {string} stationKey Code station (SIO, GVE, ZRH, etc.)
- * @param {string} scenarioKey 'REF' | '2050' | '2100'
+ * @param {string} scenarioKey 'REF' | '2035' | '2050' | '2100'
+ * @param {boolean} [urbanHeatIsland=false] Activer l'effet d'îlot de chaleur urbain (UHI)
  */
-export function generateSyntheticWeather(stationKey = 'SIO', scenarioKey = 'REF') {
+export function generateSyntheticWeather(stationKey = 'SIO', scenarioKey = 'REF', urbanHeatIsland = false) {
   const st = SWISS_STATIONS[stationKey] || SWISS_STATIONS.SIO;
   const sc = CLIMATE_SCENARIOS[scenarioKey] || CLIMATE_SCENARIOS.REF;
 
@@ -92,7 +102,8 @@ export function generateSyntheticWeather(stationKey = 'SIO', scenarioKey = 'REF'
       tBase +
       dw.syn +
       dw.heatwave -
-      st.ampDay * Math.cos((2 * Math.PI * (hod - 4.5)) / 24) * (0.65 + 0.55 * dw.cloud);
+      st.ampDay * Math.cos((2 * Math.PI * (hod - 4.5)) / 24) * (0.65 + 0.55 * dw.cloud) +
+      (urbanHeatIsland ? uhiHourlyDelta(hod) : 0);
 
     const sun = solarPosition(d + 1, hod + 0.5, st.lat, st.lon, 1);
     let Igh = 0;
@@ -111,24 +122,28 @@ export function generateSyntheticWeather(stationKey = 'SIO', scenarioKey = 'REF'
   }
 
   return {
-    sourceLabel: `Climat suisse synthétique : ${st.name} (${scenarioKey})`,
+    sourceLabel: `Climat suisse synthétique : ${st.name} (${scenarioKey}${urbanHeatIsland ? ' + Îlot chaleur' : ''})`,
     data: hours
   };
 }
 
 /**
- * Applique un scénario de réchauffement (ex. +1.5 °C / +0.5 °C été pour 2050)
- * à n'importe quelle série horaire (y compris un fichier PVGIS/EPW importé).
+ * Applique un scénario de réchauffement (ex. 2035 ou 2050) et éventuellement l'effet
+ * d'îlot de chaleur urbain à n'importe quelle série horaire (y compris un fichier PVGIS/EPW importé).
  */
-export function applyClimateDelta(weatherObj, scenarioKey = '2050') {
+export function applyClimateDelta(weatherObj, scenarioKey = '2050', urbanHeatIsland = false) {
   const sc = CLIMATE_SCENARIOS[scenarioKey] || CLIMATE_SCENARIOS['2050'];
   return {
-    sourceLabel: `${weatherObj.sourceLabel} + ${scenarioKey}`,
+    sourceLabel: `${weatherObj.sourceLabel} + ${scenarioKey}${urbanHeatIsland ? ' + Îlot chaleur' : ''}`,
     data: weatherObj.data.map(hr => {
       const isSummer = hr.d >= 135 && hr.d <= 258;
       return {
         ...hr,
-        Te: hr.Te + sc.annualDeltaC + (isSummer ? sc.summerExtraC : 0)
+        Te:
+          hr.Te +
+          sc.annualDeltaC +
+          (isSummer ? sc.summerExtraC : 0) +
+          (urbanHeatIsland ? uhiHourlyDelta(hr.hod) : 0)
       };
     })
   };

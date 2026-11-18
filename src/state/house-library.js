@@ -129,7 +129,7 @@ export function makeOpening(
     frameFactor: 0.78,
     shadingFactor: 0.95,
     blindMode: 'auto',
-    blindThreshI: 150,
+    blindThreshI: 200,
     blindThreshT: 23.0,
     windSafe: true,
     operable,
@@ -146,14 +146,16 @@ export function createHouseLibrary() {
   return [
     {
       id: 'villa_r1',
-      title: 'Villa individuelle R+1 (Minergie)',
+      title: 'Villa individuelle R+1 (Minergie 2035)',
       desc: '2 étages (130 m²), 7 ouvertures S/E/O/N, casquette Sud 1.2 m',
       build: () => ({
         name: 'Villa individuelle R+1',
-        projectType: 'new',
+        projectType: 'minergie',
         siaCurveMode: 'fig3',
         stackCoupling: true,
-        climate: { station: 'SIO', scenario: 'REF', lat: 46.22, lon: 7.33, tzMode: 'cet_cest' },
+        foehnExposed: false,
+        horizonDeg: 0,
+        climate: { station: 'SIO', scenario: '2035', lat: 46.22, lon: 7.33, tzMode: 'cet_cest', urbanHeatIsland: false },
         floors: [
           makeFloor('f1', 'Rez-de-chaussée (Séjour)', 0.0, 65, 2.6, 'ground', 'II', 75, 'minergie', 4.5, true),
           makeFloor('f2', '1er étage (Chambres)', 2.85, 65, 2.5, 'top', 'II', 75, 'minergie', 4.5, true)

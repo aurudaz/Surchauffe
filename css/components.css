@@ -198,14 +198,28 @@ td input, td select { padding: 4px 6px; font-size: 11.5px; }
   position: fixed;
   pointer-events: none;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--primary);
   border-radius: 8px;
-  padding: 7px 10px;
-  font-size: 11.5px;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
-  z-index: 100;
+  padding: 8px 11px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+  z-index: 250;
   display: none;
-  white-space: nowrap;
+  max-width: 320px;
+  white-space: normal;
+}
+
+[data-tip] {
+  cursor: help;
+}
+button[data-tip], select[data-tip], input[data-tip], .seg-btn[data-tip], .rail-item[data-tip], .house-card[data-tip], .sub-tab[data-tip] {
+  cursor: pointer;
+}
+.field[data-tip] > label, th[data-tip], td[data-tip] {
+  text-decoration: underline dotted rgba(154, 160, 166, 0.55);
+  text-underline-offset: 3px;
 }
 
 .inspector-stat {

@@ -294,7 +294,14 @@ export function renderOpenings() {
       Paramètres aérauliques détaillés (actifs si « Méthode avancée » est sélectionnée à l'étape 4) :
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Ouverture</th><th>Type</th><th>Larg. ouvrante [m]</th><th>Haut. ouvrante [m]</th><th>Angle α [°]</th><th>Allège [m]</th></tr></thead>
+      <thead><tr>
+        <th data-tip="Nom et quantité de la fenêtre ouverte la nuit.">Ouverture</th>
+        <th data-tip="Mécanisme d'ouverture : battante ou imposte (soufflet), sur une seule façade ou traversante.">Type</th>
+        <th data-tip="Largeur libre du vantail qui s'ouvre [m].">Larg. ouvrante [m]</th>
+        <th data-tip="Hauteur libre du vantail qui s'ouvre [m].">Haut. ouvrante [m]</th>
+        <th data-tip="Angle d'inclinaison α [°] (utilisé pour le calcul EN 16798-7 des fenêtres en imposte / soufflet).">Angle α [°]</th>
+        <th data-tip="Hauteur de l'allège (distance entre le plancher de l'étage et le bas de la fenêtre) [m].">Allège [m]</th>
+      </tr></thead>
       <tbody>${operables
         .map(
           op => `<tr>
@@ -642,15 +649,16 @@ export function renderFloors() {
         <div class="well-head">
           <div style="display:flex;align-items:center;gap:8px;flex:1;">
             <strong style="color:var(--primary);">#${idx + 1}</strong>
-            <input type="text" value="${escapeHtml(fl.name)}" data-fl="${escapeHtml(fl.id)}" data-k="name" style="max-width:260px;font-weight:600;" />
-            <span class="pill neutral">${opsCount} ouv.</span>
+            <input type="text" value="${escapeHtml(fl.name)}" data-fl="${escapeHtml(fl.id)}" data-k="name" data-tip="Nom ou désignation de l'étage / du local." style="max-width:260px;font-weight:600;" />
+            <span class="pill neutral" data-tip="Nombre de types d'ouvertures vitrées rattachées à cet étage.">${opsCount} ouv.</span>
           </div>
-          ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(fl.id)}">Supprimer</button>` : ''}
+          ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(fl.id)}" data-tip="Supprimer cet étage et ses fenêtres.">Supprimer</button>` : ''}
         </div>
         <div class="g5">
-          <div class="field"><label>Surface [m²]</label><input type="number" step="1" min="5" value="${fl.area}" data-fl="${escapeHtml(fl.id)}" data-k="area" /></div>
-          <div class="field"><label>Hauteur [m]</label><input type="number" step="0.05" min="1.8" value="${fl.height}" data-fl="${escapeHtml(fl.id)}" data-k="height" /></div>
-          <div class="field"><label>Position étage</label>
+          <div class="field" data-tip="Surface nette de plancher (A_SNP) de l'étage ou de la pièce [m²]."><label>Surface [m²]</label><input type="number" step="1" min="5" value="${fl.area}" data-fl="${escapeHtml(fl.id)}" data-k="area" /></div>
+          <div class="field" data-tip="Hauteur libre sous plafond [m] (détermine le volume d'air et la hauteur des façades)."><label>Hauteur [m]</label><input type="number" step="0.05" min="1.8" value="${fl.height}" data-fl="${escapeHtml(fl.id)}" data-k="height" /></div>
+          <div class="field" data-tip="Position verticale du niveau : détermine automatiquement si le plafond donne sur un toit extérieur et si le plancher donne sur le sol.">
+            <label>Position étage</label>
             <select data-fl="${escapeHtml(fl.id)}" data-k="simplePos">
               <option value="ground" ${fl.simplePos === 'ground' ? 'selected' : ''}>RDC (sur sol)</option>
               <option value="mid" ${fl.simplePos === 'mid' ? 'selected' : ''}>Étage intermédiaire</option>
@@ -659,20 +667,22 @@ export function renderFloors() {
               <option value="standalone" ${fl.simplePos === 'standalone' ? 'selected' : ''}>Local / Pavillon isolé</option>
             </select>
           </div>
-          <div class="field"><label>Isolation SIA 380/1</label>
+          <div class="field" data-tip="Qualité d'isolation thermique des parois opaques extérieures (coefficient U en W/(m²·K)).">
+            <label>Isolation</label>
             <select data-fl="${escapeHtml(fl.id)}" data-k="envelopeStd">
               <option value="sia_new" ${fl.envelopeStd === 'sia_new' ? 'selected' : ''}>SIA Neuf (U=0.20)</option>
               <option value="sia_reno" ${fl.envelopeStd === 'sia_reno' ? 'selected' : ''}>Rénovation (U=0.25)</option>
-              <option value="minergie" ${fl.envelopeStd === 'minergie' ? 'selected' : ''}>Minergie (U=0.15)</option>
+              <option value="minergie" ${fl.envelopeStd === 'minergie' ? 'selected' : ''}>Haute isolation (U=0.15)</option>
               <option value="old" ${fl.envelopeStd === 'old' ? 'selected' : ''}>Ancien (U=1.10)</option>
             </select>
           </div>
-          <div class="field"><label>Inertie thermique</label>
+          <div class="field" data-tip="Capacité des matériaux intérieurs (dalles béton, murs lourds vs ossature bois/faux-plafonds) à stocker la chaleur la journée pour lisser le pic de température.">
+            <label>Inertie thermique</label>
             <select data-fl="${escapeHtml(fl.id)}" data-k="inertiaClass">
-              <option value="20" ${fl.inertiaClass === '20' ? 'selected' : ''}>Faible / légère</option>
-              <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (SIA 45)</option>
-              <option value="75" ${fl.inertiaClass === '75' ? 'selected' : ''}>Forte / massive</option>
-              <option value="100" ${fl.inertiaClass === '100' ? 'selected' : ''}>Très forte</option>
+              <option value="20" ${fl.inertiaClass === '20' ? 'selected' : ''}>Faible / légère (20 Wh/m²K)</option>
+              <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (45 Wh/m²K)</option>
+              <option value="75" ${fl.inertiaClass === '75' ? 'selected' : ''}>Forte / massive (75 Wh/m²K)</option>
+              <option value="100" ${fl.inertiaClass === '100' ? 'selected' : ''}>Très forte (100 Wh/m²K)</option>
             </select>
           </div>
         </div>
@@ -682,26 +692,27 @@ export function renderFloors() {
         <div class="well-head">
           <div style="display:flex;align-items:center;gap:8px;flex:1;">
             <strong style="color:var(--primary);">#${idx + 1}</strong>
-            <input type="text" value="${escapeHtml(fl.name)}" data-fl="${escapeHtml(fl.id)}" data-k="name" style="max-width:260px;font-weight:600;" />
-            <span class="pill neutral">${opsCount} ouv.</span>
+            <input type="text" value="${escapeHtml(fl.name)}" data-fl="${escapeHtml(fl.id)}" data-k="name" data-tip="Nom ou désignation de l'étage / du local." style="max-width:260px;font-weight:600;" />
+            <span class="pill neutral" data-tip="Nombre de types d'ouvertures vitrées rattachées à cet étage.">${opsCount} ouv.</span>
           </div>
-          ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(fl.id)}">Supprimer</button>` : ''}
+          ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(fl.id)}" data-tip="Supprimer cet étage et ses fenêtres.">Supprimer</button>` : ''}
         </div>
         <div class="g4">
-          <div class="field"><label>Surface plancher [m²]</label><input type="number" step="1" min="5" value="${fl.area}" data-fl="${escapeHtml(fl.id)}" data-k="area" /></div>
-          <div class="field"><label>Hauteur [m]</label><input type="number" step="0.05" min="1.8" value="${fl.height}" data-fl="${escapeHtml(fl.id)}" data-k="height" /></div>
-          <div class="field"><label>Altitude z [m]</label><input type="number" step="0.1" value="${fl.elevationZ}" data-fl="${escapeHtml(fl.id)}" data-k="elevationZ" /></div>
-          <div class="field"><label>Profondeur pièce [m]</label><input type="number" step="0.1" min="0.5" value="${fl.depthBehindWin}" data-fl="${escapeHtml(fl.id)}" data-k="depthBehindWin" /></div>
+          <div class="field" data-tip="Surface nette de plancher A_SNP [m²]."><label>Surface plancher [m²]</label><input type="number" step="1" min="5" value="${fl.area}" data-fl="${escapeHtml(fl.id)}" data-k="area" /></div>
+          <div class="field" data-tip="Hauteur libre sous plafond [m]."><label>Hauteur [m]</label><input type="number" step="0.05" min="1.8" value="${fl.height}" data-fl="${escapeHtml(fl.id)}" data-k="height" /></div>
+          <div class="field" data-tip="Cote verticale du plancher [m] (utilisée pour le tirage thermique cheminée entre étages)."><label>Altitude z [m]</label><input type="number" step="0.1" value="${fl.elevationZ}" data-fl="${escapeHtml(fl.id)}" data-k="elevationZ" /></div>
+          <div class="field" data-tip="Profondeur de la pièce perpendiculairement à la façade vitrée [m] (vérifiée dans SIA 180 Tab. 8 et ratio 2.5 × hauteur)."><label>Profondeur pièce [m]</label><input type="number" step="0.1" min="0.5" value="${fl.depthBehindWin}" data-fl="${escapeHtml(fl.id)}" data-k="depthBehindWin" /></div>
         </div>
         <div class="g4" style="margin-top:8px;">
-          <div class="field"><label>Murs ext. opaques [m²]</label><input type="number" step="1" min="0" value="${fl.wallExtArea}" data-fl="${escapeHtml(fl.id)}" data-k="wallExtArea" /></div>
-          <div class="field"><label>U murs ext. [W/(m²·K)]</label><input type="number" step="0.01" min="0.05" value="${fl.uWallExt}" data-fl="${escapeHtml(fl.id)}" data-k="uWallExt" /></div>
-          <div class="field"><label>Toiture ext. [m²]</label><input type="number" step="1" min="0" value="${fl.roofExtArea}" data-fl="${escapeHtml(fl.id)}" data-k="roofExtArea" /></div>
-          <div class="field"><label>U toiture [W/(m²·K)]</label><input type="number" step="0.01" min="0.05" value="${fl.uRoofExt}" data-fl="${escapeHtml(fl.id)}" data-k="uRoofExt" /></div>
+          <div class="field" data-tip="Surface nette de murs verticaux opaques donnant sur l'extérieur (hors vitrages) [m²]."><label>Murs ext. opaques [m²]</label><input type="number" step="1" min="0" value="${fl.wallExtArea}" data-fl="${escapeHtml(fl.id)}" data-k="wallExtArea" /></div>
+          <div class="field" data-tip="Coefficient de transmission thermique U des murs extérieurs opaques [W/(m²·K)]."><label>U murs ext. [W/(m²·K)]</label><input type="number" step="0.01" min="0.05" value="${fl.uWallExt}" data-fl="${escapeHtml(fl.id)}" data-k="uWallExt" /></div>
+          <div class="field" data-tip="Surface opaque de toiture ou terrasse donnant directement sur l'extérieur [m²] (mettre 0 pour un étage intermédiaire)."><label>Toiture ext. [m²]</label><input type="number" step="1" min="0" value="${fl.roofExtArea}" data-fl="${escapeHtml(fl.id)}" data-k="roofExtArea" /></div>
+          <div class="field" data-tip="Coefficient de transmission thermique U de la toiture [W/(m²·K)]."><label>U toiture [W/(m²·K)]</label><input type="number" step="0.01" min="0.05" value="${fl.uRoofExt}" data-fl="${escapeHtml(fl.id)}" data-k="uRoofExt" /></div>
         </div>
         <div class="g4" style="margin-top:8px;">
-          <div class="field"><label>Plancher sol/NC [m²]</label><input type="number" step="1" min="0" value="${fl.floorGroundArea}" data-fl="${escapeHtml(fl.id)}" data-k="floorGroundArea" /></div>
-          <div class="field"><label>Facteur b plancher</label>
+          <div class="field" data-tip="Surface de plancher bas donnant sur le terrain ou sur un sous-sol non chauffé [m²]."><label>Plancher sol/NC [m²]</label><input type="number" step="1" min="0" value="${fl.floorGroundArea}" data-fl="${escapeHtml(fl.id)}" data-k="floorGroundArea" /></div>
+          <div class="field" data-tip="Facteur de réduction thermique b du plancher bas (0 = sur local chauffé, 0.3 = contre terre, 0.5 = sur sous-sol non chauffé, 1.0 = sur air extérieur).">
+            <label>Facteur b plancher</label>
             <select data-fl="${escapeHtml(fl.id)}" data-k="bFloorGround">
               <option value="0" ${fl.bFloorGround === 0 ? 'selected' : ''}>0.0 (sur chauffé)</option>
               <option value="0.3" ${fl.bFloorGround === 0.3 ? 'selected' : ''}>0.3 (sur sol)</option>
@@ -709,7 +720,8 @@ export function renderFloors() {
               <option value="1" ${fl.bFloorGround === 1 ? 'selected' : ''}>1.0 (sur extérieur)</option>
             </select>
           </div>
-          <div class="field"><label>Classe inertie SIA 180</label>
+          <div class="field" data-tip="Classe d'inertie thermique prédéfinie selon SIA 180.">
+            <label>Classe inertie SIA 180</label>
             <select data-fl="${escapeHtml(fl.id)}" data-k="inertiaClass">
               <option value="20" ${fl.inertiaClass === '20' ? 'selected' : ''}>Faible (20)</option>
               <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (45)</option>
@@ -718,7 +730,7 @@ export function renderFloors() {
               <option value="custom" ${fl.inertiaClass === 'custom' ? 'selected' : ''}>Personnalisée</option>
             </select>
           </div>
-          <div class="field"><label>Capacité C [Wh/(m²·K)]</label><input type="number" step="1" min="5" value="${fl.cSpec}" data-fl="${escapeHtml(fl.id)}" data-k="cSpec" /></div>
+          <div class="field" data-tip="Capacité thermique spécifique effective rapportée à la surface de plancher C_R / A_SNP [Wh/(m²·K)]."><label>Capacité C [Wh/(m²·K)]</label><input type="number" step="1" min="5" value="${fl.cSpec}" data-fl="${escapeHtml(fl.id)}" data-k="cSpec" /></div>
         </div>
       `;
     }
@@ -852,12 +864,12 @@ export function loadSiaFloorInputs() {
 function updateSiaCatChips(fl) {
   const c = SIA380_CATEGORIES[fl.siaCategory];
   document.getElementById('siaCatChips').innerHTML = c
-    ? `<span class="pill neutral">θ_i = ${c.ti} °C</span>
-       <span class="pill neutral">A_P = ${c.Ap} m²/P</span>
-       <span class="pill neutral">Q_P = ${c.Qp} W/P (t_p = ${c.tp} h/j)</span>
-       <span class="pill neutral">E_F,el = ${c.Efel} kWh/m² (f_el = ${c.fel})</span>
-       <span class="pill neutral">q_th = ${c.qth} m³/(h·m²)</span>`
-    : '<span class="pill neutral">Valeurs manuelles actives pour cet étage.</span>';
+    ? `<span class="pill neutral" data-tip="Consigne minimale de chauffage hivernal SIA 380/1.">θ_i = ${c.ti} °C</span>
+       <span class="pill neutral" data-tip="Surface nette de plancher par personne selon SIA 380/1.">A_P = ${c.Ap} m²/P</span>
+       <span class="pill neutral" data-tip="Puissance de chaleur dégagée par personne et durée de présence journalière.">Q_P = ${c.Qp} W/P (t_p = ${c.tp} h/j)</span>
+       <span class="pill neutral" data-tip="Consommation annuelle d'électricité (éclairage + appareils) et facteur de conversion en chaleur interne f_el.">E_F,el = ${c.Efel} kWh/m² (f_el = ${c.fel})</span>
+       <span class="pill neutral" data-tip="Débit spécifique d'air neuf hygiénique pendant l'occupation.">q_th = ${c.qth} m³/(h·m²)</span>`
+    : '<span class="pill neutral" data-tip="Vous avez personnalisé manuellement les valeurs de gains internes ou d\'occupation en Mode Avancé.">Valeurs manuelles actives pour cet étage.</span>';
 }
 
 export function applySiaCatToCurrentFloor(catKey) {
@@ -892,13 +904,13 @@ export function updateInspector() {
     totalArea > 0 ? project.floors.reduce((s, f) => s + f.cSpec * f.area, 0) / totalArea : 0;
 
   document.getElementById('inspectorSummary').innerHTML = `
-    <div class="inspector-stat"><span>Projet</span><strong>${escapeHtml(project.name.slice(0, 18))}</strong></div>
-    <div class="inspector-stat"><span>Étages</span><strong>${project.floors.length}</strong></div>
-    <div class="inspector-stat"><span>Surface totale</span><strong>${totalArea.toFixed(1)} m²</strong></div>
-    <div class="inspector-stat"><span>Volume total</span><strong>${totalVol.toFixed(0)} m³</strong></div>
-    <div class="inspector-stat"><span>Surface vitrée</span><strong>${totalWin.toFixed(1)} m²</strong></div>
-    <div class="inspector-stat"><span>Inertie moyenne</span><strong>${avgC.toFixed(0)} Wh/m²K</strong></div>
-    <div class="inspector-stat"><span>Climat</span><strong>${customWeather ? 'Importé' : escapeHtml(project.climate.station + ' ' + project.climate.scenario)}</strong></div>
+    <div class="inspector-stat" data-tip="Nom du bâtiment actuellement configuré."><span>Projet</span><strong>${escapeHtml(project.name.slice(0, 18))}</strong></div>
+    <div class="inspector-stat" data-tip="Nombre de niveaux thermiques modélisés."><span>Étages</span><strong>${project.floors.length}</strong></div>
+    <div class="inspector-stat" data-tip="Somme des surfaces nettes de plancher (A_SNP) de tous les étages."><span>Surface totale</span><strong>${totalArea.toFixed(1)} m²</strong></div>
+    <div class="inspector-stat" data-tip="Volume d'air intérieur total du bâtiment."><span>Volume total</span><strong>${totalVol.toFixed(0)} m³</strong></div>
+    <div class="inspector-stat" data-tip="Surface totale des fenêtres toutes orientations confondues."><span>Surface vitrée</span><strong>${totalWin.toFixed(1)} m²</strong></div>
+    <div class="inspector-stat" data-tip="Capacité thermique moyenne pondérée par la surface des étages (≥ 45 Wh/m²K recommandé)."><span>Inertie moyenne</span><strong>${avgC.toFixed(0)} Wh/m²K</strong></div>
+    <div class="inspector-stat" data-tip="Station et scénario météo utilisés pour le calcul horaire."><span>Climat</span><strong>${customWeather ? 'Importé' : escapeHtml(project.climate.station + ' ' + project.climate.scenario)}</strong></div>
   `;
 
   const alerts = [];
@@ -1014,6 +1026,7 @@ export function renderLibrary(onLoadProject) {
   HOUSE_LIBRARY.forEach(item => {
     const btn = document.createElement('button');
     btn.className = 'house-card';
+    btn.dataset.tip = `Charger le modèle « ${item.title} » : ${item.desc}`;
     btn.innerHTML = `<h4>${escapeHtml(item.title)}</h4><p>${escapeHtml(item.desc)}</p>`;
     btn.addEventListener('click', () => {
       appState.project = item.build();

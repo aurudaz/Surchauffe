@@ -1,8 +1,8 @@
 /**
  * @fileoverview Gestion de l'interface Résultats :
- *  - Vue Simple : Rapport de surchauffe style Minergie (compréhensible en 2 min, sans formules)
+ *  - Vue Simple : Rapport de synthèse clair en 2 minutes (verdict, quantités clés, scénarios d'oubli, courbe des 14 jours chauds)
  *  - Vue Avancée : Détail des puissances et types de gains (gens, lampes, appareils, solaire, conduction),
- *    justificatifs Minergie Variante 2 & SIA 180 (Méthodes 1/2/3), Confort multi-normes, Méthodologie & Graphiques
+ *    contrôles normatifs, confort multi-normes, méthodologie & graphiques d'analyse
  */
 
 import { evaluateThermalComfort } from '../methodology/07-thermal-comfort.js';
@@ -10,7 +10,6 @@ import { appState, escapeHtml } from '../state/project-store.js';
 import {
   drawAdaptiveComparisonChart,
   drawBalanceChart,
-  drawGainsDetailChart,
   drawOrientChart,
   drawSIAChart,
   drawSimpleHeatwaveChart,
@@ -21,57 +20,12 @@ import { renderMethodologyPanel } from './methodology-view.js';
 let timeChartMeta = null;
 let simpleChartMeta = null;
 
-function badge(ok, yesLabel = 'Conforme', noLabel = 'Non conforme', warnMode = false) {
-  return `<span class="pill ${ok ? 'ok' : warnMode ? 'warn' : 'ko'}">${ok ? yesLabel : noLabel}</span>`;
+function badge(ok, yesLabel = 'Conforme', noLabel = 'Non conforme', warnMode = false, tip = '') {
+  const tipAttr = tip ? ` data-tip="${escapeHtml(tip)}"` : '';
+  return `<span class="pill ${ok ? 'ok' : warnMode ? 'warn' : 'ko'}"${tipAttr}>${ok ? yesLabel : noLabel}</span>`;
 }
 
-function renderMinergieGaugeHtml(m) {
-  const scaleMax = 120;
-  const blueW = Math.min(100, (m.solarLow200Pct / scaleMax) * 100);
-  const redW = Math.min(100 - blueW, (m.solarHigh200Pct / scaleMax) * 100);
-  const limitLeft = (100 / scaleMax) * 100; // 83.33%
-  const massLeft = Math.min(99, Math.max(2, (m.massThresholdPct / scaleMax) * 100));
-  const reserveText =
-    m.massReservePct >= 0
-      ? `Capacité thermique (+${m.massReservePct}% réserve)`
-      : `Capacité thermique (${m.massReservePct}% déficit)`;
-
-  const massLabelStyle =
-    massLeft > 80
-      ? 'right:0;left:auto;transform:none;'
-      : massLeft < 20
-        ? 'left:0;transform:none;'
-        : '';
-
-  return `
-    <div class="minergie-gauge-wrap">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:6px;">
-        <strong style="font-size:13px;">Bilan constructif Minergie (apports solaires vs capacité de stockage)</strong>
-        ${badge(m.constructivePass, `Exigences constructives respectées (${m.externalLoadPct.toFixed(0)} %)`, `Dépassement (${m.externalLoadPct.toFixed(0)} %)`)}
-      </div>
-      <div style="font-size:11.5px;color:var(--text-muted);margin-bottom:8px;">
-        Bleu : apports solaires faibles (&lt; 200 W/m²) •
-        Rouge : apports solaires forts (&gt; 200 W/m², stores actifs) •
-        Seuil max : 100 %
-      </div>
-      <div class="minergie-gauge-track">
-        <div class="mg-seg-blue" style="width:${blueW.toFixed(1)}%;" title="Irradiation < 200 W/m² : ${m.solarLow200Pct.toFixed(1)} %"></div>
-        <div class="mg-seg-red" style="width:${redW.toFixed(1)}%;" title="Irradiation > 200 W/m² : ${m.solarHigh200Pct.toFixed(1)} %"></div>
-        <div class="mg-limit-line" style="left:${limitLeft.toFixed(1)}%;">
-          <span class="mg-limit-label">Max 100 %</span>
-        </div>
-        <div class="mg-mass-marker" style="left:${massLeft.toFixed(1)}%;">
-          <span class="mg-mass-label" style="${massLabelStyle}">${reserveText}</span>
-        </div>
-      </div>
-      <div class="mg-scale">
-        <span>0 %</span><span>20 %</span><span>40 %</span><span>60 %</span><span>80 %</span><span>100 %</span><span>120 %</span>
-      </div>
-    </div>
-  `;
-}
-
-function renderSimpleMinergieReport(res, activeFR, project) {
+function renderSimpleReport(res, activeFR, project) {
   const m = activeFR.minergie;
   const g = activeFR.gains;
   const isMinergie = project.projectType === 'minergie';
@@ -94,6 +48,16 @@ function renderSimpleMinergieReport(res, activeFR, project) {
     ...scenarios.map(s => (isMinergie ? s.wf.overMinergie265 : s.wf.overSIA))
   );
 
+  const scenarioTips = {
+    current: 'Résultat avec vos paramètres actuels (stores et aération tels que configurés).',
+    no_blinds: 'Simule ce qui se passe si les occupants oublient de fermer les stores pendant la journée (la ventilation nocturne reste active).',
+    no_night: 'Simule ce qui se passe si les fenêtres restent fermées toute la nuit (les stores restent actifs le jour).',
+    both_bad: 'Pire cas comportemental : les stores restent levés le jour ET les fenêtres restent fermées la nuit.',
+    optimal: 'Potentiel passif maximal : stores extérieurs automatisés très performants (g_store ≤ 0.10) + aération nocturne large.',
+    climate_2035: 'Comportement du même bâtiment sous le climat réchauffé à l’horizon 2035 (+1.5 °C en été).',
+    climate_2050: 'Comportement du même bâtiment sous le climat projeté à l’horizon 2050 (+2.0 °C en été).'
+  };
+
   const scenariosHtml = scenarios
     .filter(s => ['current', 'no_blinds', 'no_night', 'both_bad', 'optimal', 'climate_2035', 'climate_2050'].includes(s.id))
     .map(s => {
@@ -102,8 +66,9 @@ function renderSimpleMinergieReport(res, activeFR, project) {
       const ok = hrs <= mainLimit;
       const barCol = ok ? 'var(--ok)' : hrs <= mainLimit * 2 ? 'var(--warn)' : 'var(--ko)';
       const isCurr = s.id === 'current';
+      const tip = scenarioTips[s.id] || s.note;
       return `
-        <div class="scenario-row ${isCurr ? 'highlight' : ''}">
+        <div class="scenario-row ${isCurr ? 'highlight' : ''}" data-tip="${escapeHtml(tip)}">
           <div>
             <strong>${escapeHtml(s.label)}</strong>
             <div style="font-size:11.5px;color:var(--text-muted);">${escapeHtml(s.note)}</div>
@@ -126,39 +91,39 @@ function renderSimpleMinergieReport(res, activeFR, project) {
     .join('');
 
   document.getElementById('simpleReportBody').innerHTML = `
-    <div class="verdict-banner ${verdictStatus}">
+    <div class="verdict-banner ${verdictStatus}" data-tip="Verdict global de surchauffe pour l'étage analysé en combinant les critères constructifs et le nombre d'heures chaudes sur l'année.">
       <div>
         <h3 class="verdict-title">${verdictTitle}</h3>
         <p class="verdict-sub">
           ${escapeHtml(activeFR.floor.name)} (${activeFR.floor.area.toFixed(0)} m²) :
-          <strong>${activeFR.overMinergie265} h/an &gt; 26.5 °C</strong> (seuil Minergie : 100 h) •
+          <strong>${activeFR.overMinergie265} h/an &gt; 26.5 °C</strong> (seuil : 100 h) •
           Température maximale d'été : <strong>${activeFR.summerMaxTop.toFixed(1)} °C</strong>.
         </p>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        ${m ? badge(m.constructivePass, 'Constructif OK', 'Constructif à revoir') : ''}
-        ${m ? badge(m.comfortPass, `Minergie 2035 OK (${m.hoursOver265} h)`, `Minergie 2035 : ${m.hoursOver265} h`, false) : ''}
-        ${badge(activeFR.passSIA, `SIA 180 OK (${activeFR.overSIA} h)`, `SIA 180 : ${activeFR.overSIA} h`)}
+        ${m ? badge(m.constructivePass, 'Constructif OK', 'Constructif à revoir', false, 'Vérifie que les protections solaires, la masse thermique et la résistance au vent des stores sont suffisantes.') : ''}
+        ${m ? badge(m.comfortPass, `Climat 2035 OK (${m.hoursOver265} h)`, `Climat 2035 : ${m.hoursOver265} h`, false, 'Nombre d\'heures dépassant 26.5 °C sous le climat projeté 2035 (max autorisé : 100 h/an).') : ''}
+        ${badge(activeFR.passSIA, `SIA 180 OK (${activeFR.overSIA} h)`, `SIA 180 : ${activeFR.overSIA} h`, false, 'Nombre d\'heures dépassant la limite adaptative SIA 180 pendant l\'occupation.')}
       </div>
     </div>
 
     <div class="kpi-row">
-      <div class="kpi-box">
-        <div class="kpi-label">${isMinergie ? 'Heures > 26.5 °C (Minergie)' : 'Heures de surchauffe (SIA 180)'}</div>
+      <div class="kpi-box" data-tip="Nombre total d'heures d'occupation par an où la température intérieure dépasse le seuil de confort (${isMinergie ? '26.5 °C fixe' : 'courbe adaptative SIA 180'}).">
+        <div class="kpi-label">${isMinergie ? 'Heures > 26.5 °C' : 'Heures de surchauffe'}</div>
         <div class="kpi-val" style="color:${mainPass ? 'var(--ok)' : 'var(--ko)'}">${mainHours} h/an</div>
         <div class="kpi-sub">Limite autorisée : ≤ ${mainLimit} h/an</div>
       </div>
-      <div class="kpi-box">
+      <div class="kpi-box" data-tip="Pic de température opérative atteint à l'intérieur pendant la saison estivale (mai–septembre), et nombre d'heures de nuit (22h–07h) au-dessus de 26 °C gênant le sommeil.">
         <div class="kpi-label">Température maximale en été</div>
         <div class="kpi-val" style="color:${activeFR.summerMaxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.summerMaxTop.toFixed(1)} °C</div>
         <div class="kpi-sub">Nuits chaudes (&gt; 26 °C) : ${activeFR.comfort.healthSleep.nightOver26H} h</div>
       </div>
-      <div class="kpi-box">
+      <div class="kpi-box" data-tip="Note globale sur 100 évaluant la résistance du bâtiment aux vagues de chaleur (50 pts sur les heures de surchauffe, 20 pts sur le pic de température, 15 pts sur les stores, 15 pts sur l'inertie et la ventilation nocturne).">
         <div class="kpi-label">Score de protection estivale</div>
         <div class="kpi-val" style="color:${activeFR.score >= 75 ? 'var(--ok)' : activeFR.score >= 45 ? 'var(--warn)' : 'var(--ko)'}">${activeFR.score} / 100</div>
         <div class="kpi-sub">${activeFR.score >= 75 ? 'Très bonne résilience' : activeFR.score >= 45 ? 'Marge d\'amélioration' : 'Vulnérable aux canicules'}</div>
       </div>
-      <div class="kpi-box">
+      <div class="kpi-box" data-tip="Débit d'air frais nocturne par m² de plancher (sous un écart type ΔT = 8 K). Un débit ≥ 10 m³/(h·m²) est nécessaire pour décharger efficacement la chaleur stockée dans les murs et dalles.">
         <div class="kpi-label">Aération nocturne</div>
         <div class="kpi-val" style="color:${nightPass ? 'var(--ok)' : 'var(--warn)'}">${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</div>
         <div class="kpi-sub">Objectif recommandé : ≥ 10 m³/(h·m²)</div>
@@ -167,48 +132,51 @@ function renderSimpleMinergieReport(res, activeFR, project) {
 
     <div class="card">
       <h3 class="card-title">
-        <span>Fiche de contrôle Minergie — Exigences constructives &amp; quantités</span>
-        <span class="pill neutral">Style justificatif Variante 2</span>
+        <span data-tip="Résumé des 6 quantités physiques qui déterminent si le local accumule ou évacue la chaleur en été.">Synthèse constructive &amp; paramètres clés</span>
       </h3>
-      ${m ? renderMinergieGaugeHtml(m) : ''}
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Critère Minergie</th><th class="num">Valeur du projet</th><th class="num">Référence / Seuil</th><th>Statut</th></tr>
+            <tr>
+              <th data-tip="Grandeur physique vérifiée.">Paramètre</th>
+              <th class="num" data-tip="Valeur calculée pour l'étage sélectionné.">Valeur du projet</th>
+              <th class="num" data-tip="Valeur cible recommandée pour éviter la surchauffe.">Référence / Seuil</th>
+              <th data-tip="Évaluation directe du paramètre.">Statut</th>
+            </tr>
           </thead>
           <tbody>
-            <tr>
+            <tr data-tip="Rapport entre la surface totale des fenêtres (A_G) et la surface de plancher (A_SNP). Plus la proportion vitrée est grande, plus les stores extérieurs doivent être performants.">
               <td>Surface de référence &amp; vitrages (A_G / A_SNP)</td>
               <td class="num">${activeFR.fp.winArea.toFixed(1)} m² / ${activeFR.floor.area.toFixed(0)} m² (<strong>${m ? (m.glazingIndexZg * 100).toFixed(0) : 0} %</strong>)</td>
               <td class="num">Part vitrée modérée</td>
               <td><span class="pill neutral">Quantité</span></td>
             </tr>
-            <tr>
+            <tr data-tip="Part de l'énergie solaire qui traverse l'ensemble vitrage + store fermé (ex. 0.06 = 6 % entre, 94 % est bloqué). Doit être inférieur au seuil limite SIA 180.">
               <td>Protection solaire (facteur g_total moyen)</td>
               <td class="num"><strong>${activeFR.avgGtot.toFixed(2)}</strong></td>
               <td class="num">≤ ${m ? m.gTotAuthorized.toFixed(2) : '0.15'}</td>
               <td>${m ? badge(m.gTotOk, 'Efficace', 'Trop élevé') : ''}</td>
             </tr>
-            <tr>
+            <tr data-tip="Classe de résistance au vent minimale (SIA 342) pour que les stores extérieurs puissent rester baissés par temps venteux en été (Classe 5 = 75 km/h, Classe 6 = 92 km/h en zone föhn ou bâtiment élevé).">
               <td>Résistance au vent des stores (SIA 342)</td>
               <td class="num">${project.foehnExposed ? 'Zone föhn' : 'Standard'} (h=${m ? m.buildingHeightM.toFixed(1) : '5'} m)</td>
               <td class="num">${m ? m.windRec.label : 'Classe 5'}</td>
               <td>${m ? badge(m.allWindSafe, 'Stores protégés', 'Non protégé') : ''}</td>
             </tr>
-            <tr>
+            <tr data-tip="Capacité des dalles et murs à absorber la chaleur diurne sans que la température de l'air ne grimpe trop vite (≥ 30 Wh/m²K minimum, ≥ 45 Wh/m²K recommandé).">
               <td>Inertie thermique du local (C_R / A_SNP)</td>
               <td class="num"><strong>${activeFR.floor.cSpec.toFixed(0)} Wh/(m²·K)</strong></td>
               <td class="num">≥ 30 min. (45 reco.)</td>
               <td>${badge(activeFR.floor.cSpec >= 45, 'Forte', activeFR.floor.cSpec >= 30 ? 'Moyenne' : 'Faible', activeFR.floor.cSpec >= 30)}</td>
             </tr>
-            <tr>
+            <tr data-tip="Quantité de chaleur dégagée chaque jour par m² à l'intérieur par les occupants, l'éclairage et les appareils électriques (valeur standard logement : 113 Wh/(m²·j)).">
               <td>Charges internes (personnes + lampes + appareils)</td>
               <td class="num"><strong>${g.internalTotal.dailyWhm2d.toFixed(0)} Wh/(m²·j)</strong> (${g.internalTotal.peakW.toFixed(0)} W max)</td>
-              <td class="num">Réf. SIA : ${m ? m.internalLoadRefWhm2d : 113} Wh/(m²·j)</td>
+              <td class="num">Réf. : ${m ? m.internalLoadRefWhm2d : 113} Wh/(m²·j)</td>
               <td>${badge(g.internalTotal.dailyWhm2d <= (m ? m.internalLoadRefWhm2d * 1.15 : 130), 'Maîtrisées', 'Élevées', true)}</td>
             </tr>
-            <tr>
-              <td>Stratégie estivale (ventilation nocturne)</td>
+            <tr data-tip="Capacité de renouvellement d'air nocturne par les fenêtres ouvertes pour évacuer la chaleur accumulée la journée (≥ 10 m³/(h·m²) recommandé).">
+              <td>Ventilation nocturne (rafraîchissement)</td>
               <td class="num"><strong>${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</strong> (${(activeFR.nomNightM3h / Math.max(1, activeFR.fp.vol)).toFixed(1)} vol/h)</td>
               <td class="num">≥ 10.0 m³/(h·m²)</td>
               <td>${badge(nightPass, 'Efficace', activeFR.nomNightSpec > 0 ? 'Modérée' : 'Absente', activeFR.nomNightSpec > 0)}</td>
@@ -220,11 +188,11 @@ function renderSimpleMinergieReport(res, activeFR, project) {
 
     <div class="card">
       <h3 class="card-title">
-        <span>Impact des gestes quotidiens &amp; scénarios (« Et si on oublie... ? »)</span>
-        <span class="pill neutral">${isMinergie ? 'Heures > 26.5 °C' : 'Heures SIA 180'}</span>
+        <span data-tip="Compare votre configuration aux cas où les occupants oublient de fermer les stores le jour ou d'ouvrir les fenêtres la nuit.">Impact des gestes quotidiens &amp; scénarios (« Et si on oublie... ? »)</span>
+        <span class="pill neutral">${isMinergie ? 'Heures > 26.5 °C' : 'Heures de surchauffe'}</span>
       </h3>
       <p class="subtitle">
-        Permet de voir en un coup d'œil ce qui se passe si les occupants ne baissent pas les stores ou n'ouvrent pas les fenêtres la nuit.
+        Montre l'effet concret d'un oubli de fermeture des stores ou d'ouverture nocturne des fenêtres sur la surchauffe.
       </p>
       <div class="scenario-list">${scenariosHtml}</div>
     </div>
@@ -232,9 +200,17 @@ function renderSimpleMinergieReport(res, activeFR, project) {
     ${
       res.floorResults.length > 1
         ? `<div class="card">
-            <h3 class="card-title">Résumé de tous les étages / locaux</h3>
+            <h3 class="card-title" data-tip="Comparaison rapide de la surchauffe entre tous les étages du bâtiment.">Résumé par étage</h3>
             <div class="table-wrap"><table>
-              <thead><tr><th>Local / Étage</th><th class="num">Surface</th><th class="num">Temp. max été</th><th class="num">Heures &gt; 26.5 °C</th><th class="num">SIA 180</th><th class="num">Score</th><th>Statut</th></tr></thead>
+              <thead><tr>
+                <th data-tip="Nom de l'étage.">Local / Étage</th>
+                <th class="num" data-tip="Surface nette de plancher [m²].">Surface</th>
+                <th class="num" data-tip="Température maximale atteinte en été [°C].">Temp. max été</th>
+                <th class="num" data-tip="Heures d'occupation au-dessus de 26.5 °C [h/an].">Heures &gt; 26.5 °C</th>
+                <th class="num" data-tip="Heures de dépassement de la limite adaptative SIA 180 [h/an].">SIA 180</th>
+                <th class="num" data-tip="Score global de protection estivale sur 100.">Score</th>
+                <th data-tip="Conformité de l'étage au seuil choisi.">Statut</th>
+              </tr></thead>
               <tbody>${res.floorResults
                 .map(fr => {
                   const fHrs = isMinergie ? fr.overMinergie265 : fr.overSIA;
@@ -255,7 +231,7 @@ function renderSimpleMinergieReport(res, activeFR, project) {
     }
 
     <div class="card">
-      <h3 class="card-title">Recommandations prioritaires</h3>
+      <h3 class="card-title" data-tip="Actions concrètes identifiées automatiquement pour réduire la température intérieure d'été.">Recommandations prioritaires</h3>
       <div class="reco-list">${activeFR.recos.map(r => `<div class="reco-item">${r}</div>`).join('')}</div>
     </div>
   `;
@@ -270,13 +246,13 @@ function renderDetailedGainsSection(activeFR) {
   document.getElementById('advGainsSummaryBadge').textContent =
     `Pointe totale : ${g.totalGainPeakW.toFixed(0)} W (${g.totalGainPeakWm2.toFixed(1)} W/m²) • Économie stores : ${g.solarBlockedByBlinds.summerKWh.toFixed(0)} kWh`;
 
-  const fmtRow = (label, item, cls = '', customDaily = null) => `
-    <tr class="${cls}">
+  const fmtRow = (label, item, cls = '', tip = '') => `
+    <tr class="${cls}"${tip ? ` data-tip="${escapeHtml(tip)}"` : ''}>
       <td>${label}</td>
       <td class="num">${item.peakW.toFixed(0)} W</td>
       <td class="num">${item.peakWm2.toFixed(1)} W/m²</td>
       <td class="num">${item.summerMeanW.toFixed(0)} W</td>
-      <td class="num">${customDaily !== null ? customDaily : item.dailyWhm2d.toFixed(1) + ' Wh/(m²·j)'}</td>
+      <td class="num">${item.dailyWhm2d.toFixed(1)} Wh/(m²·j)</td>
       <td class="num"><strong>${item.summerKWh.toFixed(0)} kWh</strong></td>
       <td class="num">${item.summerKWhm2.toFixed(1)} kWh/m²</td>
       <td class="num">${item.sharePct.toFixed(1)} %</td>
@@ -288,37 +264,29 @@ function renderDetailedGainsSection(activeFR) {
       ? (g.solarBlockedByBlinds.summerKWh / g.solarUnshaded.summerKWh) * 100
       : 0;
 
-  const orientRows = Object.entries(activeFR.solOrientStats || {})
-    .filter(([, v]) => v.energyKWh > 0.1 || v.unshadedKWh > 0.1)
-    .map(([orient, os]) => {
-      const saved = Math.max(0, os.unshadedKWh - os.energyKWh);
-      return `<span class="pill neutral">${orient === 'R' ? 'Toiture' : orient} : ${os.peakW.toFixed(0)} W pic • ${os.energyKWh.toFixed(0)} kWh (irrad. max ${os.peakIrrWm2.toFixed(0)} W/m², ${os.hoursOver200} h ≥200 W/m², stores -${saved.toFixed(0)} kWh)</span>`;
-    })
-    .join('');
-
   document.getElementById('advGainsBody').innerHTML = `
     <div class="gains-summary-chips">
-      <span class="pill neutral">Gains internes : <strong>${g.internalTotal.dailyWhm2d.toFixed(1)} Wh/(m²·j)</strong> (${g.internalTotal.peakW.toFixed(0)} W pointe)</span>
-      <span class="pill neutral">Dont Personnes : ${g.people.peakW.toFixed(0)} W • Lampes : ${g.lighting.peakW.toFixed(0)} W • Appareils : ${g.appliances.peakW.toFixed(0)} W</span>
-      <span class="pill ok">Gains solaires bloqués par stores : <strong>${g.solarBlockedByBlinds.summerKWh.toFixed(0)} kWh</strong> (−${blindReductionPct.toFixed(0)} %, pointe −${g.solarBlockedByBlinds.peakW.toFixed(0)} W)</span>
+      <span class="pill neutral" data-tip="Charge thermique interne cumulée par jour et par m² de plancher (personnes + éclairage + appareils).">Gains internes : <strong>${g.internalTotal.dailyWhm2d.toFixed(1)} Wh/(m²·j)</strong> (${g.internalTotal.peakW.toFixed(0)} W pointe)</span>
+      <span class="pill neutral" data-tip="Répartition de la puissance interne de pointe entre occupants, éclairage et appareils.">Personnes : ${g.people.peakW.toFixed(0)} W • Lampes : ${g.lighting.peakW.toFixed(0)} W • Appareils : ${g.appliances.peakW.toFixed(0)} W</span>
+      <span class="pill ok" data-tip="Quantité d'énergie solaire estivale arrêtée par les stores mobiles par rapport au vitrage nu.">Solaire bloqué par les stores : <strong>${g.solarBlockedByBlinds.summerKWh.toFixed(0)} kWh</strong> (−${blindReductionPct.toFixed(0)} %)</span>
     </div>
 
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Type de gain / flux thermique (Mai–Sept)</th>
-            <th class="num">Puissance pointe</th>
-            <th class="num">Spécifique</th>
-            <th class="num">Moy. été</th>
-            <th class="num">Charge jour</th>
-            <th class="num">Énergie été</th>
-            <th class="num">Par m²</th>
-            <th class="num">Part gains</th>
+            <th data-tip="Source d'apport de chaleur (+) ou voie d'évacuation (−) évaluée sur la saison estivale (1er mai – 30 septembre).">Type de gain / flux thermique (Mai–Sept)</th>
+            <th class="num" data-tip="Puissance maximale instantanée [W] atteinte par ce flux pendant l'été.">Puissance pointe</th>
+            <th class="num" data-tip="Puissance de pointe ramenée au m² de plancher [W/m²].">Spécifique</th>
+            <th class="num" data-tip="Puissance moyenne continue sur les 3696 heures de la période mai–septembre [W].">Moy. été</th>
+            <th class="num" data-tip="Énergie moyenne apportée chaque jour par m² de plancher [Wh/(m²·j)].">Charge jour</th>
+            <th class="num" data-tip="Énergie totale cumulée sur l'été (mai–septembre) [kWh].">Énergie été</th>
+            <th class="num" data-tip="Énergie estivale ramenée au m² de plancher [kWh/m²].">Par m²</th>
+            <th class="num" data-tip="Pourcentage du total des apports de chaleur estivaux.">Part gains</th>
           </tr>
         </thead>
         <tbody>
-          <tr>
+          <tr data-tip="Somme de toutes les chaleurs dégagées à l'intérieur du local (occupants + éclairage + appareils).">
             <td><strong>1. Gains internes (Total : gens + lampes + appareils)</strong></td>
             <td class="num"><strong>${g.internalTotal.peakW.toFixed(0)} W</strong></td>
             <td class="num"><strong>${g.internalTotal.peakWm2.toFixed(1)} W/m²</strong></td>
@@ -328,11 +296,11 @@ function renderDetailedGainsSection(activeFR) {
             <td class="num">${g.internalTotal.summerKWhm2.toFixed(1)} kWh/m²</td>
             <td class="num"><strong>${g.internalTotal.sharePct.toFixed(1)} %</strong></td>
           </tr>
-          ${fmtRow(`↳ Personnes / Occupants (${fl.occCount} p. × ${fl.occWatt} W × ${((fl.occPresenceFactor ?? 1) * 100).toFixed(0)} %)`, g.people, 'gains-row-sub')}
-          ${fmtRow(`↳ Lampes / Éclairage (${fl.lightWm2.toFixed(1)} W/m²)`, g.lighting, 'gains-row-sub')}
-          ${fmtRow(`↳ Appareils / Appliances (${fl.equipWatt.toFixed(0)} W inst., veille ${fl.standbyPct} %)`, g.appliances, 'gains-row-sub')}
+          ${fmtRow(`↳ Personnes / Occupants (${fl.occCount} p. × ${fl.occWatt} W × ${((fl.occPresenceFactor ?? 1) * 100).toFixed(0)} %)`, g.people, 'gains-row-sub', 'Chaleur métabolique dégagée par les personnes présentes dans le local.')}
+          ${fmtRow(`↳ Lampes / Éclairage (${fl.lightWm2.toFixed(1)} W/m²)`, g.lighting, 'gains-row-sub', 'Chaleur dissipée par les luminaires et lampes.')}
+          ${fmtRow(`↳ Appareils / Appliances (${fl.equipWatt.toFixed(0)} W inst., veille ${fl.standbyPct} %)`, g.appliances, 'gains-row-sub', 'Chaleur dégagée par les équipements informatiques, électroménagers et appareils en veille.')}
 
-          <tr>
+          <tr data-tip="Rayonnement solaire entrant effectivement par les fenêtres après réduction par les casquettes, écrans latéraux et stores.">
             <td><strong>2. Gains solaires transmis (avec stores &amp; ombrages)</strong></td>
             <td class="num"><strong>${g.solarTransmitted.peakW.toFixed(0)} W</strong></td>
             <td class="num"><strong>${g.solarTransmitted.peakWm2.toFixed(1)} W/m²</strong></td>
@@ -342,7 +310,7 @@ function renderDetailedGainsSection(activeFR) {
             <td class="num">${g.solarTransmitted.summerKWhm2.toFixed(1)} kWh/m²</td>
             <td class="num"><strong>${g.solarTransmitted.sharePct.toFixed(1)} %</strong></td>
           </tr>
-          <tr class="gains-row-sub">
+          <tr class="gains-row-sub" data-tip="Apport solaire qui serait entré à travers le vitrage nu si aucun store mobile n'avait été baissé, et réduction permise par les stores.">
             <td>↳ Référence vitrage nu (sans stores) / Économie stores</td>
             <td class="num">${g.solarUnshaded.peakW.toFixed(0)} W</td>
             <td class="num">${g.solarUnshaded.peakWm2.toFixed(1)} W/m²</td>
@@ -353,10 +321,10 @@ function renderDetailedGainsSection(activeFR) {
             <td class="num">−${blindReductionPct.toFixed(0)} %</td>
           </tr>
 
-          ${fmtRow('3. Conduction entrante par enveloppe (θ_e &gt; θ_op)', g.conductionIn)}
-          ${g.slabIn.summerKWh >= 1 ? fmtRow('4. Apport thermique via dalles inter-étages (+)', g.slabIn) : ''}
+          ${fmtRow('3. Conduction entrante par enveloppe (θ_e &gt; θ_op)', g.conductionIn, '', 'Chaleur entrant par conduction à travers les murs, le toit et les vitrages aux heures chaudes où il fait plus chaud dehors que dedans.')}
+          ${g.slabIn.summerKWh >= 1 ? fmtRow('4. Apport thermique via dalles inter-étages (+)', g.slabIn, '', 'Chaleur transmise par conduction depuis un étage voisin plus chaud.') : ''}
 
-          <tr class="gains-row-total">
+          <tr class="gains-row-total" data-tip="Total de tous les apports de chaleur reçus par le local (la puissance de pointe correspond au maximum simultané observé sur une même heure).">
             <td>TOTAL DES GAINS DE CHALEUR (pointe simultanée)</td>
             <td class="num">${g.totalGainPeakW.toFixed(0)} W</td>
             <td class="num">${g.totalGainPeakWm2.toFixed(1)} W/m²</td>
@@ -367,7 +335,7 @@ function renderDetailedGainsSection(activeFR) {
             <td class="num">100.0 %</td>
           </tr>
 
-          <tr>
+          <tr data-tip="Chaleur ressortant par conduction à travers les parois et vitrages lorsque l'extérieur est plus frais que l'intérieur.">
             <td style="color:var(--ok);">Évacuation : Conduction sortante (−)</td>
             <td class="num">${g.conductionOut.peakW.toFixed(0)} W</td>
             <td class="num">${g.conductionOut.peakWm2.toFixed(1)} W/m²</td>
@@ -377,7 +345,7 @@ function renderDetailedGainsSection(activeFR) {
             <td class="num">−${g.conductionOut.summerKWhm2.toFixed(1)} kWh/m²</td>
             <td class="num">—</td>
           </tr>
-          <tr>
+          <tr data-tip="Chaleur évacuée par le renouvellement d'air hygiénique diurne et les infiltrations.">
             <td style="color:var(--ok);">Évacuation : Ventilation diurne &amp; infiltration (−)</td>
             <td class="num">${g.ventDayOut.peakW.toFixed(0)} W</td>
             <td class="num">${g.ventDayOut.peakWm2.toFixed(1)} W/m²</td>
@@ -387,7 +355,7 @@ function renderDetailedGainsSection(activeFR) {
             <td class="num">−${g.ventDayOut.summerKWhm2.toFixed(1)} kWh/m²</td>
             <td class="num">—</td>
           </tr>
-          <tr>
+          <tr data-tip="Chaleur extraite la nuit par l'ouverture des fenêtres (déstockage de la masse thermique).">
             <td style="color:var(--ok);">Évacuation : Surventilation nocturne (−)</td>
             <td class="num">${g.ventNightOut.peakW.toFixed(0)} W</td>
             <td class="num">${g.ventNightOut.peakWm2.toFixed(1)} W/m²</td>
@@ -400,36 +368,39 @@ function renderDetailedGainsSection(activeFR) {
         </tbody>
       </table>
     </div>
-    ${orientRows ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;">${orientRows}</div>` : ''}
   `;
 }
 
-function renderMinergieTab(activeFR, project) {
+function renderConstructiveTab(activeFR, project) {
   const m = activeFR.minergie;
   if (!m) {
-    document.getElementById('sub-minergie').innerHTML = '<p class="subtitle">Données Minergie indisponibles.</p>';
+    document.getElementById('sub-minergie').innerHTML = '<p class="subtitle">Données indisponibles.</p>';
     return;
   }
   document.getElementById('sub-minergie').innerHTML = `
     <div style="margin-bottom:10px;">
-      Verdict global Minergie Variante 2 : ${badge(m.globalPass, 'Conforme Minergie', 'Non conforme Minergie')}
+      Verdict global : ${badge(m.globalPass, 'Conforme', 'Non conforme')}
       &nbsp; Volet constructif : ${badge(m.constructivePass, 'Rempli', 'Déficit')}
-      &nbsp; Volet confort 2035 : ${badge(m.comfortPass, `≤ 100 h > 26.5 °C (${m.hoursOver265} h)`, `Dépassé (${m.hoursOver265} h)`)}
+      &nbsp; Confort 2035 : ${badge(m.comfortPass, `≤ 100 h > 26.5 °C (${m.hoursOver265} h)`, `Dépassé (${m.hoursOver265} h)`)}
     </div>
-    ${renderMinergieGaugeHtml(m)}
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Paramètre Minergie SoWS Variante 2</th><th class="num">Calculé</th><th class="num">Exigence / Référence</th><th>Statut</th></tr></thead>
+        <thead><tr>
+          <th data-tip="Critère constructif ou de confort vérifié.">Paramètre</th>
+          <th class="num" data-tip="Valeur calculée pour l'étage actif.">Calculé</th>
+          <th class="num" data-tip="Seuil réglementaire ou valeur de référence.">Exigence / Référence</th>
+          <th data-tip="Statut de conformité.">Statut</th>
+        </tr></thead>
         <tbody>
-          <tr><td>Surface nette de plancher (A_SNP)</td><td class="num">${m.area.toFixed(1)} m²</td><td class="num">Profondeur/h_libre = ${m.depthRatio.toFixed(1)} (max 2.5 reco.)</td><td>${badge(!m.depthWarning, 'OK', 'Profond (>2.5h)', true)}</td></tr>
-          <tr><td>Indice de vitrage Z_g = A_G / A_SNP</td><td class="num">${m.glazingIndexZg.toFixed(2)} (${m.winArea.toFixed(1)} m²)</td><td class="num">—</td><td><span class="pill neutral">Info</span></td></tr>
-          <tr><td>Facteur solaire g_total effectif moyen</td><td class="num">${m.gTotEffective.toFixed(3)}</td><td class="num">≤ ${m.gTotAuthorized.toFixed(3)} (autorisé)</td><td>${badge(m.gTotOk, 'OK', 'Trop élevé')}</td></tr>
-          <tr><td>Capacité thermique effective (C_R / A_SNP)</td><td class="num">${m.thermalMassWhm2K.toFixed(0)} Wh/(m²·K)</td><td class="num">≥ 30 min. (45 réf.)</td><td>${badge(m.massMinOk, m.massReservePct >= 0 ? 'Réserve' : 'OK', 'Insuffisante', m.massReservePct < 0 && m.massMinOk)}</td></tr>
-          <tr><td>Résistance au vent stores (SIA 342)</td><td class="num">${m.windRec.label}</td><td class="num">H_bât=${m.buildingHeightM.toFixed(1)} m • Föhn=${project.foehnExposed ? 'Oui' : 'Non'}</td><td>${badge(m.allWindSafe, 'Respectée', 'Non protégé')}</td></tr>
-          <tr><td>Automatisation stores (SIA 380/2 §3.2.3.1 &amp; 7.1.2)</td><td class="num">${m.shadingAutomated ? 'Auto (200 W/m²)' : 'Manuelle / Absente'}</td><td class="num">Recommandée si Z_g élevé</td><td>${badge(m.shadingAutomated, 'Auto OK', 'Manuelle', true)}</td></tr>
-          <tr><td>Charges internes (SIA 2024)</td><td class="num">${m.internalLoadWhm2d.toFixed(1)} Wh/(m²·j)</td><td class="num">Réf. ${m.internalLoadRefWhm2d} Wh/(m²·j)</td><td>${badge(m.internalLoadWhm2d <= m.internalLoadRefWhm2d * 1.15, 'OK', 'Élevées', true)}</td></tr>
-          <tr><td>Stratégie estivale (débit nocturne nominal)</td><td class="num">${m.summerStrategyLabel}</td><td class="num">≥ 10.0 m³/(h·m²)</td><td>${badge(m.nightSpecM3hm2 >= 10, 'Efficace', 'Insuffisant', m.nightSpecM3hm2 > 0)}</td></tr>
-          <tr><td>Heures &gt; 26.5 °C (Climat actif vs 2035)</td><td class="num">${m.hoursOver265Current} h (actif) / <strong>${m.hoursOver265} h (2035)</strong></td><td class="num">≤ 100 h/an (Minergie 2035)</td><td>${badge(m.comfortPass, 'Conforme 2035', 'Non conforme')}</td></tr>
+          <tr data-tip="Surface nette de plancher et vérification que la profondeur de la pièce ne dépasse pas 2.5 fois la hauteur sous plafond."><td>Surface nette de plancher (A_SNP)</td><td class="num">${m.area.toFixed(1)} m²</td><td class="num">Profondeur/h_libre = ${m.depthRatio.toFixed(1)} (max 2.5 reco.)</td><td>${badge(!m.depthWarning, 'OK', 'Profond (>2.5h)', true)}</td></tr>
+          <tr data-tip="Rapport entre la surface totale des vitrages et la surface de plancher."><td>Indice de vitrage Z_g = A_G / A_SNP</td><td class="num">${m.glazingIndexZg.toFixed(2)} (${m.winArea.toFixed(1)} m²)</td><td class="num">—</td><td><span class="pill neutral">Info</span></td></tr>
+          <tr data-tip="Transmission solaire globale moyenne (vitrage + store) comparée à la limite maximale autorisée selon l'orientation."><td>Facteur solaire g_total effectif moyen</td><td class="num">${m.gTotEffective.toFixed(3)}</td><td class="num">≤ ${m.gTotAuthorized.toFixed(3)} (autorisé)</td><td>${badge(m.gTotOk, 'OK', 'Trop élevé')}</td></tr>
+          <tr data-tip="Capacité d'accumulation thermique rapportée au m² de plancher (minimum 30 Wh/m²K, référence 45 Wh/m²K)."><td>Capacité thermique effective (C_R / A_SNP)</td><td class="num">${m.thermalMassWhm2K.toFixed(0)} Wh/(m²·K)</td><td class="num">≥ 30 min. (45 réf.)</td><td>${badge(m.massMinOk, m.massReservePct >= 0 ? 'Réserve' : 'OK', 'Insuffisante', m.massReservePct < 0 && m.massMinOk)}</td></tr>
+          <tr data-tip="Classe de résistance au vent SIA 342 recommandée en fonction de la hauteur du bâtiment et de l'exposition au föhn."><td>Résistance au vent stores (SIA 342)</td><td class="num">${m.windRec.label}</td><td class="num">H_bât=${m.buildingHeightM.toFixed(1)} m • Föhn=${project.foehnExposed ? 'Oui' : 'Non'}</td><td>${badge(m.allWindSafe, 'Respectée', 'Non protégé')}</td></tr>
+          <tr data-tip="Vérifie si les stores sont dotés d'un abaissement automatique au-delà de 200 W/m² d'irradiance (SIA 380/2)."><td>Automatisation stores (SIA 380/2)</td><td class="num">${m.shadingAutomated ? 'Auto (200 W/m²)' : 'Manuelle / Absente'}</td><td class="num">Recommandée si Z_g élevé</td><td>${badge(m.shadingAutomated, 'Auto OK', 'Manuelle', true)}</td></tr>
+          <tr data-tip="Apports internes journaliers (personnes + éclairage + appareils) comparés au standard SIA 2024."><td>Charges internes (SIA 2024)</td><td class="num">${m.internalLoadWhm2d.toFixed(1)} Wh/(m²·j)</td><td class="num">Réf. ${m.internalLoadRefWhm2d} Wh/(m²·j)</td><td>${badge(m.internalLoadWhm2d <= m.internalLoadRefWhm2d * 1.15, 'OK', 'Élevées', true)}</td></tr>
+          <tr data-tip="Débit spécifique de ventilation nocturne sous un écart de température de 8 K."><td>Stratégie estivale (débit nocturne nominal)</td><td class="num">${m.summerStrategyLabel}</td><td class="num">≥ 10.0 m³/(h·m²)</td><td>${badge(m.nightSpecM3hm2 >= 10, 'Efficace', 'Insuffisant', m.nightSpecM3hm2 > 0)}</td></tr>
+          <tr data-tip="Nombre d'heures dépassant 26.5 °C sur le climat actif et sous la projection climatique 2035 (seuil max : 100 h/an)."><td>Heures &gt; 26.5 °C (Climat actif vs 2035)</td><td class="num">${m.hoursOver265Current} h (actif) / <strong>${m.hoursOver265} h (2035)</strong></td><td class="num">≤ 100 h/an (2035)</td><td>${badge(m.comfortPass, 'Conforme 2035', 'Non conforme')}</td></tr>
         </tbody>
       </table>
     </div>
@@ -455,7 +426,7 @@ function renderComfortSection(activeFR) {
 
   document.getElementById('comfortSectionBody').innerHTML = `
     <div class="comfort-grid">
-      <div class="comfort-card">
+      <div class="comfort-card" data-tip="Norme suisse SIA 180 (courbe adaptative 48h) et recommandations SECO OLT 3 pour la protection de la santé au travail (alerte dès 26 °C, critique au-delà de 28 °C).">
         <div class="comfort-card-head">
           <strong>Normes suisses — SIA 180 &amp; SECO (OLT 3)</strong>
           ${badge(activeFR.passSIA && secoOk, 'Conforme CH', secoOk ? 'Dépassement SIA' : 'Critique > 28 °C', activeFR.passSIA && !secoOk)}
@@ -469,7 +440,7 @@ function renderComfortSection(activeFR) {
         </div>
       </div>
 
-      <div class="comfort-card">
+      <div class="comfort-card" data-tip="Recommandations de l'Organisation Mondiale de la Santé (OMS 2018) et critère CIBSE TM59 pour la qualité du sommeil la nuit (22h–07h) : dégradation du sommeil au-dessus de 26 °C.">
         <div class="comfort-card-head">
           <strong>OMS (WHO 2018) &amp; CIBSE TM59 — Santé &amp; Sommeil</strong>
           ${badge(c.healthSleep.nightOver26H <= 32, 'Nuit OK', 'Chaleur nocturne', c.healthSleep.nightOver26H <= 100)}
@@ -483,7 +454,7 @@ function renderComfortSection(activeFR) {
         </div>
       </div>
 
-      <div class="comfort-card">
+      <div class="comfort-card" data-tip="Norme européenne EN 16798-1 (Catégories I, II, III autour de la température optimale adaptative θ_c = 0.33·θ_rm + 18.8 °C) et norme américaine ASHRAE 55.">
         <div class="comfort-card-head">
           <strong>EN 16798-1:2019 &amp; ASHRAE 55 (Adaptatif)</strong>
           ${badge(c.en16798.passCat2, 'Cat. II OK', 'Hors Cat. II')}
@@ -496,7 +467,7 @@ function renderComfortSection(activeFR) {
         </div>
       </div>
 
-      <div class="comfort-card">
+      <div class="comfort-card" data-tip="Indice physiologique PMV (vote moyen prévisible de −3 froid à +3 chaud, 0 = neutre) et PPD (% d'insatisfaits) selon ISO 7730, couplé à l'étude de productivité cognitive de Seppänen (2006).">
         <div class="comfort-card-head">
           <strong>ISO 7730:2005 (PMV/PPD) &amp; Seppänen 2006</strong>
           ${pmvBadgeHtml}
@@ -513,19 +484,19 @@ function renderComfortSection(activeFR) {
 
     <div class="well" style="margin-bottom:12px;">
       <div class="g4">
-        <div class="field">
+        <div class="field" data-tip="Isolation vestimentaire [clo] : 0.35 = short/t-shirt, 0.50 = tenue d'été standard (pantalon léger + chemise manches courtes), 1.00 = costume/tenue d'intérieur hiver.">
           <label>Habillement [clo] : <strong id="lblComfortClo">${p.clo.toFixed(2)}</strong></label>
           <input type="range" id="inComfortClo" min="0.30" max="1.00" step="0.05" value="${p.clo}" />
         </div>
-        <div class="field">
+        <div class="field" data-tip="Activité métabolique [met] : 1.0 = repos assis, 1.2 = travail de bureau sédentaire, 1.6 = activité debout / commerce, 2.0 = marche / travail actif.">
           <label>Métabolisme [met] : <strong id="lblComfortMet">${p.met.toFixed(2)}</strong></label>
           <input type="range" id="inComfortMet" min="0.80" max="2.00" step="0.10" value="${p.met}" />
         </div>
-        <div class="field">
+        <div class="field" data-tip="Vitesse relative de l'air autour de l'occupant [m/s] : 0.10 m/s = air calme, 0.30–0.60 m/s = brise de fenêtre ou ventilateur de plafond (améliore le confort PMV en été).">
           <label>Vitesse d'air [m/s] : <strong id="lblComfortVel">${p.airSpeed.toFixed(2)}</strong></label>
           <input type="range" id="inComfortVel" min="0.05" max="0.80" step="0.05" value="${p.airSpeed}" />
         </div>
-        <div class="field">
+        <div class="field" data-tip="Humidité relative intérieure moyenne en été [%] utilisée dans l'équation de bilan thermique du corps humain (Fanger PMV/PPD).">
           <label>Humidité [%] : <strong id="lblComfortRh">${p.rh.toFixed(0)}</strong></label>
           <input type="range" id="inComfortRh" min="25" max="80" step="5" value="${p.rh}" />
         </div>
@@ -533,7 +504,7 @@ function renderComfortSection(activeFR) {
     </div>
 
     <div>
-      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;" data-tip="Compare sur un même graphique les courbes limites supérieures de confort EN 16798-1 (Cat. I, II, III), SECO (26 °C) et SIA 180.">
         Domaines adaptatifs comparés : EN 16798-1 (Cat I/II/III), SECO (26 °C) &amp; SIA 180
       </div>
       <div class="chart-box" style="height:230px;"><canvas id="chartComfortAdaptive"></canvas></div>
@@ -593,7 +564,7 @@ export function renderResultsView(onEnsureSimulation) {
   if (advView) advView.classList.toggle('hidden', !isAdv);
 
   if (!isAdv) {
-    renderSimpleMinergieReport(res, activeFR, project);
+    renderSimpleReport(res, activeFR, project);
     requestAnimationFrame(() => {
       simpleChartMeta = drawSimpleHeatwaveChart(activeFR, 26.5);
     });
@@ -602,32 +573,32 @@ export function renderResultsView(onEnsureSimulation) {
 
   // ==================== VUE AVANCÉE ====================
   document.getElementById('kpiGrid').innerHTML = `
-    <div class="kpi-box">
-      <div class="kpi-label">Surchauffe SIA 180 / Minergie</div>
+    <div class="kpi-box" data-tip="Heures annuelles d'occupation dépassant la courbe limite SIA 180, et heures dépassant le seuil fixe de 26.5 °C.">
+      <div class="kpi-label">Heures de surchauffe</div>
       <div class="kpi-val" style="color:${pass ? 'var(--ok)' : 'var(--ko)'}">${activeFR.overSIA} h/an</div>
-      <div class="kpi-sub">Minergie (&gt; 26.5 °C) : <strong>${activeFR.overMinergie265} h/an</strong> (tol. ≤ ${limH} h)</div>
+      <div class="kpi-sub">&gt; 26.5 °C : <strong>${activeFR.overMinergie265} h/an</strong> (tol. ≤ ${limH} h)</div>
     </div>
-    <div class="kpi-box">
+    <div class="kpi-box" data-tip="Plage annuelle et estivale de température opérative intérieure θ_op (30 % air + 70 % surfaces), jour/heure du pic et degrés-heures cumulés.">
       <div class="kpi-label">Température opérative (Min / Max)</div>
       <div class="kpi-val" style="color:${activeFR.maxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.minTop.toFixed(1)} / ${activeFR.maxTop.toFixed(1)} °C</div>
       <div class="kpi-sub">Été : <strong>${activeFR.summerMinTop.toFixed(1)}..${activeFR.summerMaxTop.toFixed(1)} °C</strong> • Pic J${Math.floor(activeFR.maxTopHour / 24) + 1} à ${activeFR.maxTopHour % 24}h (${activeFR.dhSIA.toFixed(1)} Kh)</div>
     </div>
-    <div class="kpi-box">
+    <div class="kpi-box" data-tip="Indice synthétique sur 100 combinant heures de dépassement, température maximale, efficacité des stores (g_tot), masse thermique et ventilation nocturne.">
       <div class="kpi-label">Score de résilience estivale</div>
       <div class="kpi-val" style="color:${activeFR.score >= 75 ? 'var(--ok)' : activeFR.score >= 45 ? 'var(--warn)' : 'var(--ko)'}">${activeFR.score} / 100</div>
       <div class="kpi-sub">Synthèse physique 5R1C</div>
     </div>
-    <div class="kpi-box">
+    <div class="kpi-box" data-tip="Pourcentage d'heures occupées respectant la Catégorie II européenne (EN 16798-1), vote PMV moyen estival (ISO 7730) et heures nocturnes > 26 °C (OMS).">
       <div class="kpi-label">Confort EN 16798-1 / PMV été</div>
       <div class="kpi-val" style="color:${activeFR.comfort.en16798.cat2OkPct >= 97 ? 'var(--ok)' : 'var(--warn)'}">${activeFR.comfort.en16798.cat2OkPct.toFixed(0)} % Cat.II</div>
       <div class="kpi-sub">PMV moy. ${activeFR.comfort.fanger.meanPmv >= 0 ? '+' : ''}${activeFR.comfort.fanger.meanPmv.toFixed(2)} • OMS nuit &gt;26°C : ${activeFR.comfort.healthSleep.nightOver26H} h</div>
     </div>
-    <div class="kpi-box">
+    <div class="kpi-box" data-tip="Puissance frigorifique spécifique et besoin annuel de froid qui seraient nécessaires pour maintenir 0 heure de surchauffe (référence SIA : ≤ 12 W/m²).">
       <div class="kpi-label">Puissance froid fictive (0 h)</div>
       <div class="kpi-val" style="color:${coolOk ? 'var(--ok)' : 'var(--warn)'}">${activeFR.maxCoolWm2.toFixed(1)} W/m²</div>
       <div class="kpi-sub">${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an) — Seuil SIA 12 W/m²</div>
     </div>
-    <div class="kpi-box">
+    <div class="kpi-box" data-tip="Capacité nominale d'évacuation d'air par les ouvrants nocturnes sous un écart intérieur/extérieur de 8 K (objectif recommandé ≥ 10 m³/(h·m²)).">
       <div class="kpi-label">Déstockage nocturne (ΔT=8 K)</div>
       <div class="kpi-val">${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</div>
       <div class="kpi-sub">${activeFR.nomNightM3h.toFixed(0)} m³/h (${(activeFR.nomNightM3h / Math.max(1, activeFR.fp.vol)).toFixed(1)} vol/h)</div>
@@ -636,33 +607,41 @@ export function renderResultsView(onEnsureSimulation) {
 
   renderDetailedGainsSection(activeFR);
 
-  // Onglet Méthode 3
+  // Onglet Simulation & Verdict
   document.getElementById('sub-m3').innerHTML = `
     <div style="margin-bottom:8px;">
       Verdict SIA 180 : ${badge(activeFR.passSIA)}
-      &nbsp; Minergie (&gt; 26.5 °C) : ${badge(activeFR.overMinergie265 <= 100, `${activeFR.overMinergie265} h ≤ 100 h`, `${activeFR.overMinergie265} h > 100 h`)}
+      &nbsp; Seuil 26.5 °C : ${badge(activeFR.overMinergie265 <= 100, `${activeFR.overMinergie265} h ≤ 100 h`, `${activeFR.overMinergie265} h > 100 h`)}
       &nbsp; ${badge(coolOk, 'Froid fictif ≤ 12 W/m²', 'Froid fictif > 12 W/m²', true)}
     </div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Critère SIA 180 / SIA 380/2 / Minergie</th><th class="num">Valeur</th><th>Statut / Référence</th></tr></thead>
+      <thead><tr><th>Critère</th><th class="num">Valeur</th><th>Statut / Référence</th></tr></thead>
       <tbody>
-        <tr><td>Heures d'occupation analysées</td><td class="num">${activeFR.occH} h/an</td><td>${activeFR.floor.occStart}h–${activeFR.floor.occEnd}h (${activeFR.floor.occDays} j/sem)</td></tr>
-        <tr><td>Heures de surchauffe SIA 180 (courbe adaptative)</td><td class="num"><strong>${activeFR.overSIA} h/an</strong> (${activeFR.dhSIA.toFixed(1)} Kh)</td><td>${badge(activeFR.passSIA, `≤ ${limH} h/an`, `> ${limH} h/an`)}</td></tr>
-        <tr><td>Heures Minergie θ_op &gt; 26.5 °C (occupation / 8760 h)</td><td class="num"><strong>${activeFR.overMinergie265} h</strong> / ${activeFR.over265All} h</td><td>${badge(activeFR.overMinergie265 <= 100, '≤ 100 h/an', '> 100 h/an')}</td></tr>
-        <tr><td>Puissance / besoin froid pour 0 h de surchauffe</td><td class="num">${activeFR.maxCoolW.toFixed(0)} W (${activeFR.maxCoolWm2.toFixed(1)} W/m²)</td><td>${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an)</td></tr>
-        <tr><td>Heures toutes périodes θ_op &gt; 26 °C</td><td class="num">${activeFR.over26} h/an</td><td>Indicateur d'inconfort global 8760 h</td></tr>
+        <tr data-tip="Nombre total d'heures dans l'année où le local est occupé selon l'horaire défini à l'étape 4."><td>Heures d'occupation analysées</td><td class="num">${activeFR.occH} h/an</td><td>${activeFR.floor.occStart}h–${activeFR.floor.occEnd}h (${activeFR.floor.occDays} j/sem)</td></tr>
+        <tr data-tip="Heures occupées où la température opérative dépasse la limite supérieure adaptative SIA 180."><td>Heures de surchauffe SIA 180 (courbe adaptative)</td><td class="num"><strong>${activeFR.overSIA} h/an</strong> (${activeFR.dhSIA.toFixed(1)} Kh)</td><td>${badge(activeFR.passSIA, `≤ ${limH} h/an`, `> ${limH} h/an`)}</td></tr>
+        <tr data-tip="Heures où la température opérative dépasse 26.5 °C (pendant l'occupation / sur toute l'année)."><td>Heures θ_op &gt; 26.5 °C (occupation / 8760 h)</td><td class="num"><strong>${activeFR.overMinergie265} h</strong> / ${activeFR.over265All} h</td><td>${badge(activeFR.overMinergie265 <= 100, '≤ 100 h/an', '> 100 h/an')}</td></tr>
+        <tr data-tip="Puissance de pointe et énergie de refroidissement théoriques pour éliminer tout dépassement."><td>Puissance / besoin froid pour 0 h de surchauffe</td><td class="num">${activeFR.maxCoolW.toFixed(0)} W (${activeFR.maxCoolWm2.toFixed(1)} W/m²)</td><td>${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an)</td></tr>
+        <tr data-tip="Nombre total d'heures sur l'année entière (24h/24) où la température dépasse 26 °C."><td>Heures toutes périodes θ_op &gt; 26 °C</td><td class="num">${activeFR.over26} h/an</td><td>Indicateur d'inconfort global 8760 h</td></tr>
       </tbody>
     </table></div>
     <div class="reco-list">${activeFR.recos.map(r => `<div class="reco-item">${r}</div>`).join('')}</div>
   `;
 
-  renderMinergieTab(activeFR, project);
+  renderConstructiveTab(activeFR, project);
 
-  // Onglet Comparateur complet
+  // Onglet Scénarios
   const compList = res.behavioralScenarios || res.variants;
   document.getElementById('sub-compare').innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>Scénario comparé</th><th>Hypothèses</th><th class="num">&gt; 26.5 °C</th><th class="num">SIA 180</th><th class="num">Degrés-heures</th><th class="num">θ_op Min / Max</th><th class="num">Score</th></tr></thead>
+      <thead><tr>
+        <th data-tip="Variante comportementale ou climatique simulée.">Scénario comparé</th>
+        <th data-tip="Paramètres modifiés dans ce scénario.">Hypothèses</th>
+        <th class="num" data-tip="Heures d'occupation au-dessus de 26.5 °C [h/an].">&gt; 26.5 °C</th>
+        <th class="num" data-tip="Heures de dépassement de la courbe SIA 180 [h/an].">SIA 180</th>
+        <th class="num" data-tip="Intensité cumulée de la surchauffe en Kelvins-heures [Kh].">Degrés-heures</th>
+        <th class="num" data-tip="Température intérieure minimale et maximale atteinte [°C].">θ_op Min / Max</th>
+        <th class="num" data-tip="Note globale de résilience sur 100.">Score</th>
+      </tr></thead>
       <tbody>${compList
         .map(
           v => `<tr>
@@ -679,16 +658,16 @@ export function renderResultsView(onEnsureSimulation) {
     </table></div>
   `;
 
-  // Onglet Méthode 2 (Fig. 12)
+  // Onglet SIA 180 — Fig. 12
   const m2 = activeFR.prescriptive.method2;
   document.getElementById('sub-m2').innerHTML = `
-    <div style="margin-bottom:8px;">Méthode 2 (Fig. 12 SIA 180) : ${badge(m2.pass, 'Satisfaite', 'Non satisfaite → Méthode 3')}</div>
+    <div style="margin-bottom:8px;">Méthode 2 (Fig. 12 SIA 180) : ${badge(m2.pass, 'Satisfaite', 'Non satisfaite → Simulation requise')}</div>
     <div class="table-wrap"><table>
       <thead><tr><th>Orientation / Critère</th><th class="num">Calculé</th><th class="num">Limite SIA</th><th>Statut</th></tr></thead>
       <tbody>
         ${m2.rows
           .map(
-            r => `<tr>
+            r => `<tr data-tip="Vérifie que le facteur solaire g_tot sur la façade ${r.orient} ne dépasse pas la courbe limite de la Figure 12 SIA 180 pour ce taux de vitrage.">
               <td>Orientation ${r.orient} (A_vit=${r.winA.toFixed(1)} m², f_g≈${(r.fg * 100).toFixed(0)} %)</td>
               <td class="num">g_tot=${r.maxG.toFixed(3)}</td>
               <td class="num">≤ ${r.limG.toFixed(3)}</td>
@@ -696,17 +675,17 @@ export function renderResultsView(onEnsureSimulation) {
             </tr>`
           )
           .join('')}
-        <tr><td>Capacité thermique (EN-102)</td><td class="num">${activeFR.floor.cSpec.toFixed(0)} Wh/(m²·K)</td><td class="num">≥ 45</td><td>${badge(m2.capOk, 'OK', 'Insuffisante')}</td></tr>
-        <tr><td>Toiture U</td><td class="num">${activeFR.floor.uRoofExt.toFixed(2)} W/(m²·K)</td><td class="num">≤ 0.20</td><td>${badge(m2.roofOk, 'OK', 'Trop élevé')}</td></tr>
-        <tr><td>Refroidissement nocturne</td><td class="num">${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</td><td class="num">≥ 10.0</td><td>${badge(m2.nightOk, 'OK', 'Insuffisant')}</td></tr>
+        <tr data-tip="Exigence d'inertie thermique minimale moyenne (45 Wh/(m²·K))."><td>Capacité thermique (EN-102)</td><td class="num">${activeFR.floor.cSpec.toFixed(0)} Wh/(m²·K)</td><td class="num">≥ 45</td><td>${badge(m2.capOk, 'OK', 'Insuffisante')}</td></tr>
+        <tr data-tip="Coefficient U maximal de la toiture."><td>Toiture U</td><td class="num">${activeFR.floor.uRoofExt.toFixed(2)} W/(m²·K)</td><td class="num">≤ 0.20</td><td>${badge(m2.roofOk, 'OK', 'Trop élevé')}</td></tr>
+        <tr data-tip="Débit minimal de refroidissement nocturne requis par la procédure simplifiée."><td>Refroidissement nocturne</td><td class="num">${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</td><td class="num">≥ 10.0</td><td>${badge(m2.nightOk, 'OK', 'Insuffisant')}</td></tr>
       </tbody>
     </table></div>
   `;
 
-  // Onglet Méthode 1 (Tableau 8)
+  // Onglet SIA 180 — Tab. 8
   const m1 = activeFR.prescriptive.method1;
   document.getElementById('sub-m1').innerHTML = `
-    <div style="margin-bottom:8px;">Méthode 1 (Tableau 8 SIA 180) : ${badge(m1.pass, 'Satisfaite', 'Non satisfaite → Méthode 2 ou 3')}</div>
+    <div style="margin-bottom:8px;">Méthode 1 (Tableau 8 SIA 180) : ${badge(m1.pass, 'Satisfaite', 'Non satisfaite → Méthode 2 ou Simulation')}</div>
     <div class="table-wrap"><table>
       <thead><tr><th>Critère simplifié SIA 180</th><th class="num">Valeur</th><th>Statut</th></tr></thead>
       <tbody>${m1.criteria
@@ -715,7 +694,7 @@ export function renderResultsView(onEnsureSimulation) {
     </table></div>
   `;
 
-  // Onglet Synthèse par étage
+  // Onglet Par étage
   document.getElementById('sub-floors').innerHTML = `
     <div class="table-wrap"><table>
       <thead><tr><th>Étage</th><th class="num">Surface</th><th class="num">θ_op Min / Max</th><th class="num">Été Min / Max</th><th class="num">&gt; 26.5 °C</th><th class="num">SIA 180</th><th class="num">Froid fictif</th><th class="num">Score</th><th>Statut</th></tr></thead>
@@ -730,14 +709,14 @@ export function renderResultsView(onEnsureSimulation) {
             <td class="num"><strong>${fr.overSIA} h/an</strong></td>
             <td class="num">${fr.maxCoolWm2.toFixed(1)} W/m²</td>
             <td class="num">${fr.score}/100</td>
-            <td>${badge((isMinergie ? fr.overMinergie265 <= 100 : fr.overSIA <= limH), 'Conforme', 'Non conforme')}</td>
+            <td>${badge(isMinergie ? fr.overMinergie265 <= 100 : fr.overSIA <= limH, 'Conforme', 'Non conforme')}</td>
           </tr>`
         )
         .join('')}</tbody>
     </table></div>
   `;
 
-  // Onglet Méthodologie & Traçabilité
+  // Onglet Méthodologie
   document.getElementById('sub-methodology').innerHTML = renderMethodologyPanel(activeFR, project);
 
   renderComfortSection(activeFR);
@@ -745,7 +724,6 @@ export function renderResultsView(onEnsureSimulation) {
   requestAnimationFrame(() => {
     const winMode = document.getElementById('plotWindow').value;
     const compareFloors = document.getElementById('plotCompareFloors').checked;
-    drawGainsDetailChart(activeFR);
     timeChartMeta = drawTimeChart(res, activeFR, winMode, compareFloors);
     drawSIAChart(activeFR, project.siaCurveMode);
     drawBalanceChart(activeFR);
@@ -786,7 +764,7 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
       const pt = activeFR.series[idx];
       tooltipEl.innerHTML = fmtHtml(pt, meta);
       tooltipEl.style.display = 'block';
-      tooltipEl.style.left = Math.min(window.innerWidth - 230, e.clientX + 14) + 'px';
+      tooltipEl.style.left = Math.min(window.innerWidth - 260, e.clientX + 14) + 'px';
       tooltipEl.style.top = e.clientY - 12 + 'px';
     });
     el.addEventListener('mouseleave', () => {
@@ -862,7 +840,7 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'simulation_surchauffe_minergie_sia180.csv';
+    a.download = 'simulation_surchauffe.csv';
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });

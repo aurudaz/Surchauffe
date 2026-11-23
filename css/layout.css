@@ -82,6 +82,12 @@ body {
   overflow-y: auto;
 }
 
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .rail-item {
   border: none;
   background: transparent;
@@ -185,6 +191,9 @@ body {
     border-right: none;
     border-bottom: 1px solid var(--border);
     padding: 8px;
+  }
+  .rail-group {
+    flex-direction: row;
   }
   .rail-item { white-space: nowrap; }
   .center-pane { overflow: visible; padding: 14px; }

@@ -14,6 +14,9 @@ export const appState = {
   customWeather: null,
   lastResults: null,
   uiModes: {
+    global: 'simple',
+    floorsEditor: 'table',
+    activeStep: 'simple-1',
     house: 'simple',
     floors: 'simple',
     openings: 'simple',

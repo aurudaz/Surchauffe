@@ -1,5 +1,5 @@
 /**
- * @fileoverview Gestion de l'interface Configuration (5 étapes, Mode Simple / Avancé,
+ * @fileoverview Gestion de l'interface Configuration (Mode Simple 3 étapes / Mode Avancé 5 étapes,
  * inspecteur latéral, importateurs BIM/météo et synchronisation bidirectionnelle).
  */
 
@@ -23,7 +23,6 @@ import {
   ensureBox3dDefaults
 } from '../methodology/03-envelope-and-gains.js';
 import {
-  calcSimplePctNightFlowM3s,
   computeBuildingStackSpan,
   computeFloorNightFlowM3h
 } from '../methodology/04-natural-ventilation.js';
@@ -81,23 +80,123 @@ export function renderFloorSelectors() {
   });
 }
 
+function updateRailCounts() {
+  const { project } = appState;
+  const fCount = project.floors.length;
+  const oCount = project.openings.reduce((s, o) => s + (o.qty || 1), 0);
+  ['railFloorCount', 'railFloorCountSimple'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = fCount;
+  });
+  ['railOpeningCount', 'railOpeningCountSimple'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = oCount;
+  });
+}
+
 function getFacadeGrossForFloor(fl) {
   return Math.max(4, Math.sqrt(Math.max(4, fl.area)) * fl.height);
 }
 
-export function updateSimpleNightLiveBadge(fl, totalWin) {
-  const { project } = appState;
-  const buildingSpan = computeBuildingStackSpan(project);
-  const isMultiStack = Boolean(project.stackCoupling) && buildingSpan > fl.height + 0.5;
-  const span = isMultiStack ? buildingSpan : fl.height;
-  const { m3s, openArea } = calcSimplePctNightFlowM3s(fl, totalWin, 26, 18, span, isMultiStack);
-  const m3h = m3s * 3600;
-  const spec = m3h / Math.max(1, fl.area);
-  const ach = m3h / Math.max(1, fl.area * fl.height);
-  const badge = document.getElementById('simpNightLiveFlow');
-  if (!badge) return;
-  badge.textContent = `Ouvrant : ${openArea.toFixed(2)} m² → ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) • ${ach.toFixed(1)} vol/h à ΔT=8K)`;
-  badge.className = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
+function detectSimpleBlindPreset(op) {
+  if (!op) return 'auto_sia';
+  if (op.blindMode === 'always_down') return 'always_down';
+  if (op.blindMode === 'always_up') return 'always_up';
+  const ti = op.blindThreshI ?? 200;
+  const tt = op.blindThreshT ?? 22.0;
+  const rule = op.blindRule || 'irr_and_temp';
+  if (op.blindMode === 'manual_day' && ti === 200 && Math.abs(tt - 22.0) < 0.05) return 'manual_day';
+  if (op.blindMode === 'auto' && ti === 200 && Math.abs(tt - 22.0) < 0.05) {
+    if (rule === 'irr_and_temp') return 'auto_sia';
+    if (rule === 'irr_or_temp') return 'auto_bsol';
+  }
+  return 'custom';
+}
+
+function resolveSimpleBlindPreset(presetKey, fallbackOp = null) {
+  if (presetKey === 'auto_bsol') {
+    return { blindMode: 'auto', blindRule: 'irr_or_temp', blindThreshI: 200, blindThreshT: 22.0 };
+  }
+  if (presetKey === 'manual_day') {
+    return { blindMode: 'manual_day', blindRule: 'irr_and_temp', blindThreshI: 200, blindThreshT: 22.0 };
+  }
+  if (presetKey === 'always_down') {
+    return { blindMode: 'always_down', blindRule: 'irr_and_temp', blindThreshI: 200, blindThreshT: 22.0 };
+  }
+  if (presetKey === 'always_up') {
+    return { blindMode: 'always_up', blindRule: 'irr_and_temp', blindThreshI: 200, blindThreshT: 22.0 };
+  }
+  if (presetKey === 'custom' && fallbackOp) {
+    return {
+      blindMode: fallbackOp.blindMode || 'auto',
+      blindRule: fallbackOp.blindRule || 'irr_and_temp',
+      blindThreshI: fallbackOp.blindThreshI ?? 200,
+      blindThreshT: fallbackOp.blindThreshT ?? 22.0
+    };
+  }
+  return { blindMode: 'auto', blindRule: 'irr_and_temp', blindThreshI: 200, blindThreshT: 22.0 };
+}
+
+function detectSimpleNightPreset(fl) {
+  if (!fl || fl.nightVentMode === 'none') return 'none';
+  if (
+    fl.nightVentMode === 'fixed_m3hm2' &&
+    Math.abs((fl.nightVentFixedVal ?? 0) - 8.0) < 0.2 &&
+    ((fl.nightStart === 0 && fl.nightEnd === 24) || fl.nightStart === fl.nightEnd)
+  ) {
+    return 'bsol_24h';
+  }
+  if (fl.nightVentMode === 'simple_pct' && (fl.nightSimpleBasis || 'floor_pct') === 'floor_pct') {
+    const eff = Number(fl.nightSimpleEff ?? 0.6);
+    const pct = Number(fl.nightSimplePct ?? 5.0);
+    if (!fl.nightSimpleCross && Math.abs(eff - 0.6) < 0.15 && pct >= 2.5 && pct <= 3.5) return 'mono_tilt';
+    if (!fl.nightSimpleCross && Math.abs(eff - 0.6) < 0.15 && pct >= 4.0 && pct <= 6.0) return 'mono_open';
+    if (fl.nightSimpleCross && Math.abs(eff - 0.6) < 0.15 && pct >= 3.0 && pct <= 5.0) return 'cross';
+  }
+  return 'custom';
+}
+
+function applySimpleNightPreset(fl, presetKey) {
+  if (presetKey === 'none') {
+    fl.nightVentMode = 'none';
+  } else if (presetKey === 'mono_tilt') {
+    fl.nightVentMode = 'simple_pct';
+    fl.nightSimpleBasis = 'floor_pct';
+    fl.nightSimplePct = 3.0;
+    fl.nightSimpleEff = 0.60;
+    fl.nightSimpleCross = false;
+    fl.nightStart = 21;
+    fl.nightEnd = 7;
+    fl.nightTargetTi = 21.0;
+    fl.nightMinDT = 1.5;
+  } else if (presetKey === 'mono_open') {
+    fl.nightVentMode = 'simple_pct';
+    fl.nightSimpleBasis = 'floor_pct';
+    fl.nightSimplePct = 5.0;
+    fl.nightSimpleEff = 0.60;
+    fl.nightSimpleCross = false;
+    fl.nightStart = 21;
+    fl.nightEnd = 7;
+    fl.nightTargetTi = 21.0;
+    fl.nightMinDT = 1.5;
+  } else if (presetKey === 'cross') {
+    fl.nightVentMode = 'simple_pct';
+    fl.nightSimpleBasis = 'floor_pct';
+    fl.nightSimplePct = 3.5;
+    fl.nightSimpleEff = 0.60;
+    fl.nightSimpleCross = true;
+    fl.nightStart = 21;
+    fl.nightEnd = 7;
+    fl.nightTargetTi = 21.0;
+    fl.nightMinDT = 1.5;
+  } else if (presetKey === 'bsol_24h') {
+    fl.nightVentMode = 'fixed_m3hm2';
+    fl.nightVentFixedVal = 8.0;
+    fl.nightStart = 0;
+    fl.nightEnd = 24;
+    fl.nightTargetTi = 22.0;
+    fl.nightMinDT = 2.0;
+  }
 }
 
 export function renderSimpleOpeningsForFloor(fl) {
@@ -116,13 +215,14 @@ export function renderSimpleOpeningsForFloor(fl) {
   const detectedPreset = detectShadingPresetKey(ops);
   const customOpt = simpShadingEl.querySelector('option[value="custom"]');
   if (detectedPreset === 'custom') {
+    const lbl = `Personnalisé (g_vit=${ops[0].gVit.toFixed(2)}, g_store=${ops[0].gStore.toFixed(2)})`;
     if (!customOpt) {
       const opt = document.createElement('option');
       opt.value = 'custom';
-      opt.textContent = `Personnalisé (g_vit=${ops[0].gVit.toFixed(2)}, g_store=${ops[0].gStore.toFixed(2)})`;
+      opt.textContent = lbl;
       simpShadingEl.appendChild(opt);
     } else {
-      customOpt.textContent = `Personnalisé (g_vit=${ops[0].gVit.toFixed(2)}, g_store=${ops[0].gStore.toFixed(2)})`;
+      customOpt.textContent = lbl;
     }
     simpShadingEl.value = 'custom';
   } else {
@@ -131,33 +231,34 @@ export function renderSimpleOpeningsForFloor(fl) {
   }
 
   const firstOp = ops[0];
-  if (firstOp) {
-    document.getElementById('simpBlindMode').value = firstOp.blindMode;
-    document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
-    const ruleEl = document.getElementById('simpBlindRule');
-    const tiEl = document.getElementById('simpBlindThreshI');
-    const ttEl = document.getElementById('simpBlindThreshT');
-    if (ruleEl) ruleEl.value = firstOp.blindRule || 'irr_and_temp';
-    if (tiEl) tiEl.value = firstOp.blindThreshI ?? 200;
-    if (ttEl) ttEl.value = firstOp.blindThreshT ?? 22.0;
-    const trigRow = document.getElementById('simpBlindTrigRow');
-    if (trigRow) {
-      trigRow.classList.toggle('hidden', firstOp.blindMode === 'always_up' || firstOp.blindMode === 'always_down');
+  const blindSel = document.getElementById('simpBlindPreset');
+  if (blindSel) {
+    const detectedBlind = detectSimpleBlindPreset(firstOp);
+    const cBlind = blindSel.querySelector('option[value="custom"]');
+    if (detectedBlind === 'custom' && firstOp) {
+      const lbl = `Personnalisé (I≥${firstOp.blindThreshI ?? 200} W/m², T≥${firstOp.blindThreshT ?? 22}°C)`;
+      if (!cBlind) {
+        const opt = document.createElement('option');
+        opt.value = 'custom';
+        opt.textContent = lbl;
+        blindSel.appendChild(opt);
+      } else {
+        cBlind.textContent = lbl;
+      }
+      blindSel.value = 'custom';
+    } else {
+      if (cBlind) cBlind.remove();
+      blindSel.value = detectedBlind;
     }
   }
-  const horEl = document.getElementById('simpHorizon');
-  if (horEl) horEl.value = appState.project.horizonDeg ?? 0;
+
+  if (firstOp) {
+    document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
+  }
 
   const totalWin = ops.reduce((s, o) => s + o.width * o.height * o.qty, 0);
   document.getElementById('simpleGlazingSummary').textContent =
     `Total vitré : ${totalWin.toFixed(1)} m² (${((totalWin / Math.max(1, fl.area)) * 100).toFixed(0)} % du sol)`;
-
-  document.getElementById('simpOpenBasis').value = fl.nightSimpleBasis || 'floor_pct';
-  document.getElementById('simpOpenPct').value = fl.nightSimplePct ?? 5.0;
-  document.getElementById('simpOpenEff').value = Number(fl.nightSimpleEff ?? 0.6).toFixed(2);
-  document.getElementById('simpOpenCross').checked = Boolean(fl.nightSimpleCross);
-
-  updateSimpleNightLiveBadge(fl, totalWin);
 }
 
 export function applySimpleGlazingFromInputs() {
@@ -186,15 +287,12 @@ export function applySimpleGlazingFromInputs() {
         }
       : SHADING_PRESETS[shadingChoice] || SHADING_PRESETS.triple_lamelles;
 
-  const blindMode = document.getElementById('simpBlindMode').value;
-  const blindRule = document.getElementById('simpBlindRule')?.value || existingOps[0]?.blindRule || 'irr_and_temp';
-  const blindThreshI = Math.max(50, Math.min(800, parseFloat(document.getElementById('simpBlindThreshI')?.value) || 200));
-  const blindThreshT = Math.max(16, Math.min(30, parseFloat(document.getElementById('simpBlindThreshT')?.value) || 22.0));
+  const blindPreset = document.getElementById('simpBlindPreset')?.value || 'auto_sia';
+  const { blindMode, blindRule, blindThreshI, blindThreshT } = resolveSimpleBlindPreset(
+    blindPreset,
+    existingOps[0]
+  );
   const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
-  const horEl = document.getElementById('simpHorizon');
-  if (horEl) {
-    project.horizonDeg = Math.max(0, Math.min(60, parseFloat(horEl.value) || 0));
-  }
 
   project.openings = project.openings.filter(o => o.floorId !== fl.id);
   const labels = {
@@ -241,25 +339,22 @@ export function applySimpleGlazingFromInputs() {
   });
 
   renderSimpleOpeningsForFloor(fl);
+  updateNightVentUI(fl);
   updateInspector();
   refresh3DViewers();
-  document.getElementById('railOpeningCount').textContent = project.openings.reduce(
-    (s, o) => s + o.qty,
-    0
-  );
+  updateRailCounts();
 }
 
 export function renderOpenings() {
   renderFloorSelectors();
   const { project, uiModes } = appState;
   const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  const advHor = document.getElementById('advHorizon');
+  if (advHor) advHor.value = project.horizonDeg ?? 0;
 
   if (uiModes.openings === 'simple') {
     renderSimpleOpeningsForFloor(fl);
-    document.getElementById('railOpeningCount').textContent = project.openings.reduce(
-      (s, o) => s + o.qty,
-      0
-    );
+    updateRailCounts();
     return;
   }
 
@@ -315,7 +410,7 @@ export function renderOpenings() {
   nightBox.innerHTML = operables.length
     ? `
     <div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:6px;">
-      Paramètres aérauliques détaillés (actifs si « Méthode avancée » est sélectionnée à l'étape 4) :
+      Paramètres aérauliques détaillés (actifs si « Ouvrants détaillés » est sélectionné à l'étape 4) :
     </div>
     <div class="table-wrap"><table>
       <thead><tr>
@@ -399,10 +494,7 @@ export function renderOpenings() {
     });
   });
 
-  document.getElementById('railOpeningCount').textContent = project.openings.reduce(
-    (s, o) => s + o.qty,
-    0
-  );
+  updateRailCounts();
   refresh3DViewers();
 }
 
@@ -605,10 +697,7 @@ function renderBox3dBuilder(wrap) {
 
   const commitBox3d = (rerender = false) => {
     applyBox3dToFloor(activeFl, project);
-    document.getElementById('railOpeningCount').textContent = project.openings.reduce(
-      (s, o) => s + o.qty,
-      0
-    );
+    updateRailCounts();
     updateInspector();
     if (rerender) renderFloors();
     else refresh3DViewers();
@@ -725,7 +814,7 @@ export function renderFloors() {
         syncAllUI();
       });
     });
-    document.getElementById('railFloorCount').textContent = project.floors.length;
+    updateRailCounts();
     return;
   }
 
@@ -869,7 +958,7 @@ export function renderFloors() {
     });
   });
 
-  document.getElementById('railFloorCount').textContent = project.floors.length;
+  updateRailCounts();
   refresh3DViewers();
 }
 
@@ -885,7 +974,7 @@ export function updateNightVentUI(targetFl = null) {
   const isNone = mode === 'none';
 
   document.getElementById('nightFixedBox')?.classList.toggle('hidden', !isFixed);
-  document.getElementById('nightSimpleQuickBox')?.classList.toggle('hidden', !isSimple);
+  document.getElementById('nightSimpleFullBox')?.classList.toggle('hidden', !isSimple);
   document.getElementById('nightPhysicalHintBox')?.classList.toggle('hidden', !isPhys);
   document.getElementById('nightRegulBox')?.classList.toggle('hidden', isNone);
 
@@ -894,9 +983,13 @@ export function updateNightVentUI(targetFl = null) {
     lblFixed.textContent = mode === 'fixed_ach' ? 'Taux imposé [vol/h]' : 'Débit imposé [m³/(h·m²)]';
   }
 
+  const basisEl = document.getElementById('inNightSimpleBasis');
   const simpPctEl = document.getElementById('inNightSimplePct');
+  const simpEffEl = document.getElementById('inNightSimpleEff');
   const simpCrossEl = document.getElementById('inNightSimpleCross');
+  if (basisEl) basisEl.value = fl.nightSimpleBasis === 'window_pct' ? 'window_pct' : 'floor_pct';
   if (simpPctEl) simpPctEl.value = fl.nightSimplePct ?? 5.0;
+  if (simpEffEl) simpEffEl.value = Number(fl.nightSimpleEff ?? 0.6).toFixed(2);
   if (simpCrossEl) simpCrossEl.checked = Boolean(fl.nightSimpleCross);
 
   const ops = project.openings.filter(o => o.floorId === fl.id);
@@ -914,12 +1007,38 @@ export function updateNightVentUI(targetFl = null) {
   const m3h = computeFloorNightFlowM3h(fp, 26, 18, span, project.stackCoupling);
   const spec = m3h / Math.max(1, fl.area);
   const ach = m3h / Math.max(1, fl.area * fl.height);
-  const badge = document.getElementById('siaNightLiveBadge');
-  if (badge) {
-    badge.textContent = isNone
-      ? 'Ventilation nuit désactivée (0.0 m³/(h·m²))'
-      : `Débit nuit (ΔT=8 K) : ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) • ${ach.toFixed(1)} vol/h)`;
-    badge.className = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
+  const badgeText = isNone
+    ? 'Ventilation nuit désactivée (0.0 m³/(h·m²))'
+    : `Débit (ΔT=8 K) : ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) • ${ach.toFixed(1)} vol/h)`;
+  const badgeCls = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
+
+  ['siaNightLiveBadge', 'simpNightLiveBadge'].forEach(id => {
+    const b = document.getElementById(id);
+    if (b) {
+      b.textContent = badgeText;
+      b.className = badgeCls;
+    }
+  });
+
+  const simpSel = document.getElementById('simpNightPreset');
+  if (simpSel) {
+    const detected = detectSimpleNightPreset(fl);
+    const cOpt = simpSel.querySelector('option[value="custom"]');
+    if (detected === 'custom') {
+      const lbl = `Personnalisé (${spec.toFixed(1)} m³/(h·m²) • ${ach.toFixed(1)} vol/h)`;
+      if (!cOpt) {
+        const opt = document.createElement('option');
+        opt.value = 'custom';
+        opt.textContent = lbl;
+        simpSel.appendChild(opt);
+      } else {
+        cOpt.textContent = lbl;
+      }
+      simpSel.value = 'custom';
+    } else {
+      if (cOpt) cOpt.remove();
+      simpSel.value = detected;
+    }
   }
 
   const fcEl = document.getElementById('inNightFreeCool24h');
@@ -1032,9 +1151,7 @@ export function syncPvgisUI() {
   document.getElementById('pvTzMode').value = project.climate.tzMode || 'cet_cest';
   const uhi = Boolean(project.climate.urbanHeatIsland);
   const cUhi = document.getElementById('climateUHI');
-  const pUhi = document.getElementById('projUHI');
   if (cUhi) cUhi.checked = uhi;
-  if (pUhi) pUhi.checked = uhi;
 
   const badge = document.getElementById('weatherStatusBadge');
   if (customWeather) {
@@ -1045,6 +1162,7 @@ export function syncPvgisUI() {
     badge.textContent = `Climat actif : ${st.name} (${project.climate.scenario}${uhi ? ' + Îlot chaleur' : ''})`;
     badge.className = 'pill neutral';
   }
+  document.getElementById('btnResetWeatherQuick')?.classList.toggle('hidden', !customWeather);
 
   const pvType = document.getElementById('pvType').value;
   const base = 'https://re.jrc.ec.europa.eu/api/v5_3/';
@@ -1060,25 +1178,116 @@ export function syncPvgisUI() {
   }
 }
 
+function syncFloorsEditorButtons() {
+  const ed = appState.uiModes.floorsEditor === 'box3d' ? 'box3d' : 'table';
+  document.querySelectorAll('[data-floors-editor]').forEach(btn => {
+    btn.classList.toggle('active-blue', btn.dataset.floorsEditor === ed);
+  });
+}
+
+export function activateConfigStep(stepId) {
+  const isAdv = appState.uiModes.global === 'advanced';
+  let resolvedStep = stepId;
+  if (!isAdv && !['simple-1', 'simple-2', 'simple-3'].includes(resolvedStep)) {
+    resolvedStep = 'simple-1';
+  }
+  if (isAdv && !['step-house', 'step-floors', 'step-openings', 'step-sia', 'step-climate'].includes(resolvedStep)) {
+    resolvedStep = 'step-house';
+  }
+  appState.uiModes.activeStep = resolvedStep;
+
+  document.querySelectorAll('.rail-item').forEach(b => {
+    b.classList.toggle('active', b.dataset.step === resolvedStep);
+  });
+
+  const visibleSections =
+    resolvedStep === 'simple-1'
+      ? ['step-house', 'step-climate', 'step-floors']
+      : resolvedStep === 'simple-2'
+        ? ['step-openings']
+        : resolvedStep === 'simple-3'
+          ? ['step-sia']
+          : [resolvedStep];
+
+  document.querySelectorAll('.step-section').forEach(sec => {
+    sec.classList.toggle('hidden', !visibleSections.includes(sec.id));
+  });
+
+  if (visibleSections.includes('step-floors')) renderFloors();
+  if (visibleSections.includes('step-openings')) renderOpenings();
+  if (visibleSections.includes('step-sia')) loadSiaFloorInputs();
+  requestAnimationFrame(refresh3DViewers);
+}
+
+export function applyGlobalLayout(onResultsRefresh, targetStep = null) {
+  const mode = appState.uiModes.global === 'advanced' ? 'advanced' : 'simple';
+  const isAdv = mode === 'advanced';
+
+  appState.uiModes.house = mode;
+  appState.uiModes.openings = mode;
+  appState.uiModes.sia = mode;
+  appState.uiModes.climate = mode;
+  appState.uiModes.floors = isAdv
+    ? appState.uiModes.floorsEditor === 'box3d'
+      ? 'box3d'
+      : 'advanced'
+    : 'simple';
+
+  document.getElementById('btnGlobalSimple')?.classList.toggle('active-blue', !isAdv);
+  document.getElementById('btnGlobalAdv')?.classList.toggle('active-blue', isAdv);
+
+  document.getElementById('railSimple')?.classList.toggle('hidden', isAdv);
+  document.getElementById('railAdv')?.classList.toggle('hidden', !isAdv);
+
+  document.querySelectorAll('.adv-only').forEach(el => el.classList.toggle('hidden', !isAdv));
+  document.querySelectorAll('.simple-only').forEach(el => el.classList.toggle('hidden', isAdv));
+
+  document.getElementById('openingsSimpleBox')?.classList.toggle('hidden', isAdv);
+  document.getElementById('openingsAdvBox')?.classList.toggle('hidden', !isAdv);
+
+  const titles = {
+    houseCardTitle: isAdv ? 'Projet, Exigences normatives & Modèles' : 'Projet & Modèles types',
+    floorsCardTitle: isAdv ? 'Étages, Enveloppe & Constructeur 3D' : 'Volume, Isolation & Inertie thermique',
+    openingsCardTitle: isAdv ? 'Ouvertures, Stores & Ouvrants nocturnes' : 'Vitrages & Protection solaire (Stores)',
+    siaCardTitle: isAdv ? 'Usage SIA 380/1 & 2024 • Ventilation complète' : 'Usage & Aération nocturne'
+  };
+  Object.entries(titles).forEach(([id, txt]) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = txt;
+  });
+
+  syncFloorsEditorButtons();
+
+  let nextStep = targetStep || appState.uiModes.activeStep;
+  if (isAdv && (!nextStep || nextStep.startsWith('simple-'))) {
+    nextStep =
+      nextStep === 'simple-2'
+        ? 'step-openings'
+        : nextStep === 'simple-3'
+          ? 'step-sia'
+          : 'step-house';
+  } else if (!isAdv && (!nextStep || !nextStep.startsWith('simple-'))) {
+    nextStep =
+      nextStep === 'step-openings'
+        ? 'simple-2'
+        : nextStep === 'step-sia'
+          ? 'simple-3'
+          : 'simple-1';
+  }
+
+  activateConfigStep(nextStep);
+  applyPartModeUI('results', onResultsRefresh);
+}
+
 export function applyPartModeUI(part, onResultsRefresh) {
   const mode = appState.uiModes[part];
   document.querySelectorAll(`[data-part-toggle="${part}"] .seg-btn`).forEach(b => {
     b.classList.toggle('active-blue', b.dataset.mode === mode);
   });
 
-  if (part === 'house') {
-    document.getElementById('houseAdvBox').classList.toggle('hidden', mode === 'simple');
-  } else if (part === 'floors') {
+  if (part === 'floors') {
+    syncFloorsEditorButtons();
     renderFloors();
-  } else if (part === 'openings') {
-    const isSimple = mode === 'simple';
-    document.getElementById('openingsSimpleBox').classList.toggle('hidden', !isSimple);
-    document.getElementById('openingsAdvBox').classList.toggle('hidden', isSimple);
-    renderOpenings();
-  } else if (part === 'sia') {
-    document.getElementById('siaAdvBox').classList.toggle('hidden', mode === 'simple');
-  } else if (part === 'climate') {
-    document.getElementById('climateAdvBox').classList.toggle('hidden', mode === 'simple');
   } else if (part === 'results') {
     const isAdv = mode === 'advanced';
     const simpleView = document.getElementById('resultsSimpleView');
@@ -1092,13 +1301,11 @@ export function applyPartModeUI(part, onResultsRefresh) {
   }
 }
 
-export function setGlobalMode(mode, onResultsRefresh) {
-  Object.keys(appState.uiModes).forEach(k => {
-    appState.uiModes[k] = mode;
-  });
-  document.getElementById('btnGlobalSimple').classList.toggle('active-blue', mode === 'simple');
-  document.getElementById('btnGlobalAdv').classList.toggle('active-blue', mode === 'advanced');
-  Object.keys(appState.uiModes).forEach(part => applyPartModeUI(part, onResultsRefresh));
+export function setGlobalMode(mode, onResultsRefresh, targetStep = null) {
+  const cleanMode = mode === 'advanced' ? 'advanced' : 'simple';
+  appState.uiModes.global = cleanMode;
+  appState.uiModes.results = cleanMode;
+  applyGlobalLayout(onResultsRefresh, targetStep);
 }
 
 export function syncAllUI(onResultsRefresh) {
@@ -1113,6 +1320,8 @@ export function syncAllUI(onResultsRefresh) {
   if (foehnEl) foehnEl.checked = Boolean(project.foehnExposed);
   const albEl = document.getElementById('projAlbedo');
   if (albEl) albEl.value = project.albedo ?? 0.20;
+  const advHorEl = document.getElementById('advHorizon');
+  if (advHorEl) advHorEl.value = project.horizonDeg || 0;
 
   renderFloorSelectors();
   renderFloors();
@@ -1120,7 +1329,8 @@ export function syncAllUI(onResultsRefresh) {
   loadSiaFloorInputs();
   syncPvgisUI();
   updateInspector();
-  Object.keys(appState.uiModes).forEach(part => applyPartModeUI(part, onResultsRefresh));
+  updateRailCounts();
+  applyGlobalLayout(onResultsRefresh);
   refresh3DViewers();
 }
 
@@ -1136,11 +1346,8 @@ export function renderLibrary(onLoadProject) {
       appState.project = item.build();
       appState.activeFloorId = appState.project.floors[0].id;
       appState.customWeather = null;
-      if (item.id === 'local_bureau_box3d' || item.id === 'tb_lea_bsol') {
-        appState.uiModes.floors = 'box3d';
-      } else if (appState.uiModes.floors === 'box3d') {
-        appState.uiModes.floors = 'simple';
-      }
+      appState.uiModes.floorsEditor =
+        item.id === 'local_bureau_box3d' || item.id === 'tb_lea_bsol' ? 'box3d' : 'table';
       syncAllUI();
       onLoadProject();
     });
@@ -1162,18 +1369,25 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     });
   });
 
+  document.querySelectorAll('[data-floors-editor]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ed = btn.dataset.floorsEditor === 'box3d' ? 'box3d' : 'table';
+      appState.uiModes.floorsEditor = ed;
+      appState.uiModes.floors = ed === 'box3d' ? 'box3d' : 'advanced';
+      syncFloorsEditorButtons();
+      renderFloors();
+      requestAnimationFrame(refresh3DViewers);
+    });
+  });
+
+  document.getElementById('btnOpenBox3dFromSimple')?.addEventListener('click', () => {
+    appState.uiModes.floorsEditor = 'box3d';
+    setGlobalMode('advanced', onResultsRefresh, 'step-floors');
+  });
+
   document.querySelectorAll('.rail-item').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.rail-item').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      document.querySelectorAll('.step-section').forEach(s => s.classList.add('hidden'));
-      document.getElementById(btn.dataset.step).classList.remove('hidden');
-      if (btn.dataset.step === 'step-floors') {
-        renderFloors();
-        requestAnimationFrame(refresh3DViewers);
-      }
-      if (btn.dataset.step === 'step-openings') renderOpenings();
-      requestAnimationFrame(refresh3DViewers);
+      activateConfigStep(btn.dataset.step);
     });
   });
 
@@ -1188,13 +1402,11 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   document.getElementById('projFoehn')?.addEventListener('change', e => {
     appState.project.foehnExposed = e.target.checked;
   });
-  const syncUhiCheckboxes = checked => {
-    appState.project.climate.urbanHeatIsland = checked;
+  document.getElementById('climateUHI')?.addEventListener('change', e => {
+    appState.project.climate.urbanHeatIsland = e.target.checked;
     syncPvgisUI();
     updateInspector();
-  };
-  document.getElementById('projUHI')?.addEventListener('change', e => syncUhiCheckboxes(e.target.checked));
-  document.getElementById('climateUHI')?.addEventListener('change', e => syncUhiCheckboxes(e.target.checked));
+  });
   document.getElementById('siaCurveMode').addEventListener('change', e => {
     appState.project.siaCurveMode = e.target.value;
   });
@@ -1208,6 +1420,10 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
 
   document.getElementById('projAlbedo')?.addEventListener('change', e => {
     appState.project.albedo = Math.max(0.05, Math.min(0.8, Number(e.target.value) || 0.2));
+  });
+
+  document.getElementById('advHorizon')?.addEventListener('change', e => {
+    appState.project.horizonDeg = Math.max(0, Math.min(60, parseFloat(e.target.value) || 0));
   });
 
   document.querySelectorAll('[data-3d-preset]').forEach(btn => {
@@ -1241,26 +1457,16 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     });
   });
 
-  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindMode', 'simpBlindRule', 'simpBlindThreshI', 'simpBlindThreshT', 'simpOverhang', 'simpHorizon'].forEach(id => {
+  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindPreset', 'simpOverhang'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', applySimpleGlazingFromInputs);
   });
 
-  ['simpOpenBasis', 'simpOpenPct', 'simpOpenEff', 'simpOpenCross'].forEach(id => {
-    document.getElementById(id).addEventListener('change', () => {
-      const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-      if (!fl) return;
-      fl.nightSimpleBasis = document.getElementById('simpOpenBasis').value;
-      fl.nightSimplePct = Math.max(0, Math.min(100, parseFloat(document.getElementById('simpOpenPct').value) || 0));
-      fl.nightSimpleEff = parseFloat(document.getElementById('simpOpenEff').value) || 1.0;
-      fl.nightSimpleCross = document.getElementById('simpOpenCross').checked;
-      fl.nightVentMode = fl.nightSimpleBasis === 'none' ? 'none' : 'simple_pct';
-      document.getElementById('inNightMode').value = fl.nightVentMode;
-      const totalWin = appState.project.openings
-        .filter(o => o.floorId === fl.id)
-        .reduce((s, o) => s + o.width * o.height * o.qty, 0);
-      updateSimpleNightLiveBadge(fl, totalWin);
-      updateNightVentUI(fl);
-    });
+  document.getElementById('simpNightPreset')?.addEventListener('change', e => {
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    if (!fl || e.target.value === 'custom') return;
+    applySimpleNightPreset(fl, e.target.value);
+    loadSiaFloorInputs();
+    updateInspector();
   });
 
   document.getElementById('btnAddOpening').addEventListener('click', () => {
@@ -1336,14 +1542,13 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
         if ((fl.nightSimplePct ?? 0) <= 0) {
           fl.nightSimplePct = 5.0;
         }
-        renderOpenings();
       }
       if (customFlag) {
         fl.siaCategory = 'custom';
         document.getElementById('siaCategorySelect').value = 'custom';
         updateSiaCatChips(fl);
       }
-      if (['nightVentMode', 'nightVentFixedVal'].includes(prop)) {
+      if (['nightVentMode', 'nightVentFixedVal', 'nightStart', 'nightEnd'].includes(prop)) {
         updateNightVentUI(fl);
       }
       updateInspector();
@@ -1383,20 +1588,17 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     updateNightVentUI(fl);
   });
 
-  document.getElementById('inNightSimplePct')?.addEventListener('change', e => {
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    if (!fl) return;
-    if (!fl.nightSimpleBasis || fl.nightSimpleBasis === 'none') fl.nightSimpleBasis = 'floor_pct';
-    fl.nightSimplePct = Math.max(0, Math.min(100, parseFloat(e.target.value) || 0));
-    renderOpenings();
-    updateNightVentUI(fl);
-  });
-  document.getElementById('inNightSimpleCross')?.addEventListener('change', e => {
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    if (!fl) return;
-    fl.nightSimpleCross = e.target.checked;
-    renderOpenings();
-    updateNightVentUI(fl);
+  ['inNightSimpleBasis', 'inNightSimplePct', 'inNightSimpleEff', 'inNightSimpleCross'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+      if (!fl) return;
+      fl.nightSimpleBasis = document.getElementById('inNightSimpleBasis')?.value || 'floor_pct';
+      fl.nightSimplePct = Math.max(0, Math.min(100, parseFloat(document.getElementById('inNightSimplePct')?.value) || 0));
+      fl.nightSimpleEff = parseFloat(document.getElementById('inNightSimpleEff')?.value) || 0.6;
+      fl.nightSimpleCross = Boolean(document.getElementById('inNightSimpleCross')?.checked);
+      updateNightVentUI(fl);
+      updateInspector();
+    });
   });
 
   document.getElementById('climateStation').addEventListener('change', e => {
@@ -1431,8 +1633,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     const badge = document.getElementById('weatherStatusBadge');
     try {
       appState.customWeather = parseAnyWeatherText(text, name, appState.project.climate);
-      badge.textContent = `Climat actif : ${appState.customWeather.sourceLabel}`;
-      badge.className = 'pill ok';
+      syncPvgisUI();
       updateInspector();
     } catch (err) {
       badge.textContent = `Erreur : ${err.message}`;
@@ -1497,8 +1698,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
         year: pvType
       });
       appState.customWeather = weatherObj;
-      badge.textContent = `Climat actif : ${weatherObj.sourceLabel}`;
-      badge.className = 'pill ok';
+      syncPvgisUI();
       updateInspector();
       if (onRunSimulation) onRunSimulation();
     } catch (err) {

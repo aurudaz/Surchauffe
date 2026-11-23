@@ -3,6 +3,7 @@
  * score de résilience estivale et recommandations automatiques.
  */
 
+import { getFacadeGrossAreaForOrient } from '../standards/box3d-presets.js';
 import { evaluateMinergieVariante2 } from '../standards/minergie.js';
 import {
   getMethod1MaxGlazingRatio,
@@ -45,13 +46,12 @@ export function evaluateSIA180PrescriptiveMethods(fr) {
   }
 
   // Méthode 2 (Fig. 12) : g_tot par orientation de façade
-  const facadeSideEst = Math.max(4, Math.sqrt(Math.max(4, fl.area)) * fl.height);
   const m2Rows = Object.keys(byOrient)
     .filter(o => o !== 'R')
     .map(orient => {
       const list = byOrient[orient];
       const winA = list.reduce((s, o) => s + o.width * o.height * o.qty, 0);
-      const estFac = Math.max(winA, facadeSideEst);
+      const estFac = Math.max(winA, getFacadeGrossAreaForOrient(fl, orient));
       const fg = Math.min(1.0, winA / estFac);
       const maxG = Math.max(
         ...list.map(o =>

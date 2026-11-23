@@ -44,11 +44,14 @@ export function computeBuildingStackSpan(projObj) {
 /**
  * Multiplicateur calibré d'aération traversante / tirage cheminée par rapport au mono-face :
  *   En mono-face, l'air entrant et sortant passe par la même ouverture (facteur 1/3).
- *   En traversant / tirage Δz, la section série et le tirage Δz donnent ~1.8–2.5× le débit mono-face
- *   (cohérent avec la règle SIA 180 : ~2.5 % traversant ≈ ~5 % simple face).
+ *   En traversant sur un même niveau (Δz ≈ 0), le balayage entre 2 façades + brise nocturne
+ *   donne ~1.5× le débit mono-face. En tirage cheminée multi-étages (Δz = stackSpan), la mise
+ *   en série (A_eff = A/(2√2)) avec pertes de charge internes (portes/cages d'escalier) donne
+ *   1.15 · √(Δz / H_ouv), plafonné à 2.2× (cohérent avec SIA 2023 / BS 5925 / TB Léa Tab. 5).
  */
-function crossVentMultiplier(stackSpan, openHeight) {
-  return Math.min(3.5, 1.65 * Math.sqrt(Math.max(1.0, stackSpan) / Math.max(0.5, openHeight)));
+function crossVentMultiplier(stackSpan, openHeight, multiFloorStack = false) {
+  if (!multiFloorStack) return 1.50;
+  return Math.min(2.2, 1.15 * Math.sqrt(Math.max(openHeight, stackSpan) / Math.max(0.5, openHeight)));
 }
 
 /**
@@ -60,9 +63,10 @@ function crossVentMultiplier(stackSpan, openHeight) {
  * @param {number} TiC Température d'air intérieure [°C]
  * @param {number} TeC Température extérieure [°C]
  * @param {number} stackSpan Hauteur de tirage [m]
+ * @param {boolean} [multiFloorStack=false] Couplage multi-étages actif
  * @returns {number} Débit [m³/s]
  */
-export function calcOpeningFlowM3s(op, TiC, TeC, stackSpan) {
+export function calcOpeningFlowM3s(op, TiC, TeC, stackSpan, multiFloorStack = false) {
   if (!op.operable || TiC <= TeC) return 0;
   const areaOuv = op.qty * (op.openHeight ?? op.height) * (op.openWidth ?? op.width);
   const hOuv = Math.max(0.2, op.openHeight ?? op.height);
@@ -74,8 +78,8 @@ export function calcOpeningFlowM3s(op, TiC, TeC, stackSpan) {
 
   const ck = ckImposte(op.alphaDeg ?? 20);
   if (op.openType === 'imposte') return VE * ck;
-  if (op.openType === 'cross_rect') return VE * crossVentMultiplier(stackSpan, hOuv);
-  if (op.openType === 'cross_imposte') return VE * ck * crossVentMultiplier(stackSpan, hOuv);
+  if (op.openType === 'cross_rect') return VE * crossVentMultiplier(stackSpan, hOuv, multiFloorStack);
+  if (op.openType === 'cross_imposte') return VE * ck * crossVentMultiplier(stackSpan, hOuv, multiFloorStack);
   return VE;
 }
 
@@ -87,9 +91,10 @@ export function calcOpeningFlowM3s(op, TiC, TeC, stackSpan) {
  * @param {number} TiC Température d'air intérieure [°C]
  * @param {number} TeC Température extérieure [°C]
  * @param {number} stackSpan Hauteur de tirage [m]
+ * @param {boolean} [multiFloorStack=false] Couplage multi-étages actif
  * @returns {{ m3s: number, openArea: number }}
  */
-export function calcSimplePctNightFlowM3s(fl, winAreaFloor, TiC, TeC, stackSpan) {
+export function calcSimplePctNightFlowM3s(fl, winAreaFloor, TiC, TeC, stackSpan, multiFloorStack = false) {
   if (fl.nightSimpleBasis === 'none' || (fl.nightSimplePct ?? 0) <= 0) {
     return { m3s: 0, openArea: 0 };
   }
@@ -109,7 +114,7 @@ export function calcSimplePctNightFlowM3s(fl, winAreaFloor, TiC, TeC, stackSpan)
 
   let flow = VE * (fl.nightSimpleEff || 1.0);
   if (fl.nightSimpleCross) {
-    flow *= crossVentMultiplier(stackSpan, H_eff);
+    flow *= crossVentMultiplier(stackSpan, H_eff, multiFloorStack);
   }
   return { m3s: flow, openArea };
 }
@@ -123,14 +128,15 @@ export function computeFloorNightFlowM3h(fp, TairC, TeC, buildingStackSpan, stac
   if (fl.nightVentMode === 'fixed_m3hm2') return Math.max(0, fl.nightVentFixedVal) * fl.area;
   if (fl.nightVentMode === 'fixed_ach') return Math.max(0, fl.nightVentFixedVal) * fp.vol;
 
-  const span = stackCoupling ? buildingStackSpan : fl.height;
+  const isMultiStack = Boolean(stackCoupling) && buildingStackSpan > fl.height + 0.5;
+  const span = isMultiStack ? buildingStackSpan : fl.height;
   if (fl.nightVentMode === 'simple_pct') {
-    return calcSimplePctNightFlowM3s(fl, fp.winArea, TairC, TeC, span).m3s * 3600;
+    return calcSimplePctNightFlowM3s(fl, fp.winArea, TairC, TeC, span, isMultiStack).m3s * 3600;
   }
 
   let sum = 0;
   for (const op of fp.ops) {
-    sum += calcOpeningFlowM3s(op, TairC, TeC, span) * 3600;
+    sum += calcOpeningFlowM3s(op, TairC, TeC, span, isMultiStack) * 3600;
   }
   return sum;
 }

@@ -25,6 +25,55 @@ const server = http.createServer(async (req, res) => {
   try {
     const reqUrl = new URL(req.url || '/', `http://${HOST}:${PORT}`);
     let relPath = decodeURIComponent(reqUrl.pathname);
+
+    // Proxy météo sécurisé (liste blanche stricte : PVGIS 5.3 & MétéoSuisse OGD) pour éviter le blocage CORS navigateur
+    if (relPath === '/api/pvgis') {
+      const lat = Math.max(-90, Math.min(90, Number(reqUrl.searchParams.get('lat')) || 46.22));
+      const lon = Math.max(-180, Math.min(180, Number(reqUrl.searchParams.get('lon')) || 7.33));
+      const type = String(reqUrl.searchParams.get('type') || 'tmy');
+      const base = 'https://re.jrc.ec.europa.eu/api/v5_3/';
+      const upstream =
+        type === 'tmy'
+          ? `${base}tmy?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&outputformat=json`
+          : `${base}seriescalc?lat=${lat.toFixed(4)}&lon=${lon.toFixed(4)}&startyear=${encodeURIComponent(type)}&endyear=${encodeURIComponent(type)}&angle=0&components=1&outputformat=json`;
+      const upResp = await fetch(upstream);
+      const body = await upResp.text();
+      res.writeHead(upResp.status, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store'
+      });
+      res.end(body);
+      return;
+    }
+
+    if (relPath === '/api/meteoswiss') {
+      const stnRaw = String(reqUrl.searchParams.get('stn') || 'sio').toLowerCase();
+      if (!/^[a-z]{3}$/.test(stnRaw)) {
+        res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Code station invalide');
+        return;
+      }
+      const candidates = [
+        `https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/${stnRaw}/ogd-smn_${stnRaw}_h_historical_2020-2029.csv`,
+        `https://data.geo.admin.ch/ch.meteoschweiz.ogd-smn/${stnRaw}/ogd-smn_${stnRaw}_h_recent.csv`
+      ];
+      for (const url of candidates) {
+        const upResp = await fetch(url);
+        if (upResp.ok) {
+          const body = await upResp.text();
+          res.writeHead(200, {
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Cache-Control': 'no-store'
+          });
+          res.end(body);
+          return;
+        }
+      }
+      res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Données MétéoSuisse OGD indisponibles pour cette station.');
+      return;
+    }
+
     if (relPath === '/') relPath = '/index.html';
 
     const resolved = path.resolve(ROOT_DIR, '.' + relPath);

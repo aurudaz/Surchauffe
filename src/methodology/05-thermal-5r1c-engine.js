@@ -5,6 +5,7 @@
  */
 
 import { getSIA180Limits } from '../standards/sia180.js';
+import { SIA380_CATEGORIES } from '../standards/sia380-1.js';
 import {
   buildFloorThermalParams,
   computeHourlyInternalGainsBreakdown,
@@ -267,14 +268,17 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
         for (let k = 0; k < F; k++) {
           const fp = floorParams[k];
           const fl = fp.fl;
-          const isOcc = dow < fl.occDays && hr.hod >= fl.occStart && hr.hod < fl.occEnd;
+          const isOccDay = dow < fl.occDays;
+          const isOcc = isOccDay && hr.hod >= fl.occStart && hr.hod < fl.occEnd;
           const isNight =
-            fl.nightStart > fl.nightEnd
-              ? hr.hod >= fl.nightStart || hr.hod < fl.nightEnd
-              : hr.hod >= fl.nightStart && hr.hod < fl.nightEnd;
+            fl.nightStart === fl.nightEnd || (fl.nightStart === 0 && fl.nightEnd === 24)
+              ? true
+              : fl.nightStart > fl.nightEnd
+                ? hr.hod >= fl.nightStart || hr.hod < fl.nightEnd
+                : hr.hod >= fl.nightStart && hr.hod < fl.nightEnd;
           if (s === 0) acc[k].isOcc = isOcc;
 
-          const intBreakdown = computeHourlyInternalGainsBreakdown(fl, isOcc);
+          const intBreakdown = computeHourlyInternalGainsBreakdown(fl, isOcc, hr.hod, isOccDay);
           const P_int = intBreakdown.total;
           const solRes = computeHourlySolarGains(
             fp.ops,
@@ -283,7 +287,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             tRm48,
             isOcc,
             projObj.albedo ?? 0.20,
-            projObj.horizonDeg ?? 0
+            projObj.horizonDeg ?? 0,
+            projObj.useFresnelIncidence !== false
           );
           const P_sol = solRes.totalW;
 
@@ -310,8 +315,12 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             }
           }
 
-          const qDay_m3h = (isOcc ? fl.qHygSpec * fl.area : 0) + fl.achInfil * fp.vol;
-          const H_ve_day = 0.335 * qDay_m3h * (1 - (isOcc ? fl.etaWRG : 0));
+          // Ventilation hygiénique (avec bypass estival automatique du récupérateur si θ_i > 22 °C et θ_e < θ_i)
+          // + infiltration d'enveloppe (jamais soumise à récupération de chaleur)
+          const qHyg_m3h = isOcc ? fl.qHygSpec * fl.area : 0;
+          const qInf_m3h = fl.achInfil * fp.vol;
+          const etaEff = TairPrev[k] > 22.0 && hr.Te < TairPrev[k] ? 0 : (fl.etaWRG || 0);
+          const H_ve_day = 0.335 * (qHyg_m3h * (1 - etaEff) + qInf_m3h);
 
           const canNightCool =
             isNight &&
@@ -329,8 +338,9 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           const H_ve_night = 0.335 * qNight_m3h;
           const H_ve = H_ve_day + H_ve_night;
 
-          // Maintien hivernal SIA 380/1 / SIA 2044 : θ_op ≥ 20.0 °C (évite le refroidissement artificiel de la masse avant l'été)
-          const heatSetpoint = 20.0;
+          // Maintien hivernal SIA 380/1 / SIA 2044 (par défaut θ_i de la catégorie SIA, ex. 20 °C)
+          const heatSetpoint =
+            fl.heatSetpoint ?? SIA380_CATEGORIES[fl.siaCategory]?.ti ?? 20.0;
           let out = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, 0);
           if (out.Top < heatSetpoint) {
             const h1 = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, -1000);

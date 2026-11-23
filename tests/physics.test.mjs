@@ -2,20 +2,25 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  erbsDiffuseFraction,
+  glazingIncidenceModifier,
   incidentIrradiance,
   solarPosition,
   splitGlobalToComponents
 } from '../src/methodology/01-solar-geometry.js';
 import {
   applyClimateDelta,
+  buildOpenMeteoArchiveUrl,
   generateSyntheticWeather,
   parseAnyWeatherText
 } from '../src/methodology/02-weather-model.js';
 import {
+  applyBox3dToFloor,
   buildFloorThermalParams,
   computeAutoEnvelopeFromFloor,
   computeHourlyInternalGains,
-  computeHourlyInternalGainsBreakdown
+  computeHourlyInternalGainsBreakdown,
+  computeHourlySolarGains
 } from '../src/methodology/03-envelope-and-gains.js';
 import {
   calcOpeningFlowM3s,
@@ -128,9 +133,9 @@ test('05-thermal-5r1c-engine : pas de NaN si zone sans vitrage/ventilation & con
   assert.ok(Math.abs(out.Top - 21.0) < 1e-6, 'À l équilibre à 21°C sans gains, Top doit rester 21.0°C');
 });
 
-test('06-sia180 & 08-comparator : simulation complète des 4 bâtiments types', () => {
+test('06-sia180 & 08-comparator : simulation complète des 6 bâtiments types', () => {
   const lib = createHouseLibrary();
-  assert.equal(lib.length, 5, 'La bibliothèque doit inclure les 5 modèles dont le Constructeur 3D');
+  assert.equal(lib.length, 6, 'La bibliothèque doit inclure les 6 modèles dont Constructeur 3D et TB Léa (bSol)');
   for (const item of lib) {
     const proj = item.build();
     const res = runFullSimulation(proj);
@@ -270,4 +275,154 @@ test('Minergie Variante 2 : horizon, écrans latéraux, UHI, détail gains & sc�
   assert.ok(sNoBlinds.wf.overMinergie265 >= sCurr.wf.overMinergie265, 'Oublier les stores ne doit pas réduire la surchauffe');
   assert.ok(sNoNight.wf.overMinergie265 >= sCurr.wf.overMinergie265, 'Oublier la nuit ne doit pas réduire la surchauffe');
   assert.ok(sBothBad.wf.overMinergie265 >= sNoBlinds.wf.overMinergie265);
+});
+
+test('Validation TB Léa Bohren (bSol Pro) : aéraulique, stores, inertie ISO 13786, bypass WRG & tendances', () => {
+  // 1. Ventilation naturelle mono-face (TB Léa Tableau 3 : 2.5 m² à ΔT=2K, Cd=0.6)
+  const qPortrait = calcOpeningFlowM3s(
+    { operable: true, qty: 1, openWidth: 1.0, openHeight: 2.5, cd: 0.6, openType: 'rect' },
+    27,
+    25,
+    2.5
+  ) * 3600;
+  const qLandscape = calcOpeningFlowM3s(
+    { operable: true, qty: 1, openWidth: 2.5, openHeight: 1.0, cd: 0.6, openType: 'rect' },
+    27,
+    25,
+    2.5
+  ) * 3600;
+  assert.ok(Math.abs(qPortrait - 730) < 10, `Portrait 1×2.5 m attendu ~730 m³/h, reçu ${qPortrait}`);
+  assert.ok(Math.abs(qLandscape - 460) < 10, `Paysage 2.5×1 m attendu ~460 m³/h, reçu ${qLandscape}`);
+
+  // 2. Corrélation d'Erbs (1982) & capteur façade non masqué par la casquette
+  assert.ok(erbsDiffuseFraction(0.70) > 0.20 && erbsDiffuseFraction(0.70) < 0.28);
+  const noonSun = solarPosition(172, 12.5, 46.22, 7.33, 1);
+  const irrShade = incidentIrradiance(900, 820, 140, noonSun, 180, 90, 1.5, 2.0);
+  assert.ok(irrShade.totalUnshaded > irrShade.total, 'L irradiance capteur façade doit excéder celle sous casquette');
+
+  // 3. Règles de déclenchement des stores (I ET T vs I OU T)
+  const testOp = {
+    orient: 'S', width: 2, height: 1.9, qty: 1, gVit: 0.6, gStore: 0.2, gtotMode: 'product',
+    overhangDepth: 0, frameFactor: 0.75, shadingFactor: 1.0,
+    blindMode: 'auto', blindThreshI: 200, blindThreshT: 22.0, blindRule: 'irr_and_temp'
+  };
+  const hrSun = { Igh: 850, Ibn: 750, Idh: 150, sun: noonSun };
+  const coldAnd = computeHourlySolarGains([testOp], hrSun, 20.5, 16, true);
+  const hotAnd = computeHourlySolarGains([testOp], hrSun, 23.0, 20, true);
+  assert.ok(hotAnd.totalW < coldAnd.totalW * 0.3, 'En règle I ET T, les stores restent levés à 20.5°C et baissés à 23°C');
+
+  // 4. Inertie ISO 13786 en Constructeur 3D : faux-plafond acoustique + parquet réduisent fortement C_R/A_SNP
+  const lib = createHouseLibrary();
+  const boxBare = lib.find(x => x.id === 'local_bureau_box3d').build();
+  const cBare = boxBare.floors[0].cSpec;
+  boxBare.floors[0].box3d.walls.ceiling.preset = 'slab_acoustic';
+  boxBare.floors[0].box3d.walls.floor.preset = 'floor_parquet';
+  applyBox3dToFloor(boxBare.floors[0], boxBare);
+  const cCovered = boxBare.floors[0].cSpec;
+  assert.ok(cBare > 140 && cCovered < cBare * 0.6, `Revêtements isolants doivent réduire fortement l inertie (${cBare} -> ${cCovered})`);
+
+  // 5. Bypass estival automatique du récupérateur de chaleur (η=0.85 ne doit pas aggraver la surchauffe)
+  const leaBase = lib.find(x => x.id === 'tb_lea_bsol').build();
+  const wSioRef = generateSyntheticWeather('SIO', 'REF');
+  const resNoWrg = executeEngine(leaBase, wSioRef.data, false, false).floorRaw[0];
+  const leaWrg = JSON.parse(JSON.stringify(leaBase));
+  leaWrg.floors[0].etaWRG = 0.85;
+  const resWithWrg = executeEngine(leaWrg, wSioRef.data, false, false).floorRaw[0];
+  assert.ok(resWithWrg.over26 <= resNoWrg.over26 + 5, 'Le bypass estival WRG doit empêcher la surchauffe par récupération');
+
+  // 6. Tendances physiques TB Léa (bSol Pro) : REF < 2050 < 2100, MVE REF = 0h, masse faible >> masse lourde, U quasi neutre
+  const wSio2050 = generateSyntheticWeather('SIO', '2050');
+  const wSio2100 = generateSyntheticWeather('SIO', '2100');
+  const wMveRef = generateSyntheticWeather('MVE', 'REF');
+  const rRef = executeEngine(leaBase, wSioRef.data, false, true).floorRaw[0];
+  const r2050 = executeEngine(leaBase, wSio2050.data, false, true).floorRaw[0];
+  const r2100 = executeEngine(leaBase, wSio2100.data, false, true).floorRaw[0];
+  const rMve = executeEngine(leaBase, wMveRef.data, false, true).floorRaw[0];
+  assert.equal(rMve.over26, 0, 'Montana REF doit rester à 0 h > 26°C comme dans bSol Pro');
+  assert.ok(rRef.over26 < r2050.over26 && r2050.over26 < r2100.over26, 'Progression climatique REF < 2050 < 2100');
+  assert.ok(r2100.coolKWhm2 > 4.0 && r2100.coolKWhm2 < 9.5, `Besoin froid SIO 2100 attendu ~6.5 kWh/m² (bSol), reçu ${r2100.coolKWhm2.toFixed(1)}`);
+
+  const leaLight = JSON.parse(JSON.stringify(leaBase));
+  leaLight.floors[0].cSpec = 20;
+  const rLight = executeEngine(leaLight, wSioRef.data, false, false).floorRaw[0];
+  assert.ok(rLight.over26 > rRef.over26 * 1.4, 'Une masse faible doit provoquer nettement plus de surchauffe');
+
+  const leaU17 = JSON.parse(JSON.stringify(leaBase));
+  leaU17.floors[0].uWallExt = 0.17;
+  const rU17 = executeEngine(leaU17, wSio2100.data, false, false).floorRaw[0];
+  assert.ok(Math.abs(rU17.over26 - r2100.over26) <= 20, 'Variation U_mur 0.10 -> 0.17 doit être quasi négligeable comme dans bSol');
+});
+
+test('Améliorations avancées : Fresnel (ISO 52016), Profils horaires SIA 2024 & Parseurs MétéoSuisse / SIA 2028 / Open-Meteo', () => {
+  // 1. Loi angulaire Fresnel / Karlsson-Roos sur g_vit
+  const k0 = glazingIncidenceModifier(1.0, 0.80);
+  const k70Triple = glazingIncidenceModifier(Math.cos((70 * Math.PI) / 180), 0.80);
+  const k70Double = glazingIncidenceModifier(Math.cos((70 * Math.PI) / 180), 1.20);
+  assert.equal(k0.kDir, 1.0);
+  assert.ok(k70Triple.kDir > 0.60 && k70Triple.kDir < 0.70, `Triple vitrage à 70° attendu ~0.66, reçu ${k70Triple.kDir}`);
+  assert.ok(k70Double.kDir > k70Triple.kDir, 'Le double vitrage atténue moins que le triple à grand angle');
+
+  const noonSun = solarPosition(172, 12.5, 46.22, 7.33, 1);
+  const opS = {
+    orient: 'S', width: 2, height: 1.9, qty: 1, uWin: 0.80, gVit: 0.60, gStore: 1.0,
+    gtotMode: 'product', overhangDepth: 0, frameFactor: 0.75, shadingFactor: 1.0, blindMode: 'always_up'
+  };
+  const hrNoon = { Igh: 900, Ibn: 820, Idh: 130, sun: noonSun };
+  const solNoFresnel = computeHourlySolarGains([opS], hrNoon, 24, 20, true, 0.2, 0, false).totalW;
+  const solFresnel = computeHourlySolarGains([opS], hrNoon, 24, 20, true, 0.2, 0, true).totalW;
+  assert.ok(solFresnel < solNoFresnel * 0.85, `Fresnel doit réduire nettement les apports Sud à midi été (${solFresnel.toFixed(0)} vs ${solNoFresnel.toFixed(0)} W)`);
+
+  // 2. Profils horaires SIA 2024 : conservation exacte de l'énergie journalière + pics réalistes
+  const villa = createHouseLibrary()[0].build();
+  const rdc = villa.floors[0];
+  let sumSia = 0;
+  let sumConst = 0;
+  const rdcConst = { ...rdc, internalProfileMode: 'constant' };
+  const rdcSia = { ...rdc, internalProfileMode: 'sia2024' };
+  for (let h = 0; h < 24; h++) {
+    sumSia += computeHourlyInternalGains(rdcSia, true, h, true);
+    sumConst += computeHourlyInternalGains(rdcConst, true, h, true);
+  }
+  assert.ok(Math.abs(sumSia - sumConst) < 1e-6, `Conservation énergie journalière SIA 2024 attendue (${sumSia} vs ${sumConst})`);
+  const eveRes = computeHourlyInternalGains(rdcSia, true, 19, true);
+  const midRes = computeHourlyInternalGains(rdcSia, true, 14, true);
+  assert.ok(eveRes > midRes * 2.0, 'En logement SIA 2024, le pic du soir (19h) doit dépasser largement le creux de 14h');
+
+  // 3. Parseur MétéoSuisse OGD CSV (tre200h0 / gre000h0)
+  const smnLines = ['station_abbr;reference_timestamp;tre200h0;gre000h0'];
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, '0');
+    smnLines.push(`SIO;15.07.2024 ${hh}:00;${(18 + 8 * Math.sin((Math.PI * h) / 24)).toFixed(1)};${h >= 6 && h <= 18 ? 600 : 0}`);
+  }
+  const smnParsed = parseAnyWeatherText(smnLines.join('\n'), 'ogd-smn_sio_h_recent.csv', { tzMode: 'cet' });
+  assert.equal(smnParsed.data.length, 24);
+  assert.ok(smnParsed.sourceLabel.includes('MétéoSuisse OGD') && smnParsed.sourceLabel.includes('Sion'));
+
+  // 4. Parseur SIA 2028 / Meteonorm (.dat / .cli)
+  const datLines = ['time.yy\ttime.mm\ttime.dd\ttime.hh\tta\tgls\tg_diff'];
+  for (let h = 0; h < 24; h++) {
+    datLines.push(`2010\t7\t15\t${h + 1}\t${(19 + 6 * Math.sin((Math.PI * h) / 24)).toFixed(1)}\t${h >= 6 && h <= 18 ? 700 : 0}\t${h >= 6 && h <= 18 ? 140 : 0}`);
+  }
+  const datParsed = parseAnyWeatherText(datLines.join('\n'), 'Sion_SIA2028.dat', { lat: 46.22, lon: 7.33 });
+  assert.equal(datParsed.data.length, 24);
+  assert.ok(datParsed.sourceLabel.includes('SIA 2028'));
+  assert.ok(datParsed.data[12].Ibn > 0 && datParsed.data[12].Idh === 140);
+
+  // 5. Parseur Open-Meteo Archive JSON + URL builder
+  const omUrl = buildOpenMeteoArchiveUrl(46.22, 7.33, 2023);
+  assert.ok(omUrl.includes('archive-api.open-meteo.com') && omUrl.includes('2023-01-01'));
+  const omJson = {
+    latitude: 46.22,
+    longitude: 7.33,
+    hourly: {
+      time: Array.from({ length: 24 }, (_, h) => `2023-07-15T${String(h).padStart(2, '0')}:00`),
+      temperature_2m: Array.from({ length: 24 }, (_, h) => 20 + 6 * Math.sin((Math.PI * h) / 24)),
+      shortwave_radiation: Array.from({ length: 24 }, (_, h) => (h >= 6 && h <= 18 ? 650 : 0)),
+      direct_normal_irradiance: Array.from({ length: 24 }, (_, h) => (h >= 6 && h <= 18 ? 600 : 0)),
+      diffuse_radiation: Array.from({ length: 24 }, (_, h) => (h >= 6 && h <= 18 ? 130 : 0))
+    }
+  };
+  const omParsed = parseAnyWeatherText(JSON.stringify(omJson), 'openmeteo_2023.json', { tzMode: 'cet_cest' });
+  assert.equal(omParsed.data.length, 24);
+  assert.ok(omParsed.sourceLabel.includes('Open-Meteo ERA5 (2023)'));
 });

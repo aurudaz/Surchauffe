@@ -4,35 +4,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SIA Thermic Studio — Simulation de surchauffe &amp; Confort thermique</title>
-  <link rel="stylesheet" href="./css/tokens.css?v=20261119-1" />
-  <link rel="stylesheet" href="./css/layout.css?v=20261119-1" />
-  <link rel="stylesheet" href="./css/components.css?v=20261119-1" />
+  <link rel="stylesheet" href="./css/tokens.css?v=20261123-2" />
+  <link rel="stylesheet" href="./css/layout.css?v=20261123-2" />
+  <link rel="stylesheet" href="./css/components.css?v=20261123-2" />
   <script type="importmap">
     {
       "imports": {
-        "./src/app.js": "./src/app.js?v=20261119-1",
-        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261119-1",
-        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261119-1",
-        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261119-1",
-        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261119-1",
-        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261119-1",
-        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261119-1",
-        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261119-1",
-        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261119-1",
-        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261119-1",
-        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261119-1",
-        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261119-1",
-        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261119-1",
-        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261119-1",
-        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261119-1",
-        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261119-1",
-        "./src/state/house-library.js": "./src/state/house-library.js?v=20261119-1",
-        "./src/state/project-store.js": "./src/state/project-store.js?v=20261119-1",
-        "./src/ui/charts.js": "./src/ui/charts.js?v=20261119-1",
-        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261119-1",
-        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261119-1",
-        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261119-1",
-        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261119-1"
+        "./src/app.js": "./src/app.js?v=20261123-2",
+        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261123-2",
+        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261123-2",
+        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261123-2",
+        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261123-2",
+        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261123-2",
+        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261123-2",
+        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261123-2",
+        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261123-2",
+        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261123-2",
+        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261123-2",
+        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261123-2",
+        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261123-2",
+        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261123-2",
+        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261123-2",
+        "./src/standards/sia2024-profiles.js": "./src/standards/sia2024-profiles.js?v=20261123-2",
+        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261123-2",
+        "./src/state/house-library.js": "./src/state/house-library.js?v=20261123-2",
+        "./src/state/project-store.js": "./src/state/project-store.js?v=20261123-2",
+        "./src/ui/charts.js": "./src/ui/charts.js?v=20261123-2",
+        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261123-2",
+        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261123-2",
+        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261123-2",
+        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261123-2"
       }
     }
   </script>
@@ -134,6 +135,10 @@
                   <input type="checkbox" id="stackCoupling" checked />
                   Couplage thermique des dalles &amp; tirage cheminée inter-étages
                 </label>
+                <label data-tip="Applique la loi optique de Fresnel / Karlsson-Roos (ISO 52016 / bSol) sur le facteur solaire g_vit selon l'angle d'incidence du soleil (réduction naturelle sur façade Sud en été)." style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);margin-top:6px;">
+                  <input type="checkbox" id="projUseFresnel" checked />
+                  Angle d'incidence Fresnel sur g_vit (ISO 52016 / bSol)
+                </label>
               </div>
             </div>
           </div>
@@ -216,10 +221,10 @@
                     <option value="none">Aucune protection solaire</option>
                   </select>
                 </div>
-                <div class="field" data-tip="Automatique : se baisse dès que l'ensoleillement sur la façade dépasse 200 W/m². Manuelle : uniquement pendant les heures d'occupation.">
+                <div class="field" data-tip="Automatique : s'abaisse automatiquement selon les seuils soleil/température ci-dessous. Manuelle : uniquement pendant les heures d'occupation.">
                   <label>Commande des stores</label>
                   <select id="simpBlindMode">
-                    <option value="auto">Automatique (seuil 200 W/m²)</option>
+                    <option value="auto">Automatique (selon seuils)</option>
                     <option value="manual_day">Manuelle (pendant occupation)</option>
                     <option value="always_down">Toujours baissés</option>
                     <option value="always_up">Toujours levés</option>
@@ -233,6 +238,26 @@
                   <label>Angle d'horizon [°]</label>
                   <input type="number" id="simpHorizon" min="0" max="60" step="5" value="0" />
                   <small>0° dégagé • 20° standard urbain</small>
+                </div>
+              </div>
+              <div class="g3" id="simpBlindTrigRow" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+                <div class="field" data-tip="Logique de déclenchement des stores : ET (SIA 380/2 / Lesosai / IDA ICE : soleil fort ET pièce chaude), OU (bSol Pro : soleil fort OU pièce chaude), ou rayonnement seul.">
+                  <label>Condition d'abaissement des stores</label>
+                  <select id="simpBlindRule">
+                    <option value="irr_and_temp">Soleil ≥ seuil ET T° int. ≥ seuil (SIA / Lesosai)</option>
+                    <option value="irr_or_temp">Soleil ≥ seuil OU T° int. ≥ seuil (bSol Pro)</option>
+                    <option value="irr_only">Ensoleillement seul (pyranomètre façade)</option>
+                  </select>
+                </div>
+                <div class="field" data-tip="Rayonnement solaire incident sur la façade [W/m²] au-delà duquel les stores s'abaissent (norme SIA 380/2 : 200 W/m²).">
+                  <label>Seuil ensoleillement [W/m²]</label>
+                  <input type="number" id="simpBlindThreshI" min="50" max="600" step="25" value="200" />
+                  <small>SIA 380/2 : 200 W/m²</small>
+                </div>
+                <div class="field" data-tip="Température intérieure [°C] à partir de laquelle les stores s'abaissent pour éviter la surchauffe (évite de baisser les stores par temps froid).">
+                  <label>Seuil T° intérieure [°C]</label>
+                  <input type="number" id="simpBlindThreshT" min="18" max="28" step="0.5" value="22.0" />
+                  <small>Typ. 22.0–23.0 °C (bSol : 22 °C)</small>
                 </div>
               </div>
             </div>
@@ -309,7 +334,10 @@
                     <th data-tip="Profondeur de la casquette horizontale / balcon au-dessus de la fenêtre [m].">Casq. [m]</th>
                     <th data-tip="Profondeur des écrans latéraux (joues verticales gauche/droite ou tableau profond) [m].">Écr. lat [m]</th>
                     <th data-tip="Angle d'obstruction de l'horizon en face de cette fenêtre [°].">Hor. [°]</th>
-                    <th data-tip="Mode de fermeture du store : Auto (>200 W/m²), Manuel (si occupé), Fermé ou Ouvert.">Store</th>
+                    <th data-tip="Mode de fermeture du store : Auto, Manuel (si occupé), Fermé ou Ouvert.">Store</th>
+                    <th data-tip="Seuil de rayonnement sur la façade [W/m²] déclenchant la descente du store (SIA 380/2 : 200 W/m²).">I_seuil</th>
+                    <th data-tip="Seuil de température intérieure [°C] déclenchant la descente du store (typ. 22 °C).">T_seuil</th>
+                    <th data-tip="Condition logique d'abaissement : ET (I ≥ I_seuil ET θ_i ≥ T_seuil), OU (bSol), ou I seul.">Règle</th>
                     <th data-tip="Cocher si cette fenêtre est ouverte la nuit pour le rafraîchissement naturel.">Nuit</th>
                     <th></th>
                   </tr>
@@ -337,7 +365,7 @@
           </h3>
 
           <div class="well">
-            <div class="g2">
+            <div class="g3">
               <div class="field" data-tip="Profil d'affectation normalisé (SIA 380/1 & SIA 2024) définissant la densité d'occupation, l'éclairage, les appareils et l'air neuf hygiénique.">
                 <label>Catégorie d'ouvrage SIA 380/1:2016</label>
                 <select id="siaCategorySelect">
@@ -356,8 +384,15 @@
                   <option value="XII">XII — Piscine couverte</option>
                 </select>
               </div>
+              <div class="field" data-tip="Profil horaire SIA 2024 (24 h) : concentre les charges sur les vrais pics (après-midi en bureau, soirée en logement) tout en conservant exactement l'énergie journalière SIA. Palier constant : puissance uniforme pendant la plage d'occupation.">
+                <label>Profil horaire des charges internes</label>
+                <select id="inInternalProfileMode">
+                  <option value="sia2024">Profil horaire SIA 2024:2015 (24 h)</option>
+                  <option value="constant">Palier constant (moyenne sur plage)</option>
+                </select>
+              </div>
               <div class="field" data-tip="Multiplicateur global appliqué aux gains internes (100 % = valeurs normatives standard ; <100 % = équipements LED/électroménagers très sobres ; >100 % = forte densité).">
-                <label>Intensité des charges internes vs SIA [%]: <strong id="siaGainFactorLbl">100 %</strong></label>
+                <label>Intensité des charges vs SIA [%]: <strong id="siaGainFactorLbl">100 %</strong></label>
                 <input type="range" id="siaGainFactor" min="25" max="200" step="5" value="100" />
                 <small>Ajuste simultanément personnes, éclairage et appareils</small>
               </div>
@@ -365,47 +400,28 @@
             <div id="siaCatChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;"></div>
           </div>
 
-          <div id="siaAdvBox" class="hidden">
-            <h4 style="margin:0 0 8px 0;font-size:13px;">Détail des gains internes &amp; occupation</h4>
-            <div class="g5">
-              <div class="field" data-tip="Nombre moyen de personnes présentes dans l'étage/local pendant les heures d'occupation."><label>Nb personnes [-]</label><input type="number" id="inOccCount" step="0.5" min="0" /></div>
-              <div class="field" data-tip="Puissance de chaleur sensible dégagée par personne [W/pers.] (70 W au repos/logement, 80 W bureau, 100 W commerce/industrie)."><label>Chaleur/pers. Q_P [W/P]</label><input type="number" id="inOccWatt" step="5" min="0" /></div>
-              <div class="field" data-tip="Taux de présence moyen réel pendant la plage d'occupation (ex. 50 % si plage 0h–24h avec 12 h/j de présence effective en logement)."><label>Présence eff. [%]</label><input type="number" id="inOccPresence" step="5" min="5" max="100" /></div>
-              <div class="field" data-tip="Puissance thermique moyenne de l'éclairage par m² de plancher pendant l'occupation [W/m²]."><label>Éclairage [W/m²]</label><input type="number" id="inLightWm2" step="0.5" min="0" /></div>
-              <div class="field" data-tip="Puissance thermique totale des appareils électriques et informatiques sur l'étage pendant l'occupation [W]."><label>Appareils total [W]</label><input type="number" id="inEquipWatt" step="10" min="0" /></div>
-            </div>
-            <div class="g4" style="margin-top:10px;">
-              <div class="field" data-tip="Heure de début de la période d'occupation quotidienne [0..23 h]."><label>Début occ. [h]</label><input type="number" id="inOccStart" min="0" max="23" /></div>
-              <div class="field" data-tip="Heure de fin de la période d'occupation quotidienne [1..24 h]."><label>Fin occ. [h]</label><input type="number" id="inOccEnd" min="1" max="24" /></div>
-              <div class="field" data-tip="Nombre de jours d'occupation par semaine (5 j/sem pour bureaux/écoles, 7 j/sem pour logements)."><label>Jours / sem.</label>
-                <select id="inOccDays"><option value="5">5 j/sem</option><option value="6">6 j/sem</option><option value="7">7 j/sem</option></select>
-              </div>
-              <div class="field" data-tip="Fraction résiduelle de la puissance électrique (appareils en veille, réfrigérateur, serveurs) maintenue hors heures d'occupation [%]."><label>Veille hors occ. [%]</label><input type="number" id="inStandbyPct" step="5" min="0" max="100" /></div>
-            </div>
-
-            <hr style="border:none;border-top:1px solid var(--border);margin:14px 0;" />
-
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-              <h4 style="margin:0;font-size:13px;">Ventilation diurne &amp; Paramètres de régulation nocturne</h4>
+          <!-- VENTILATION DIURNE & NOCTURNE (TOUJOURS VISIBLE EN SIMPLE ET AVANCÉ) -->
+          <div class="well" id="siaVentCard" style="margin-top:12px;">
+            <div class="well-head">
+              <strong>Débits de ventilation (hygiénique jour &amp; déstockage nocturne)</strong>
               <span class="pill neutral" id="siaNightLiveBadge" data-tip="Débit de rafraîchissement nocturne potentiel calculé pour un écart intérieur/extérieur de 8 K (objectif recommandé ≥ 10 m³/(h·m²))."></span>
             </div>
             <div class="g3">
-              <div class="field" data-tip="Débit spécifique d'air neuf hygiénique pendant les heures d'occupation [m³/(h·m²)] (typ. 0.7 m³/(h·m²) selon SIA 380/1)."><label>Débit air neuf q_th [m³/(h·m²)]</label><input type="number" id="inQHyg" step="0.1" min="0" /></div>
-              <div class="field" data-tip="Taux d'infiltration permanente par les défauts d'étanchéité de l'enveloppe [vol/h] (typ. 0.10 vol/h pour bâtiment neuf étanche)."><label>Infiltration [vol/h]</label><input type="number" id="inAchInfil" step="0.05" min="0" /></div>
-              <div class="field" data-tip="Rendement de récupération de chaleur sur l'air extrait (mettre 0 en été si le double-flux dispose d'un bypass estival automatique)."><label>Récupération chaleur η [-]</label><input type="number" id="inEtaWrg" step="0.05" min="0" max="0.95" /></div>
-            </div>
-            <div class="g3" style="margin-top:10px;">
-              <div class="field" data-tip="Mode de calcul du débit de déstockage nocturne : par % de surface ouvrante, par géométrie exacte des fenêtres, par débit fixe ou désactivé.">
+              <div class="field" data-tip="Débit spécifique d'air neuf hygiénique pendant les heures d'occupation [m³/(h·m²)] (typ. 0.7 m³/(h·m²) selon SIA 380/1, 1.0 dans TB Léa/bSol).">
+                <label>Air neuf hygiénique q_th [m³/(h·m²)]</label>
+                <input type="number" id="inQHyg" step="0.1" min="0" />
+              </div>
+              <div class="field" data-tip="Mode de calcul du débit de déstockage nocturne : par % de surface ouvrante, par géométrie exacte des fenêtres, par débit fixe (m³/(h·m²) ou vol/h) ou désactivé.">
                 <label>Méthode ventilation nuit</label>
                 <select id="inNightMode">
                   <option value="simple_pct">Méthode simple (% ouvrant)</option>
                   <option value="physical">Méthode avancée (ouvrants détaillés)</option>
                   <option value="fixed_m3hm2">Débit imposé [m³/(h·m²)]</option>
                   <option value="fixed_ach">Taux imposé [vol/h]</option>
-                  <option value="none">Aucun</option>
+                  <option value="none">Aucun (fenêtres fermées)</option>
                 </select>
               </div>
-              <div class="field hidden" id="nightFixedBox" data-tip="Valeur constante de débit nocturne appliquée dès que l'air intérieur dépasse la température cible et que l'air extérieur est plus frais.">
+              <div class="field hidden" id="nightFixedBox" data-tip="Valeur constante de débit de rafraîchissement appliquée dès que l'air intérieur dépasse la température cible et que l'air extérieur est plus frais (TB Léa / bSol : 8 m³/(h·m²)).">
                 <label id="lblNightFixed">Débit imposé [m³/(h·m²)]</label>
                 <input type="number" id="inNightFixed" step="0.5" min="0" />
               </div>
@@ -423,13 +439,42 @@
                 <div style="font-size:12px;color:var(--text-muted);padding:7px 0;" id="nightPhysicalHintTxt"></div>
               </div>
             </div>
-            <div id="nightRegulBox">
-              <div class="g4" style="margin-top:10px;">
-                <div class="field" data-tip="Heure du soir à partir de laquelle la surventilation nocturne est autorisée (par défaut 21 h)."><label>Plage nuit début [h]</label><input type="number" id="inNightStart" min="0" max="23" /></div>
-                <div class="field" data-tip="Heure du matin à laquelle les fenêtres de ventilation nocturne sont refermées (par défaut 7 h)."><label>Plage nuit fin [h]</label><input type="number" id="inNightEnd" min="1" max="24" /></div>
-                <div class="field" data-tip="Température intérieure en dessous de laquelle on arrête la surventilation nocturne pour éviter tout inconfort frais au matin (typ. 21 °C)."><label>Température cible nocturne [°C]</label><input type="number" id="inNightTargetTi" step="0.5" min="15" /></div>
-                <div class="field" data-tip="Différence minimale (θ_intérieur − θ_extérieur) requise pour ouvrir les fenêtres la nuit (évite de faire entrer de l'air extérieur chaud)."><label>Écart minimal (θ_i − θ_e) [K]</label><input type="number" id="inNightMinDT" step="0.5" min="0" /></div>
+            <div id="nightRegulBox" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+              <div style="margin-bottom:8px;">
+                <label data-tip="Active le rafraîchissement passif dès que θ_i > cible et θ_e ≤ θ_i − ΔT à toute heure du jour ou de la nuit (mode bSol Pro / free-cooling naturel), au lieu de limiter aux heures de nuit." style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;">
+                  <input type="checkbox" id="inNightFreeCool24h" />
+                  Libre refroidissement 24h/24 dès que l'air extérieur est plus frais (mode bSol Pro)
+                </label>
               </div>
+              <div class="g4">
+                <div class="field" data-tip="Heure du soir à partir de laquelle la surventilation nocturne est autorisée (par défaut 21 h ; 0 h en mode 24h/24)."><label>Plage début [h]</label><input type="number" id="inNightStart" min="0" max="23" /></div>
+                <div class="field" data-tip="Heure du matin à laquelle les fenêtres de ventilation nocturne sont refermées (par défaut 7 h ; 24 h en mode 24h/24)."><label>Plage fin [h]</label><input type="number" id="inNightEnd" min="1" max="24" /></div>
+                <div class="field" data-tip="Température intérieure au-dessus de laquelle le déstockage s'active (typ. 21–22 °C)."><label>Température cible [°C]</label><input type="number" id="inNightTargetTi" step="0.5" min="15" /></div>
+                <div class="field" data-tip="Différence minimale (θ_intérieur − θ_extérieur) requise pour ouvrir les fenêtres (typ. 1.5–2.0 K)."><label>Écart minimal (θ_i − θ_e) [K]</label><input type="number" id="inNightMinDT" step="0.5" min="0" /></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="siaAdvBox" class="hidden">
+            <h4 style="margin:14px 0 8px 0;font-size:13px;">Détail des gains internes, occupation &amp; infiltration</h4>
+            <div class="g5">
+              <div class="field" data-tip="Nombre moyen de personnes présentes dans l'étage/local pendant les heures d'occupation."><label>Nb personnes [-]</label><input type="number" id="inOccCount" step="0.5" min="0" /></div>
+              <div class="field" data-tip="Puissance de chaleur sensible dégagée par personne [W/pers.] (70 W au repos/logement, 80 W bureau, 100 W commerce/industrie)."><label>Chaleur/pers. Q_P [W/P]</label><input type="number" id="inOccWatt" step="5" min="0" /></div>
+              <div class="field" data-tip="Taux de présence moyen réel pendant la plage d'occupation (ex. 50 % si plage 0h–24h avec 12 h/j de présence effective en logement)."><label>Présence eff. [%]</label><input type="number" id="inOccPresence" step="5" min="5" max="100" /></div>
+              <div class="field" data-tip="Puissance thermique moyenne de l'éclairage par m² de plancher pendant l'occupation [W/m²]."><label>Éclairage [W/m²]</label><input type="number" id="inLightWm2" step="0.5" min="0" /></div>
+              <div class="field" data-tip="Puissance thermique totale des appareils électriques et informatiques sur l'étage pendant l'occupation [W]."><label>Appareils total [W]</label><input type="number" id="inEquipWatt" step="10" min="0" /></div>
+            </div>
+            <div class="g4" style="margin-top:10px;">
+              <div class="field" data-tip="Heure de début de la période d'occupation quotidienne [0..23 h]."><label>Début occ. [h]</label><input type="number" id="inOccStart" min="0" max="23" /></div>
+              <div class="field" data-tip="Heure de fin de la période d'occupation quotidienne [1..24 h]."><label>Fin occ. [h]</label><input type="number" id="inOccEnd" min="1" max="24" /></div>
+              <div class="field" data-tip="Nombre de jours d'occupation par semaine (5 j/sem pour bureaux/écoles, 7 j/sem pour logements)."><label>Jours / sem.</label>
+                <select id="inOccDays"><option value="5">5 j/sem</option><option value="6">6 j/sem</option><option value="7">7 j/sem</option></select>
+              </div>
+              <div class="field" data-tip="Fraction résiduelle de la puissance électrique (appareils en veille, réfrigérateur, serveurs) maintenue hors heures d'occupation [%]."><label>Veille hors occ. [%]</label><input type="number" id="inStandbyPct" step="5" min="0" max="100" /></div>
+            </div>
+            <div class="g2" style="margin-top:10px;">
+              <div class="field" data-tip="Taux d'infiltration permanente par les défauts d'étanchéité de l'enveloppe [vol/h] (typ. 0.10 vol/h pour bâtiment neuf étanche ; jamais soumis à la récupération de chaleur)."><label>Infiltration [vol/h]</label><input type="number" id="inAchInfil" step="0.05" min="0" /></div>
+              <div class="field" data-tip="Rendement de récupération de chaleur sur l'air neuf hygiénique (bypass estival automatique actif dès que θ_i > 22 °C et θ_e < θ_i)."><label>Récupération chaleur η [-]</label><input type="number" id="inEtaWrg" step="0.05" min="0" max="0.95" /></div>
             </div>
           </div>
         </div>
@@ -478,11 +523,24 @@
             </label>
             <span class="pill neutral" id="weatherStatusBadge" data-tip="Source météorologique actuellement utilisée pour la simulation 8760 h.">Climat actif : Synthétique calibré</span>
           </div>
+
+          <div class="well" style="margin-top:12px;">
+            <div class="well-head" style="margin-bottom:8px;">
+              <strong>Charger des données météo réelles en 1 clic (8760 h)</strong>
+              <span style="font-size:11.5px;color:var(--text-muted);">Remplace le modèle synthétique par des mesures réelles</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;">
+              <button class="btn btn-sm" id="btnFetchMeteoSwiss" data-tip="Télécharge les mesures horaires officielles MétéoSuisse Open Data (SwissMetNet, tre200h0 & gre000h0) pour la station sélectionnée.">MétéoSuisse OGD (station)</button>
+              <button class="btn btn-sm" id="btnFetchOpenMeteo" data-tip="Télécharge directement depuis le navigateur une année réelle complète (ERA5 8760 h : température, direct, diffus) via Open-Meteo (sans serveur requis).">Open-Meteo ERA5 (réel)</button>
+              <button class="btn btn-sm" id="btnFetchPvgis" data-tip="Télécharge l'année type TMY PVGIS 5.3 directement via le proxy local (npm start) aux coordonnées de la station.">PVGIS 5.3 TMY (direct)</button>
+              <button class="btn btn-sm" id="btnResetWeatherQuick" data-tip="Revenir au modèle climatique suisse synthétique calibré (REF / 2035 / 2050 / 2100).">Revenir au synthétique</button>
+            </div>
+          </div>
         </div>
 
         <div class="card hidden" id="climateAdvBox">
-          <h3 class="card-title">Importer des données réelles PVGIS / EPW / CSV</h3>
-          <p class="subtitle">Compatible PVGIS 5.3 (TMY et années réelles <code>seriescalc</code>), Meteonorm / SIA 2028 (<code>.epw</code>) et CSV.</p>
+          <h3 class="card-title">Importer des données réelles PVGIS / MétéoSuisse / SIA 2028 / EPW</h3>
+          <p class="subtitle">Formats supportés : <strong>PVGIS 5.3</strong> (<code>.json</code>, <code>.csv</code>), <strong>MétéoSuisse OGD</strong> (<code>.csv</code>), <strong>SIA 2028 / Meteonorm</strong> (<code>.dat</code>, <code>.cli</code>, <code>.epw</code>) et <strong>Open-Meteo</strong> (<code>.json</code>).</p>
           <div class="g4">
             <div class="field" data-tip="Latitude géographique du site [° Nord] utilisée pour la course du soleil."><label>Latitude [°N]</label><input type="number" id="pvLat" step="0.001" value="46.22" /></div>
             <div class="field" data-tip="Longitude géographique du site [° Est] utilisée pour l'heure solaire locale."><label>Longitude [°E]</label><input type="number" id="pvLon" step="0.001" value="7.33" /></div>
@@ -512,10 +570,10 @@
             <a class="btn btn-sm" href="https://re.jrc.ec.europa.eu/pvg_tools/fr/" target="_blank" rel="noopener" data-tip="Ouvrir l'interface cartographique officielle PVGIS.">Ouvrir carte PVGIS</a>
           </div>
 
-          <div class="dropzone" id="weatherDropzone" style="margin-top:12px;" data-tip="Glissez-déposez ici un fichier météo horaire (.json, .csv ou .epw) téléchargé depuis PVGIS ou Meteonorm.">
-            <div style="font-weight:600;margin-bottom:6px;">2. Glisser-déposer le fichier (.json, .csv, .epw)</div>
+          <div class="dropzone" id="weatherDropzone" style="margin-top:12px;" data-tip="Glissez-déposez ici un fichier météo horaire (.json, .csv, .epw, .dat ou .cli) depuis PVGIS, MétéoSuisse OGD, SIA 2028 ou Meteonorm.">
+            <div style="font-weight:600;margin-bottom:6px;">2. Glisser-déposer le fichier (.json, .csv, .epw, .dat, .cli)</div>
             <div style="display:flex;justify-content:center;gap:8px;flex-wrap:wrap;">
-              <input type="file" id="weatherFileInput" accept=".json,.csv,.epw,.txt" style="max-width:280px;" />
+              <input type="file" id="weatherFileInput" accept=".json,.csv,.epw,.dat,.cli,.txt" style="max-width:280px;" />
               <button class="btn btn-sm" id="btnTogglePaste" data-tip="Coller directement le contenu texte d'un fichier JSON ou CSV PVGIS.">Coller JSON / CSV</button>
               <button class="btn btn-sm" id="btnResetWeather" data-tip="Revenir au modèle climatique suisse synthétique calibré.">Climat suisse par défaut</button>
             </div>

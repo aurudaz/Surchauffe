@@ -76,7 +76,7 @@ export function incidentIrradiance(
   shadingOpts = {}
 ) {
   if (sun.cosZ <= 0.01) {
-    return { total: 0, direct: 0, diffRefl: 0, shadedFrac: 0 };
+    return { total: 0, totalUnshaded: 0, direct: 0, diffRefl: 0, shadedFrac: 0, cosTheta: 0 };
   }
 
   const horizonDeg = Math.max(0, Math.min(60, Number(shadingOpts.horizonDeg) || 0));
@@ -87,7 +87,8 @@ export function incidentIrradiance(
   const cosTheta = sun.cosZ * Math.cos(beta) + sun.sinZ * Math.sin(beta) * cosGamma;
 
   const altDeg = sun.altDeg ?? Math.asin(Math.max(-1, Math.min(1, sun.cosZ))) * RAD_TO_DEG;
-  let direct = altDeg <= horizonDeg ? 0 : Ibn * Math.max(0, cosTheta);
+  const directUnshaded = altDeg <= horizonDeg ? 0 : Ibn * Math.max(0, cosTheta);
+  let direct = directUnshaded;
   let shadedFracH = 0;
   let shadedFracW = 0;
 
@@ -115,21 +116,81 @@ export function incidentIrradiance(
   const shadedFrac = 1.0 - (1.0 - shadedFracH) * (1.0 - shadedFracW);
   const skyHorFactor = horizonDeg > 0 ? Math.max(0.5, 1.0 - 0.35 * Math.sin(horizonDeg * DEG_TO_RAD)) : 1.0;
 
-  const diffRefl =
-    Idh * ((1 + Math.cos(beta)) / 2) * skyHorFactor +
-    albedo * Igh * ((1 - Math.cos(beta)) / 2);
+  // Modèle anisotrope de Hay & Davies (ISO 52010 / bSol / TRNSYS) :
+  // sépare le diffus en composante circumsolaire (indice d'anisotropie A_i) et dôme isotrope
+  const Ai = Math.min(0.85, Math.max(0, Ibn / 1361));
+  const rb = Math.max(0, cosTheta) / Math.max(0.087, sun.cosZ);
+  const diffCircumsolarBase = altDeg <= horizonDeg ? 0 : Idh * Ai * rb;
+  const diffCircumsolar = diffCircumsolarBase * (1.0 - shadedFrac);
+  const diffIso = Idh * (1.0 - Ai) * ((1 + Math.cos(beta)) / 2) * skyHorFactor;
+  const reflGround = albedo * Igh * ((1 - Math.cos(beta)) / 2);
+  const diffRefl = diffCircumsolar + diffIso + reflGround;
+  const totalUnshaded = Math.max(0, directUnshaded + diffCircumsolarBase + diffIso + reflGround);
 
   return {
     total: Math.max(0, direct + diffRefl),
+    totalUnshaded,
     direct: Math.max(0, direct),
     diffRefl: Math.max(0, diffRefl),
-    shadedFrac
+    shadedFrac,
+    cosTheta: Math.max(0, cosTheta)
   };
 }
 
 /**
+ * Facteur angulaire d'incidence de Fresnel / Karlsson & Roos (2000) / ISO 52016
+ * sur le facteur solaire g_vit du vitrage :
+ *   K_dir(θ_i) = max(0, 1 − tan^a(θ_i / 2))
+ * avec a = 3.0 (triple vitrage U ≤ 0.95), a = 3.5 (double vitrage U ≤ 2.2), a = 4.2 (simple vitrage),
+ * et facteur hémisphérique diffus K_diff ∈ {0.88, 0.90, 0.92}.
+ *
+ * En été sur façade Sud (soleil haut θ_i ≈ 65–75°), K_dir chute à ~0.55–0.72,
+ * reproduisant fidèlement la réflexion optique de Fresnel des logiciels dynamiques (bSol / IDA ICE).
+ *
+ * @param {number} cosTheta Cosinus de l'angle d'incidence sur la paroi [0..1]
+ * @param {number} [uWin=1.0] Coefficient U de la fenêtre (identifie simple/double/triple vitrage)
+ * @returns {{ kDir: number, kDiff: number, thetaDeg: number }}
+ */
+export function glazingIncidenceModifier(cosTheta, uWin = 1.0) {
+  const isTriple = uWin <= 0.95;
+  const isDouble = !isTriple && uWin <= 2.2;
+  const a = isTriple ? 3.0 : isDouble ? 3.5 : 4.2;
+  const kDiff = isTriple ? 0.88 : isDouble ? 0.90 : 0.92;
+
+  const ct = Math.max(0, Math.min(1, cosTheta));
+  if (ct <= 1e-4) return { kDir: 0, kDiff, thetaDeg: 90 };
+
+  const thetaRad = Math.acos(ct);
+  const tanHalf = Math.tan(thetaRad * 0.5);
+  const kDir = Math.max(0, Math.min(1, 1.0 - Math.pow(tanHalf, a)));
+  return { kDir, kDiff, thetaDeg: thetaRad * RAD_TO_DEG };
+}
+
+/**
+ * Fraction diffuse horizontale k_d = I_dh / I_gh selon la corrélation de référence
+ * d'Erbs, Klein & Duffie (1982) en fonction de l'indice de clarté k_t.
+ *
+ * @param {number} kt Indice de clarté [-]
+ * @returns {number} Fraction diffuse k_d ∈ [0.165, 1.0]
+ */
+export function erbsDiffuseFraction(kt) {
+  const k = Math.max(0, Math.min(1.0, kt));
+  if (k <= 0.22) return 1.0 - 0.09 * k;
+  if (k <= 0.80) {
+    return (
+      0.9511 -
+      0.1604 * k +
+      4.388 * k * k -
+      16.638 * k * k * k +
+      12.336 * k * k * k * k
+    );
+  }
+  return 0.165;
+}
+
+/**
  * Décompose une irradiance globale horizontale Igh en composantes directe normale (Ibn)
- * et diffuse horizontale (Idh) via une corrélation sur l'indice de clarté k_t.
+ * et diffuse horizontale (Idh) via la corrélation d'Erbs, Klein & Duffie (1982).
  *
  * @param {number} Igh Irradiance globale horizontale [W/m²]
  * @param {{ cosZ: number }} sun Position solaire
@@ -140,7 +201,7 @@ export function splitGlobalToComponents(Igh, sun, doy) {
   if (sun.cosZ <= 0.02 || Igh <= 0) return { Ibn: 0, Idh: Math.max(0, Igh) };
   const I0 = 1361 * (1 + 0.033 * Math.cos((2 * Math.PI * doy) / 365));
   const kt = Math.min(1.0, Igh / (I0 * sun.cosZ));
-  const Idh = Igh * Math.min(1.0, Math.max(0.15, 1.15 - 1.15 * kt));
+  const Idh = Igh * erbsDiffuseFraction(kt);
   return {
     Ibn: Math.max(0, (Igh - Idh) / sun.cosZ),
     Idh

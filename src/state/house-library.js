@@ -23,8 +23,9 @@ export function ensureFloorDefaults(fl, idx = 0, total = 1) {
   }
   if (fl.nightSimpleBasis === undefined) fl.nightSimpleBasis = 'floor_pct';
   if (fl.nightSimplePct === undefined) fl.nightSimplePct = 5.0;
-  if (fl.nightSimpleEff === undefined) fl.nightSimpleEff = 1.0;
+  if (fl.nightSimpleEff === undefined) fl.nightSimpleEff = 0.60;
   if (fl.nightSimpleCross === undefined) fl.nightSimpleCross = false;
+  if (fl.internalProfileMode === undefined) fl.internalProfileMode = 'sia2024';
   if (fl.nightVentMode === undefined) fl.nightVentMode = 'simple_pct';
   if (fl.uSlabInter === undefined) fl.uSlabInter = 1.4;
   if (fl.psiTotal === undefined) fl.psiTotal = Math.round((fl.area || 50) * 0.03 * 10) / 10;
@@ -79,19 +80,20 @@ function makeFloor(
     occEnd: sia.occEnd,
     occDays: sia.occDays,
     standbyPct: sia.standbyPct,
+    internalProfileMode: 'sia2024',
     qHygSpec: sia.qHygSpec,
     achInfil: 0.1,
     etaWRG: 0.0,
     nightVentMode: 'simple_pct',
     nightSimpleBasis: 'floor_pct',
     nightSimplePct: nightPct,
-    nightSimpleEff: 1.0,
+    nightSimpleEff: 0.60,
     nightSimpleCross: nightCross,
-    nightVentFixedVal: 10.0,
+    nightVentFixedVal: 8.0,
     nightStart: 21,
     nightEnd: 7,
     nightTargetTi: 21.0,
-    nightMinDT: 1.0
+    nightMinDT: 1.5
   };
   computeAutoEnvelopeFromFloor(fl);
   return fl;
@@ -127,10 +129,11 @@ export function makeOpening(
     gtotMode: 'product',
     overhangDepth: overhang,
     frameFactor: 0.78,
-    shadingFactor: 0.95,
+    shadingFactor: 1.0,
     blindMode: 'auto',
     blindThreshI: 200,
-    blindThreshT: 23.0,
+    blindThreshT: 22.0,
+    blindRule: 'irr_and_temp',
     windSafe: true,
     operable,
     openWidth: Math.min(width, 1.0),
@@ -157,8 +160,8 @@ export function createHouseLibrary() {
         horizonDeg: 0,
         climate: { station: 'SIO', scenario: '2035', lat: 46.22, lon: 7.33, tzMode: 'cet_cest', urbanHeatIsland: false },
         floors: [
-          makeFloor('f1', 'Rez-de-chaussée (Séjour)', 0.0, 65, 2.6, 'ground', 'II', 75, 'minergie', 4.5, true),
-          makeFloor('f2', '1er étage (Chambres)', 2.85, 65, 2.5, 'top', 'II', 75, 'minergie', 4.5, true)
+          makeFloor('f1', 'Rez-de-chaussée (Séjour)', 0.0, 65, 2.6, 'ground', 'II', 75, 'minergie', 3.5, true),
+          makeFloor('f2', '1er étage (Chambres)', 2.85, 65, 2.5, 'top', 'II', 75, 'minergie', 3.5, true)
         ],
         openings: [
           makeOpening('o1', 'f1', 'Baie Sud séjour', 'S', 3.4, 2.2, 1, 0.75, 0.55, 0.1, 1.2, 'rect', 0.05, true),
@@ -242,19 +245,28 @@ export function createHouseLibrary() {
     {
       id: 'local_bureau_box3d',
       title: 'Local bureau 4×5×2.5 m (Constructeur 3D)',
-      desc: 'Modèle type paroi par paroi : 1 façade Sud vitrée, 5 parois adiabatiques',
+      desc: 'Modèle paroi par paroi : 1 façade Sud vitrée, 5 parois adiabatiques, ventilation nocturne 8 m³/(h·m²)',
       build: () => {
-        const fl = makeFloor('f1', 'Bureau exercice 20 m²', 0.0, 20, 2.5, 'mid', 'III', 80, 'sia_new', 5.0, false);
+        const fl = makeFloor('f1', 'Bureau exercice 20 m²', 0.0, 20, 2.5, 'mid', 'III', 140, 'sia_new', 4.0, false);
         fl.occCount = 2;
         fl.occPresenceFactor = 1.0;
         fl.lightWm2 = 2.0;
         fl.equipWatt = 150;
         fl.qHygSpec = 0.75; // ~0.3 ACH sur 50 m³
-        fl.nightVentMode = 'none';
+        fl.nightVentMode = 'fixed_m3hm2';
+        fl.nightVentFixedVal = 8.0;
+        fl.nightStart = 21;
+        fl.nightEnd = 7;
+        fl.nightTargetTi = 21.0;
+        fl.nightMinDT = 1.5;
         fl.box3d = {
           dimX: 4.0,
           dimY: 5.0,
           frontOrient: 'S',
+          blindThreshI: 200,
+          blindThreshT: 22.0,
+          blindRule: 'irr_and_temp',
+          manualCSpec: false,
           walls: {
             front: {
               contact: 'ext_sun',
@@ -270,24 +282,97 @@ export function createHouseLibrary() {
               blindMode: 'auto',
               overhang: 0.0
             },
-            back: { contact: 'adiabatic', preset: 'wall_sia_heavy', u: 0.17, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
-            right: { contact: 'adiabatic', preset: 'wall_sia_heavy', u: 0.17, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
-            left: { contact: 'adiabatic', preset: 'wall_sia_heavy', u: 0.17, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            back: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            right: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            left: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
             ceiling: { contact: 'adiabatic', preset: 'slab_heavy_int', u: 1.4, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
             floor: { contact: 'adiabatic', preset: 'slab_heavy_int', u: 1.4, winPreset: 'none', winW: 0, winH: 0, winQty: 0 }
           }
         };
         const proj = {
-          name: 'Exercice surchauffe bureau (4×5×2.5 m)',
+          name: 'Local bureau 4×5×2.5 m (Constructeur 3D)',
           projectType: 'new',
           siaCurveMode: 'fig3',
           stackCoupling: false,
-          albedo: 0.15,
-          climate: { station: 'GVE', scenario: 'REF', lat: 46.25, lon: 6.13, tzMode: 'cet_cest' },
+          albedo: 0.20,
+          climate: { station: 'SIO', scenario: 'REF', lat: 46.22, lon: 7.33, tzMode: 'cet_cest' },
           floors: [fl],
           openings: []
         };
         applyBox3dToFloor(fl, proj);
+        return proj;
+      }
+    },
+    {
+      id: 'tb_lea_bsol',
+      title: 'Référence TB Léa Bohren (5×4×2.5 m, bSol)',
+      desc: 'Validation HES-SO Sion : 30 % vitré Sud, béton nu 176 Wh/m²K, déstockage 8 m³/(h·m²)',
+      build: () => {
+        const fl = makeFloor('f1', 'Pièce type TB (20 m²)', 6.0, 20, 2.5, 'mid', 'I', 176, 'minergie', 4.0, false);
+        fl.occCount = 2;
+        fl.occWatt = 70;
+        fl.occPresenceFactor = 0.3125; // Profil SIA 2024 Habitat collectif (TB Fig. 41)
+        fl.lightWm2 = 0.34;
+        fl.equipWatt = 22;
+        fl.occStart = 0;
+        fl.occEnd = 24;
+        fl.occDays = 7;
+        fl.standbyPct = 100;
+        fl.qHygSpec = 1.0;
+        fl.achInfil = 0.0;
+        fl.etaWRG = 0.0;
+        fl.psiTotal = 0.34; // Intercalaire ψ = 0.044 W/(m·K) × 7.8 m
+        fl.heatSetpoint = 21.0;
+        fl.nightVentMode = 'fixed_m3hm2';
+        fl.nightVentFixedVal = 8.0;
+        fl.nightStart = 0;   // Libre refroidissement 24h/24 (mode bSol Pro)
+        fl.nightEnd = 24;
+        fl.nightTargetTi = 22.0;
+        fl.nightMinDT = 2.0;
+        fl.box3d = {
+          dimX: 5.0,
+          dimY: 4.0,
+          frontOrient: 'S',
+          blindThreshI: 200,
+          blindThreshT: 22.0,
+          blindRule: 'irr_or_temp',
+          frameFactor: 0.75,
+          shadingFactor: 1.0,
+          manualCSpec: true,
+          walls: {
+            front: {
+              contact: 'ext_sun',
+              preset: 'wall_min_heavy',
+              u: 0.10,
+              winPreset: 'triple_lea38',
+              winW: 1.95,
+              winH: 1.95,
+              winQty: 1,
+              uWin: 0.80,
+              gVit: 0.60,
+              gStore: 0.20,
+              blindMode: 'auto',
+              overhang: 0.0
+            },
+            back: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            right: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            left: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            ceiling: { contact: 'adiabatic', preset: 'slab_heavy_int', u: 1.4, winPreset: 'none', winW: 0, winH: 0, winQty: 0 },
+            floor: { contact: 'adiabatic', preset: 'slab_heavy_int', u: 1.4, winPreset: 'none', winW: 0, winH: 0, winQty: 0 }
+          }
+        };
+        const proj = {
+          name: 'Pièce type TB Léa Bohren (bSol Pro, Sion)',
+          projectType: 'new',
+          siaCurveMode: 'fig4',
+          stackCoupling: false,
+          albedo: 0.20,
+          climate: { station: 'SIO', scenario: 'REF', lat: 46.22, lon: 7.33, tzMode: 'cet_cest' },
+          floors: [fl],
+          openings: []
+        };
+        applyBox3dToFloor(fl, proj);
+        fl.cSpec = 176; // 12.7 MJ/K = 3528 Wh/K sur 20 m² (TB Tableau 18)
         return proj;
       }
     }

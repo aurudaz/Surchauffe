@@ -3,6 +3,7 @@
  * (Publication Minergie & Justificatif SoWS Variante 2, Version 2023.2 / SIA 342 / SIA 2024).
  */
 
+import { getFacadeGrossAreaForOrient } from './box3d-presets.js';
 import { getMethod2GtotLimit } from './sia180.js';
 
 export const MINERGIE_THRESHOLDS = {
@@ -74,7 +75,6 @@ export function evaluateMinergieVariante2(fr, project, sim2035FloorResult = null
   const glazingIndexZg = winArea / area; // Indice de vitrage A_G / A_SNP
 
   // g_total autorisé moyen pondéré selon SIA 180 Fig. 12 par orientation
-  const facadeSideEst = Math.max(4, Math.sqrt(Math.max(4, area)) * fl.height);
   const byOrient = {};
   for (const op of ops) {
     if (!byOrient[op.orient]) byOrient[op.orient] = [];
@@ -87,7 +87,7 @@ export function evaluateMinergieVariante2(fr, project, sim2035FloorResult = null
 
   for (const [orient, list] of Object.entries(byOrient)) {
     const orientWinA = list.reduce((s, o) => s + o.width * o.height * o.qty, 0);
-    const estFac = Math.max(orientWinA, facadeSideEst);
+    const estFac = Math.max(orientWinA, getFacadeGrossAreaForOrient(fl, orient));
     const fg = Math.min(1.0, orientWinA / estFac);
     const limG = orient === 'R' ? 0.12 : getMethod2GtotLimit(orient, fg);
     for (const o of list) {

@@ -4,13 +4,14 @@
  */
 
 import { ENVELOPE_STANDARDS, ORIENTATIONS } from '../standards/sia380-1.js';
+import { getSia2024HourlyMultipliers } from '../standards/sia2024-profiles.js';
 import {
   BOX3D_CONTACTS,
   BOX3D_WALL_PRESETS,
   BOX3D_WINDOW_PRESETS,
   getWallOrientations
 } from '../standards/box3d-presets.js';
-import { incidentIrradiance } from './01-solar-geometry.js';
+import { glazingIncidenceModifier, incidentIrradiance } from './01-solar-geometry.js';
 
 /**
  * Calcule automatiquement les surfaces opaques et valeurs U d'un étage en Mode Simple.
@@ -149,7 +150,15 @@ export function applyBox3dToFloor(fl, project) {
   let groundArea = 0;
   let groundUA = 0;
   let groundB = 0.3;
-  let massEstimate = 12; // Mobilier / cloisons légères internes de base
+  // Capacité thermique effective ISO 13786 : Σ (A_paroi · κ_paroi) + mobilier (~8 Wh/(m²·K))
+  let totalCapWhK = 8.0 * fl.area;
+
+  const prevOps = project.openings.filter(o => o.floorId === fl.id);
+  const defaultBlindThreshI = b3.blindThreshI ?? prevOps[0]?.blindThreshI ?? 200;
+  const defaultBlindThreshT = b3.blindThreshT ?? prevOps[0]?.blindThreshT ?? 22.0;
+  const defaultBlindRule = b3.blindRule ?? prevOps[0]?.blindRule ?? 'irr_and_temp';
+  const defaultFrameFactor = b3.frameFactor ?? prevOps[0]?.frameFactor ?? 0.78;
+  const defaultShadingFactor = b3.shadingFactor ?? prevOps[0]?.shadingFactor ?? 1.0;
 
   const newOpenings = [];
 
@@ -189,11 +198,12 @@ export function applyBox3dToFloor(fl, project) {
           gStore: Number(w.gStore) ?? wp.gStore ?? 0.12,
           gtotMode: 'product',
           overhangDepth: faceKey === 'ceiling' ? 0 : Math.max(0, Number(w.overhang) || 0),
-          frameFactor: 0.78,
-          shadingFactor: 0.95,
+          frameFactor: w.frameFactor ?? defaultFrameFactor,
+          shadingFactor: w.shadingFactor ?? defaultShadingFactor,
           blindMode: w.blindMode || 'auto',
-          blindThreshI: 200,
-          blindThreshT: 23.0,
+          blindThreshI: w.blindThreshI ?? defaultBlindThreshI,
+          blindThreshT: w.blindThreshT ?? defaultBlindThreshT,
+          blindRule: w.blindRule ?? defaultBlindRule,
           windSafe: true,
           operable: true,
           openWidth: Math.min(ww, 1.0),
@@ -207,8 +217,9 @@ export function applyBox3dToFloor(fl, project) {
     }
 
     const netOpaque = Math.max(0, grossAreas[faceKey] - winArea);
-    // Contribution d'inertie thermique des parois lourdes (qu'elles soient extérieures ou adiabatiques !)
-    massEstimate += preset.mass * (faceKey === 'ceiling' || faceKey === 'floor' ? 1.0 : 0.55);
+    // Contribution physique ISO 13786 : surface opaque interne × capacité surfacique périodique κ [Wh/(m²·K)]
+    const kappa = preset.kappa ?? preset.mass ?? 30;
+    totalCapWhK += netOpaque * kappa;
 
     if (contact.b > 0 && netOpaque > 0) {
       if (faceKey === 'ceiling') {
@@ -233,7 +244,11 @@ export function applyBox3dToFloor(fl, project) {
   fl.bFloorGround = groundArea > 0.01 ? groundB : 0.0;
   fl.uFloorGround = groundArea > 0.01 ? Math.round((groundUA / groundArea) * 1000) / 1000 : 0.2;
 
-  fl.cSpec = Math.round(Math.max(15, Math.min(110, massEstimate)));
+  const autoCSpec = Math.round(Math.max(15, Math.min(220, totalCapWhK / Math.max(1, fl.area))));
+  b3.autoCSpec = autoCSpec;
+  if (!b3.manualCSpec) {
+    fl.cSpec = autoCSpec;
+  }
   fl.inertiaClass = 'custom';
 
   project.openings = project.openings.filter(o => o.floorId !== fl.id).concat(newOpenings);
@@ -296,16 +311,42 @@ export function buildFloorThermalParams(fl, ops) {
  *  - people : chaleur métabolique des occupants (avec facteur de présence effectif tp / plage)
  *  - lighting : éclairage / lampes
  *  - appliances : appareils & équipements
+ *
+ * Supporte deux modes :
+ *  - 'sia2024' : modulation horaire 24 h SIA 2024:2015 conservatrice d'énergie journalière
+ *  - 'constant' (ou hod === null) : palier constant sur la plage [occStart, occEnd]
  */
-export function computeHourlyInternalGainsBreakdown(fl, isOcc) {
+export function computeHourlyInternalGainsBreakdown(fl, isOcc, hod = null, isOccDay = true) {
   const gf = (fl.gainFactorPct ?? 100) / 100;
   const presenceFactor = fl.occPresenceFactor ?? 1.0;
   const standbyFrac = (fl.standbyPct ?? 0) / 100;
 
-  const people = isOcc ? fl.occCount * fl.occWatt * presenceFactor * gf : 0;
+  const peopleBase = fl.occCount * fl.occWatt * presenceFactor * gf;
   const lightBase = fl.lightWm2 * fl.area * gf;
   const equipBase = fl.equipWatt * gf;
 
+  if (fl.internalProfileMode === 'sia2024' && hod !== null) {
+    const occHoursPerDay = Math.max(1, (fl.occEnd ?? 24) - (fl.occStart ?? 0));
+    const mult = getSia2024HourlyMultipliers(
+      fl.siaCategory,
+      fl.spaceType || 'residential',
+      hod,
+      isOccDay,
+      occHoursPerDay,
+      standbyFrac
+    );
+    const people = peopleBase * mult.people;
+    const lighting = lightBase * mult.lighting;
+    const appliances = equipBase * mult.appliances;
+    return {
+      people,
+      lighting,
+      appliances,
+      total: people + lighting + appliances
+    };
+  }
+
+  const people = isOcc ? peopleBase : 0;
   const lighting = isOcc ? lightBase : lightBase * standbyFrac;
   const appliances = isOcc ? equipBase : equipBase * standbyFrac;
 
@@ -322,14 +363,14 @@ export function computeHourlyInternalGainsBreakdown(fl, isOcc) {
  * Intègre le facteur de présence effectif (tp / durée d'occupation) afin de respecter
  * la charge journalière SIA 380/1 lorsque la plage horaire est 0h–24h (logement).
  */
-export function computeHourlyInternalGains(fl, isOcc) {
-  return computeHourlyInternalGainsBreakdown(fl, isOcc).total;
+export function computeHourlyInternalGains(fl, isOcc, hod = null, isOccDay = true) {
+  return computeHourlyInternalGainsBreakdown(fl, isOcc, hod, isOccDay).total;
 }
 
 /**
  * Calcule les apports solaires transmis P_sol [W], les apports hors stores (bruts) et
- * les apports ventilés par orientation. Régulation automatique à 200 W/m² (SIA 380/2 / Minergie)
- * avec garde thermique hivernale (ne baisse pas les stores lorsque θ_air < 21.5 °C et θ_rm,48 < 12 °C).
+ * les apports ventilés par orientation. Intègre la correction d'angle d'incidence Fresnel /
+ * Karlsson-Roos sur le rayonnement direct et diffus (ISO 52016 / bSol Pro).
  */
 export function computeHourlySolarGains(
   ops,
@@ -338,7 +379,8 @@ export function computeHourlySolarGains(
   tRm48,
   isOcc,
   albedo = 0.20,
-  horizonDeg = 0
+  horizonDeg = 0,
+  useFresnel = true
 ) {
   let totalW = 0;
   let unshadedW = 0;
@@ -350,7 +392,7 @@ export function computeHourlySolarGains(
 
   for (const op of ops) {
     const g = ORIENTATIONS[op.orient] || ORIENTATIONS.S;
-    const irr = incidentIrradiance(
+    const irrObj = incidentIrradiance(
       hourWeather.Igh,
       hourWeather.Ibn,
       hourWeather.Idh,
@@ -368,16 +410,31 @@ export function computeHourlySolarGains(
         rightFinDist: op.rightFinDist || 0,
         winWidth: op.width
       }
-    ).total;
+    );
+    const irr = irrObj.total;
+    // Capteur solaire en façade (non masqué par la casquette locale de la fenêtre, conforme SIA 380/2 / IDA ICE / bSol)
+    const irrSensor = irrObj.totalUnshaded ?? irr;
 
     const threshI = op.blindThreshI ?? 200;
-    const warmEnoughForShading = tAirPrev >= 21.5 || tRm48 >= 12.0;
-    const trig = irr >= threshI || (tAirPrev >= (op.blindThreshT ?? 23.0) && irr > 50);
+    const threshT = op.blindThreshT ?? 22.0;
+    const blindRule = op.blindRule || 'irr_and_temp';
+
+    let trig = false;
+    if (blindRule === 'irr_or_temp') {
+      // Mode bSol Pro : baisse si I ≥ seuil (hors chauffage) OU θ_i ≥ seuil (avec soleil > 50 W/m²)
+      trig = (irrSensor >= threshI && (tAirPrev >= 21.0 || tRm48 >= 12.0)) || (tAirPrev >= threshT && irrSensor > 50);
+    } else if (blindRule === 'irr_only') {
+      // Capteur pyranomètre seul (avec garde hivernale θ_i ≥ 21.5 °C ou θ_rm,48 ≥ 12 °C)
+      trig = irrSensor >= threshI && (tAirPrev >= 21.5 || tRm48 >= 12.0);
+    } else {
+      // Standard SIA 380/2 / Lesosai / IDA ICE : baisse si I ≥ seuil ET θ_i ≥ seuil
+      trig = irrSensor >= threshI && tAirPrev >= threshT;
+    }
 
     let closed = false;
     if (op.blindMode === 'always_down') closed = true;
-    else if (op.blindMode === 'auto') closed = warmEnoughForShading && trig;
-    else if (op.blindMode === 'manual_day') closed = isOcc && warmEnoughForShading && trig;
+    else if (op.blindMode === 'auto') closed = trig;
+    else if (op.blindMode === 'manual_day') closed = isOcc && trig;
 
     const gVitEff = op.gVit * op.frameFactor * op.shadingFactor;
     const gEff = closed
@@ -387,17 +444,29 @@ export function computeHourlySolarGains(
       : gVitEff;
 
     const winArea = op.width * op.height * op.qty;
-    const opSol = winArea * gEff * irr;
-    const opSolUnshaded = winArea * gVitEff * irr;
+    let opSol;
+    let opSolUnshaded;
+    if (useFresnel) {
+      const { kDir, kDiff } = glazingIncidenceModifier(irrObj.cosTheta ?? 0, op.uWin ?? 1.0);
+      // Vitrage nu : direct corrigé par Fresnel K_dir(θ_i), diffus/réfléchi corrigé par K_diff
+      const irrEffOpen = irrObj.direct * kDir + irrObj.diffRefl * kDiff;
+      // Store extérieur baissé : le store diffuse partiellement le rayonnement incident avant le vitrage
+      const irrEffClosed = closed ? irrObj.total * kDiff : irrEffOpen;
+      opSol = winArea * gEff * irrEffClosed;
+      opSolUnshaded = winArea * gVitEff * irrEffOpen;
+    } else {
+      opSol = winArea * gEff * irr;
+      opSolUnshaded = winArea * gVitEff * irr;
+    }
 
     totalW += opSol;
     unshadedW += opSolUnshaded;
-    if (irr >= 200) irrAbove200SolW += opSol;
+    if (irrSensor >= 200) irrAbove200SolW += opSol;
     else irrBelow200SolW += opSol;
 
     byOrientW[op.orient] = (byOrientW[op.orient] || 0) + opSol;
     byOrientUnshadedW[op.orient] = (byOrientUnshadedW[op.orient] || 0) + opSolUnshaded;
-    if (irr > (byOrientIrrWm2[op.orient] || 0)) byOrientIrrWm2[op.orient] = irr;
+    if (irrSensor > (byOrientIrrWm2[op.orient] || 0)) byOrientIrrWm2[op.orient] = irrSensor;
   }
 
   return {

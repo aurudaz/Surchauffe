@@ -27,7 +27,7 @@ import {
   computeBuildingStackSpan,
   computeFloorNightFlowM3h
 } from '../methodology/04-natural-ventilation.js';
-import { parseAnyWeatherText } from '../methodology/02-weather-model.js';
+import { fetchLiveWeatherData, parseAnyWeatherText } from '../methodology/02-weather-model.js';
 import { parseHouseFile } from '../parsers/house-importers.js';
 import { HOUSE_LIBRARY, appState, escapeHtml } from '../state/project-store.js';
 import { BuildingViewer3D } from './viewer-3d.js';
@@ -87,13 +87,16 @@ function getFacadeGrossForFloor(fl) {
 
 export function updateSimpleNightLiveBadge(fl, totalWin) {
   const { project } = appState;
-  const span = project.stackCoupling ? computeBuildingStackSpan(project) : fl.height;
-  const { m3s, openArea } = calcSimplePctNightFlowM3s(fl, totalWin, 26, 18, span);
+  const buildingSpan = computeBuildingStackSpan(project);
+  const isMultiStack = Boolean(project.stackCoupling) && buildingSpan > fl.height + 0.5;
+  const span = isMultiStack ? buildingSpan : fl.height;
+  const { m3s, openArea } = calcSimplePctNightFlowM3s(fl, totalWin, 26, 18, span, isMultiStack);
   const m3h = m3s * 3600;
   const spec = m3h / Math.max(1, fl.area);
+  const ach = m3h / Math.max(1, fl.area * fl.height);
   const badge = document.getElementById('simpNightLiveFlow');
   if (!badge) return;
-  badge.textContent = `Ouvrant : ${openArea.toFixed(2)} m² → ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) à ΔT=8K)`;
+  badge.textContent = `Ouvrant : ${openArea.toFixed(2)} m² → ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) • ${ach.toFixed(1)} vol/h à ΔT=8K)`;
   badge.className = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
 }
 
@@ -131,6 +134,16 @@ export function renderSimpleOpeningsForFloor(fl) {
   if (firstOp) {
     document.getElementById('simpBlindMode').value = firstOp.blindMode;
     document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
+    const ruleEl = document.getElementById('simpBlindRule');
+    const tiEl = document.getElementById('simpBlindThreshI');
+    const ttEl = document.getElementById('simpBlindThreshT');
+    if (ruleEl) ruleEl.value = firstOp.blindRule || 'irr_and_temp';
+    if (tiEl) tiEl.value = firstOp.blindThreshI ?? 200;
+    if (ttEl) ttEl.value = firstOp.blindThreshT ?? 22.0;
+    const trigRow = document.getElementById('simpBlindTrigRow');
+    if (trigRow) {
+      trigRow.classList.toggle('hidden', firstOp.blindMode === 'always_up' || firstOp.blindMode === 'always_down');
+    }
   }
   const horEl = document.getElementById('simpHorizon');
   if (horEl) horEl.value = appState.project.horizonDeg ?? 0;
@@ -141,7 +154,7 @@ export function renderSimpleOpeningsForFloor(fl) {
 
   document.getElementById('simpOpenBasis').value = fl.nightSimpleBasis || 'floor_pct';
   document.getElementById('simpOpenPct').value = fl.nightSimplePct ?? 5.0;
-  document.getElementById('simpOpenEff').value = String(fl.nightSimpleEff ?? 1.0);
+  document.getElementById('simpOpenEff').value = Number(fl.nightSimpleEff ?? 0.6).toFixed(2);
   document.getElementById('simpOpenCross').checked = Boolean(fl.nightSimpleCross);
 
   updateSimpleNightLiveBadge(fl, totalWin);
@@ -174,6 +187,9 @@ export function applySimpleGlazingFromInputs() {
       : SHADING_PRESETS[shadingChoice] || SHADING_PRESETS.triple_lamelles;
 
   const blindMode = document.getElementById('simpBlindMode').value;
+  const blindRule = document.getElementById('simpBlindRule')?.value || existingOps[0]?.blindRule || 'irr_and_temp';
+  const blindThreshI = Math.max(50, Math.min(800, parseFloat(document.getElementById('simpBlindThreshI')?.value) || 200));
+  const blindThreshT = Math.max(16, Math.min(30, parseFloat(document.getElementById('simpBlindThreshT')?.value) || 22.0));
   const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
   const horEl = document.getElementById('simpHorizon');
   if (horEl) {
@@ -208,10 +224,11 @@ export function applySimpleGlazingFromInputs() {
       gtotMode: sp.gtotMode,
       overhangDepth: orient === 'R' ? 0 : overhang,
       frameFactor: 0.78,
-      shadingFactor: 0.95,
+      shadingFactor: 1.0,
       blindMode,
-      blindThreshI: 200,
-      blindThreshT: 23.0,
+      blindThreshI,
+      blindThreshT,
+      blindRule,
       windSafe: true,
       operable: true,
       openWidth: Math.min(w, 1.2),
@@ -274,11 +291,18 @@ export function renderOpenings() {
       <td><input type="number" step="0.1" min="0" value="${op.overhangDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="overhangDepth" style="width:52px;" /></td>
       <td><input type="number" step="0.1" min="0" value="${op.leftFinDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="sideFinDepth" style="width:52px;" title="Profondeur écrans latéraux G/D [m]" /></td>
       <td><input type="number" step="5" min="0" max="60" value="${op.horizonDeg ?? project.horizonDeg ?? 0}" data-op="${escapeHtml(op.id)}" data-k="horizonDeg" style="width:48px;" title="Angle d'horizon [°]" /></td>
-      <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:82px;">
+      <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:78px;">
         <option value="auto" ${op.blindMode === 'auto' ? 'selected' : ''}>Auto</option>
         <option value="manual_day" ${op.blindMode === 'manual_day' ? 'selected' : ''}>Manuel</option>
         <option value="always_down" ${op.blindMode === 'always_down' ? 'selected' : ''}>Fermé</option>
         <option value="always_up" ${op.blindMode === 'always_up' ? 'selected' : ''}>Ouvert</option>
+      </select></td>
+      <td><input type="number" step="25" min="50" max="600" value="${op.blindThreshI ?? 200}" data-op="${escapeHtml(op.id)}" data-k="blindThreshI" style="width:56px;" title="Seuil ensoleillement [W/m²]" /></td>
+      <td><input type="number" step="0.5" min="16" max="30" value="${op.blindThreshT ?? 22.0}" data-op="${escapeHtml(op.id)}" data-k="blindThreshT" style="width:52px;" title="Seuil T° intérieure [°C]" /></td>
+      <td><select data-op="${escapeHtml(op.id)}" data-k="blindRule" style="width:76px;" title="Condition d'abaissement des stores">
+        <option value="irr_and_temp" ${(op.blindRule || 'irr_and_temp') === 'irr_and_temp' ? 'selected' : ''}>I ET T</option>
+        <option value="irr_or_temp" ${op.blindRule === 'irr_or_temp' ? 'selected' : ''}>I OU T</option>
+        <option value="irr_only" ${op.blindRule === 'irr_only' ? 'selected' : ''}>I seul</option>
       </select></td>
       <td style="text-align:center;"><input type="checkbox" ${op.operable ? 'checked' : ''} data-op="${escapeHtml(op.id)}" data-k="operable" /></td>
       <td><button class="btn btn-danger" data-del-op="${escapeHtml(op.id)}">✕</button></td>
@@ -335,7 +359,7 @@ export function renderOpenings() {
           loadSiaFloorInputs();
         }
         renderOpenings();
-      } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'openType'].includes(k)) {
+      } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'blindRule', 'openType'].includes(k)) {
         op[k] = e.target.value;
         if (k === 'openType') {
           const flOp = project.floors.find(f => f.id === op.floorId);
@@ -398,6 +422,11 @@ function renderBox3dBuilder(wrap) {
     ['floor', 'Plancher (X–Y)']
   ];
 
+  const capMJ = ((activeFl.cSpec * activeFl.area * 3600) / 1e6).toFixed(1);
+  const b3BlindRule = b3.blindRule || flOps[0]?.blindRule || 'irr_and_temp';
+  const b3BlindThreshI = b3.blindThreshI ?? flOps[0]?.blindThreshI ?? 200;
+  const b3BlindThreshT = b3.blindThreshT ?? flOps[0]?.blindThreshT ?? 22.0;
+
   const card = document.createElement('div');
   card.className = 'well';
   card.innerHTML = `
@@ -407,7 +436,7 @@ function renderBox3dBuilder(wrap) {
         <select id="b3FloorSel" style="width:220px;font-weight:600;">
           ${project.floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === activeFl.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
         </select>
-        <span class="pill neutral">Surface : ${activeFl.area.toFixed(1)} m² • Inertie estimée : ${activeFl.cSpec} Wh/m²K</span>
+        <span class="pill neutral" data-tip="Surface nette de plancher et capacité thermique totale effective (ISO 13786) de la pièce.">Surface : ${activeFl.area.toFixed(1)} m² • Inertie : ${activeFl.cSpec} Wh/m²K (${capMJ} MJ/K)</span>
       </div>
       ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(activeFl.id)}">Supprimer</button>` : ''}
     </div>
@@ -417,20 +446,60 @@ function renderBox3dBuilder(wrap) {
         <div class="wall-panel">
           <div class="wall-panel-head"><strong>Dimensions &amp; Orientation du volume</strong></div>
           <div class="g3">
-            <div class="field"><label>Largeur X [m]</label><input type="number" id="b3DimX" step="0.2" min="1" value="${b3.dimX}" /></div>
-            <div class="field"><label>Profondeur Y [m]</label><input type="number" id="b3DimY" step="0.2" min="1" value="${b3.dimY}" /></div>
-            <div class="field"><label>Hauteur Z [m]</label><input type="number" id="b3DimZ" step="0.05" min="1.8" value="${activeFl.height}" /></div>
+            <div class="field" data-tip="Largeur du local le long du Mur Devant [m]."><label>Largeur X [m]</label><input type="number" id="b3DimX" step="0.2" min="1" value="${b3.dimX}" /></div>
+            <div class="field" data-tip="Profondeur du local perpendiculairement au Mur Devant [m]."><label>Profondeur Y [m]</label><input type="number" id="b3DimY" step="0.2" min="1" value="${b3.dimY}" /></div>
+            <div class="field" data-tip="Hauteur libre sous plafond [m]."><label>Hauteur Z [m]</label><input type="number" id="b3DimZ" step="0.05" min="1.8" value="${activeFl.height}" /></div>
           </div>
           <div class="g2" style="margin-top:8px;">
-            <div class="field">
+            <div class="field" data-tip="Orientation cardinale de la façade Devant (les 3 autres murs tournent automatiquement à 90°).">
               <label>Orient. Mur Devant</label>
               <select id="b3FrontOrient">
                 ${Object.keys(ORIENTATIONS).filter(o => o !== 'R').map(o => `<option value="${o}" ${o === b3.frontOrient ? 'selected' : ''}>${o} (${ORIENTATIONS[o].label})</option>`).join('')}
               </select>
             </div>
-            <div class="field">
+            <div class="field" data-tip="Réflectance solaire du sol extérieur (0.20 standard, 0.40 gravier clair).">
               <label>Albédo sol [-]</label>
               <input type="number" id="b3Albedo" step="0.05" min="0.05" max="0.80" value="${project.albedo ?? 0.20}" />
+            </div>
+          </div>
+        </div>
+
+        <div class="wall-panel">
+          <div class="wall-panel-head">
+            <strong>Inertie thermique (ISO 13786)</strong>
+            <span class="pill neutral" style="font-size:10.5px;">${capMJ} MJ/K</span>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <label data-tip="Calcule automatiquement la capacité thermique C_R/A_SNP à partir de la surface et de la composition des 6 parois (béton nu, faux-plafond acoustique, parquet, cloison plâtre, bois)." style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+              <input type="checkbox" id="b3AutoCSpec" ${!b3.manualCSpec ? 'checked' : ''} />
+              Auto depuis les 6 parois
+            </label>
+            <div style="display:flex;align-items:center;gap:6px;" data-tip="Capacité thermique spécifique effective rapportée à la surface de plancher [Wh/(m²·K)]. Décochez « Auto » pour imposer une valeur manuelle (ex. 176 Wh/m²K pour le TB Léa / bSol).">
+              <label style="font-size:11.5px;color:var(--text-muted);">C_R/A_SNP :</label>
+              <input type="number" id="b3ManualCSpec" step="5" min="10" max="250" value="${activeFl.cSpec}" ${!b3.manualCSpec ? 'disabled' : ''} style="width:74px;" />
+              <span style="font-size:11px;color:var(--text-muted);">Wh/m²K</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="wall-panel">
+          <div class="wall-panel-head"><strong>Régulation des stores (seuils d'abaissement)</strong></div>
+          <div class="field" data-tip="Condition logique d'abaissement des stores automatiques sur les fenêtres de ce local.">
+            <label>Condition d'abaissement</label>
+            <select id="b3BlindRule">
+              <option value="irr_and_temp" ${b3BlindRule === 'irr_and_temp' ? 'selected' : ''}>Soleil ≥ seuil ET T° int. ≥ seuil (SIA / Lesosai)</option>
+              <option value="irr_or_temp" ${b3BlindRule === 'irr_or_temp' ? 'selected' : ''}>Soleil ≥ seuil OU T° int. ≥ seuil (bSol Pro)</option>
+              <option value="irr_only" ${b3BlindRule === 'irr_only' ? 'selected' : ''}>Ensoleillement seul (pyranomètre)</option>
+            </select>
+          </div>
+          <div class="g2" style="margin-top:6px;">
+            <div class="field" data-tip="Rayonnement solaire incident sur la façade [W/m²] déclenchant la descente des stores (SIA 380/2 : 200 W/m²).">
+              <label>Seuil soleil [W/m²]</label>
+              <input type="number" id="b3BlindThreshI" step="25" min="50" max="600" value="${b3BlindThreshI}" />
+            </div>
+            <div class="field" data-tip="Température intérieure [°C] au-delà de laquelle les stores s'abaissent (bSol : 22 °C).">
+              <label>Seuil T° int. [°C]</label>
+              <input type="number" id="b3BlindThreshT" step="0.5" min="16" max="30" value="${b3BlindThreshT}" />
             </div>
           </div>
         </div>
@@ -574,6 +643,27 @@ function renderBox3dBuilder(wrap) {
     const advAlb = document.getElementById('projAlbedo');
     if (advAlb) advAlb.value = project.albedo;
   });
+  card.querySelector('#b3AutoCSpec')?.addEventListener('change', e => {
+    b3.manualCSpec = !e.target.checked;
+    commitBox3d(true);
+  });
+  card.querySelector('#b3ManualCSpec')?.addEventListener('change', e => {
+    b3.manualCSpec = true;
+    activeFl.cSpec = Math.max(10, Math.min(250, Number(e.target.value) || 80));
+    commitBox3d(true);
+  });
+  card.querySelector('#b3BlindRule')?.addEventListener('change', e => {
+    b3.blindRule = e.target.value;
+    commitBox3d(false);
+  });
+  card.querySelector('#b3BlindThreshI')?.addEventListener('change', e => {
+    b3.blindThreshI = Math.max(50, Math.min(800, Number(e.target.value) || 200));
+    commitBox3d(false);
+  });
+  card.querySelector('#b3BlindThreshT')?.addEventListener('change', e => {
+    b3.blindThreshT = Math.max(16, Math.min(30, Number(e.target.value) || 22.0));
+    commitBox3d(false);
+  });
 
   card.querySelectorAll('[data-b3wall]').forEach(el => {
     el.addEventListener('change', e => {
@@ -683,6 +773,8 @@ export function renderFloors() {
               <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (45 Wh/m²K)</option>
               <option value="75" ${fl.inertiaClass === '75' ? 'selected' : ''}>Forte / massive (75 Wh/m²K)</option>
               <option value="100" ${fl.inertiaClass === '100' ? 'selected' : ''}>Très forte (100 Wh/m²K)</option>
+              <option value="140" ${fl.inertiaClass === '140' ? 'selected' : ''}>Béton nu apparent (140 Wh/m²K)</option>
+              ${fl.inertiaClass === 'custom' ? `<option value="custom" selected>Personnalisée (${fl.cSpec} Wh/m²K)</option>` : ''}
             </select>
           </div>
         </div>
@@ -727,6 +819,7 @@ export function renderFloors() {
               <option value="45" ${fl.inertiaClass === '45' ? 'selected' : ''}>Moyenne (45)</option>
               <option value="75" ${fl.inertiaClass === '75' ? 'selected' : ''}>Forte (75)</option>
               <option value="100" ${fl.inertiaClass === '100' ? 'selected' : ''}>Très forte (100)</option>
+              <option value="140" ${fl.inertiaClass === '140' ? 'selected' : ''}>Béton nu (140)</option>
               <option value="custom" ${fl.inertiaClass === 'custom' ? 'selected' : ''}>Personnalisée</option>
             </select>
           </div>
@@ -820,12 +913,19 @@ export function updateNightVentUI(targetFl = null) {
   const span = project.stackCoupling ? computeBuildingStackSpan(project) : fl.height;
   const m3h = computeFloorNightFlowM3h(fp, 26, 18, span, project.stackCoupling);
   const spec = m3h / Math.max(1, fl.area);
+  const ach = m3h / Math.max(1, fl.area * fl.height);
   const badge = document.getElementById('siaNightLiveBadge');
   if (badge) {
     badge.textContent = isNone
       ? 'Ventilation nuit désactivée (0.0 m³/(h·m²))'
-      : `Débit nuit (ΔT=8 K) : ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²))`;
+      : `Débit nuit (ΔT=8 K) : ${m3h.toFixed(0)} m³/h (${spec.toFixed(1)} m³/(h·m²) • ${ach.toFixed(1)} vol/h)`;
     badge.className = `pill ${spec >= 10 ? 'ok' : spec > 0 ? 'warn' : 'ko'}`;
+  }
+
+  const fcEl = document.getElementById('inNightFreeCool24h');
+  if (fcEl) {
+    const is24 = (fl.nightStart === 0 && fl.nightEnd === 24) || fl.nightStart === fl.nightEnd;
+    fcEl.checked = is24;
   }
 }
 
@@ -835,6 +935,8 @@ export function loadSiaFloorInputs() {
   if (!fl) return;
 
   document.getElementById('siaCategorySelect').value = fl.siaCategory || 'custom';
+  const profModeEl = document.getElementById('inInternalProfileMode');
+  if (profModeEl) profModeEl.value = fl.internalProfileMode || 'sia2024';
   document.getElementById('siaGainFactor').value = fl.gainFactorPct ?? 100;
   document.getElementById('siaGainFactorLbl').textContent = `${fl.gainFactorPct ?? 100} %`;
 
@@ -1005,6 +1107,8 @@ export function syncAllUI(onResultsRefresh) {
   document.getElementById('projectType').value = project.projectType;
   document.getElementById('siaCurveMode').value = project.siaCurveMode;
   document.getElementById('stackCoupling').checked = project.stackCoupling;
+  const fresnelEl = document.getElementById('projUseFresnel');
+  if (fresnelEl) fresnelEl.checked = project.useFresnelIncidence !== false;
   const foehnEl = document.getElementById('projFoehn');
   if (foehnEl) foehnEl.checked = Boolean(project.foehnExposed);
   const albEl = document.getElementById('projAlbedo');
@@ -1032,7 +1136,7 @@ export function renderLibrary(onLoadProject) {
       appState.project = item.build();
       appState.activeFloorId = appState.project.floors[0].id;
       appState.customWeather = null;
-      if (item.id === 'local_bureau_box3d') {
+      if (item.id === 'local_bureau_box3d' || item.id === 'tb_lea_bsol') {
         appState.uiModes.floors = 'box3d';
       } else if (appState.uiModes.floors === 'box3d') {
         appState.uiModes.floors = 'simple';
@@ -1098,6 +1202,9 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     appState.project.stackCoupling = e.target.checked;
     renderOpenings();
   });
+  document.getElementById('projUseFresnel')?.addEventListener('change', e => {
+    appState.project.useFresnelIncidence = e.target.checked;
+  });
 
   document.getElementById('projAlbedo')?.addEventListener('change', e => {
     appState.project.albedo = Math.max(0.05, Math.min(0.8, Number(e.target.value) || 0.2));
@@ -1134,7 +1241,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     });
   });
 
-  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindMode', 'simpOverhang', 'simpHorizon'].forEach(id => {
+  ['simpPctS', 'simpPctO', 'simpPctE', 'simpPctN', 'simpPctR', 'simpShading', 'simpBlindMode', 'simpBlindRule', 'simpBlindThreshI', 'simpBlindThreshT', 'simpOverhang', 'simpHorizon'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', applySimpleGlazingFromInputs);
   });
 
@@ -1171,10 +1278,11 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
       gtotMode: 'product',
       overhangDepth: 0,
       frameFactor: 0.78,
-      shadingFactor: 0.95,
+      shadingFactor: 1.0,
       blindMode: 'auto',
       blindThreshI: 200,
-      blindThreshT: 23.0,
+      blindThreshT: 22.0,
+      blindRule: 'irr_and_temp',
       windSafe: true,
       operable: true,
       openWidth: 1.0,
@@ -1204,6 +1312,11 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   document.getElementById('siaCategorySelect').addEventListener('change', e =>
     applySiaCatToCurrentFloor(e.target.value)
   );
+  document.getElementById('inInternalProfileMode')?.addEventListener('change', e => {
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    if (!fl) return;
+    fl.internalProfileMode = e.target.value;
+  });
   document.getElementById('siaGainFactor').addEventListener('input', e => {
     const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
     if (!fl) return;
@@ -1254,6 +1367,21 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
   bindSia('inNightEnd', 'nightEnd');
   bindSia('inNightTargetTi', 'nightTargetTi');
   bindSia('inNightMinDT', 'nightMinDT');
+
+  document.getElementById('inNightFreeCool24h')?.addEventListener('change', e => {
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    if (!fl) return;
+    if (e.target.checked) {
+      fl.nightStart = 0;
+      fl.nightEnd = 24;
+    } else {
+      fl.nightStart = 21;
+      fl.nightEnd = 7;
+    }
+    document.getElementById('inNightStart').value = fl.nightStart;
+    document.getElementById('inNightEnd').value = fl.nightEnd;
+    updateNightVentUI(fl);
+  });
 
   document.getElementById('inNightSimplePct')?.addEventListener('change', e => {
     const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
@@ -1343,12 +1471,56 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh }) {
     const val = document.getElementById('pasteArea').value.trim();
     if (val) loadWeatherText(val, 'Données collées');
   });
-  document.getElementById('btnResetWeather').addEventListener('click', () => {
+  const resetToSyntheticWeather = () => {
     appState.customWeather = null;
-    document.getElementById('weatherFileInput').value = '';
+    const wIn = document.getElementById('weatherFileInput');
+    if (wIn) wIn.value = '';
     syncPvgisUI();
     updateInspector();
-  });
+  };
+  document.getElementById('btnResetWeather').addEventListener('click', resetToSyntheticWeather);
+  document.getElementById('btnResetWeatherQuick')?.addEventListener('click', resetToSyntheticWeather);
+
+  const runLiveWeatherFetch = async (provider, btnId, label) => {
+    const badge = document.getElementById('weatherStatusBadge');
+    const btn = document.getElementById(btnId);
+    const oldTxt = btn ? btn.textContent : '';
+    try {
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = `Chargement ${label}…`;
+      }
+      badge.textContent = `Téléchargement ${label} en cours…`;
+      badge.className = 'pill warn';
+      const pvType = document.getElementById('pvType')?.value || 'tmy';
+      const weatherObj = await fetchLiveWeatherData(provider, appState.project.climate, {
+        year: pvType
+      });
+      appState.customWeather = weatherObj;
+      badge.textContent = `Climat actif : ${weatherObj.sourceLabel}`;
+      badge.className = 'pill ok';
+      updateInspector();
+      if (onRunSimulation) onRunSimulation();
+    } catch (err) {
+      badge.textContent = `Erreur ${label} : ${err.message}`;
+      badge.className = 'pill ko';
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = oldTxt;
+      }
+    }
+  };
+
+  document.getElementById('btnFetchMeteoSwiss')?.addEventListener('click', () =>
+    runLiveWeatherFetch('meteoswiss', 'btnFetchMeteoSwiss', 'MétéoSuisse OGD')
+  );
+  document.getElementById('btnFetchOpenMeteo')?.addEventListener('click', () =>
+    runLiveWeatherFetch('openmeteo', 'btnFetchOpenMeteo', 'Open-Meteo ERA5')
+  );
+  document.getElementById('btnFetchPvgis')?.addEventListener('click', () =>
+    runLiveWeatherFetch('pvgis', 'btnFetchPvgis', 'PVGIS 5.3')
+  );
 
   const handleHouseFile = file => {
     const r = new FileReader();

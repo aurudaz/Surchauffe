@@ -85,7 +85,7 @@ body {
 .nav-tab.active {
   background: var(--primary-bg);
   color: var(--primary-text);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.22);
+  box-shadow: 0 2px 6px rgba(15, 23, 36, 0.22);
 }
 
 .header-actions {
@@ -134,51 +134,62 @@ body {
   flex-wrap: wrap;
 }
 
-.variant-tab {
+.variant-tab-wrap {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--border);
   background: var(--surface);
+  border-radius: 999px;
+  padding: 2px 4px;
+  gap: 2px;
+  transition: border-color 0.12s, background 0.12s;
+}
+
+.variant-tab-wrap:hover {
+  border-color: var(--primary);
+}
+
+.variant-tab-wrap.active {
+  background: var(--primary-bg);
+  border-color: transparent;
+}
+
+.variant-tab-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 6px;
+  cursor: pointer;
+}
+
+.variant-tab {
+  border: none;
+  background: transparent;
   color: var(--text-muted);
   border-radius: 999px;
-  padding: 4px 12px;
+  padding: 3px 10px;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 240px;
-  transition: border-color 0.12s, background 0.12s, color 0.12s;
+  max-width: 230px;
+  transition: color 0.12s;
 }
 
-.variant-tab:hover {
-  border-color: var(--primary);
+.variant-tab-wrap:hover .variant-tab {
   color: var(--text);
 }
 
-.variant-tab.active {
-  background: var(--primary-bg);
+.variant-tab-wrap.active .variant-tab {
   color: var(--primary-text);
-  border-color: transparent;
 }
 
 .variant-tab-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.variant-mode-dot {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--surface-3);
-  color: var(--text-muted);
-}
-
-.variant-tab.active .variant-mode-dot {
-  background: rgba(255, 255, 255, 0.22);
-  color: var(--primary-text);
 }
 
 .variant-bar-actions {
@@ -389,11 +400,137 @@ body {
   .g2, .g3, .g4, .g5 { grid-template-columns: minmax(0, 1fr); }
 }
 
+/* Blocs exclusifs au rapport PDF ingénieur (masqués à l'écran, visibles à l'impression) */
+.print-only-block { display: none; }
+
 @media print {
-  body { background: #fff !important; color: #000 !important; overflow: visible !important; height: auto !important; }
-  .studio-header, .variant-bar, .left-rail, .right-inspector, #view-config, .btn, select, input, .seg-pill, .adv-results-header, .step-footer { display: none !important; }
-  .results-pane { overflow: visible !important; padding: 0 !important; }
-  .card, .kpi-box, .comfort-card, .verdict-banner, .scenario-row, .adv-drawer { border: 1px solid #ccc !important; background: #fff !important; break-inside: avoid; }
+  @page { size: A4 portrait; margin: 14mm 13mm 15mm 13mm; }
+  :root, :root[data-theme="dark"], :root[data-theme="light"] {
+    --bg: #fafbfd;
+    --surface: #fafbfd;
+    --surface-2: #f1f4f8;
+    --surface-3: #e5eaf0;
+    --border: #c5ced9;
+    --text: #1b2430;
+    --text-muted: #4b596b;
+    --primary: #1a5bc4;
+    --primary-bg: #1e62cf;
+    --primary-text: #f5f7fa;
+    --ok: #136f38;
+    --ok-bg: #eaf5ee;
+    --warn: #8a4b00;
+    --warn-bg: #fdf4e3;
+    --ko: #b42323;
+    --ko-bg: #fcecec;
+  }
+  body {
+    background: #fafbfd !important;
+    color: #1b2430 !important;
+    overflow: visible !important;
+    height: auto !important;
+    font-size: 10.5pt !important;
+    line-height: 1.4 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .studio-header, .variant-bar, .left-rail, .right-inspector, #view-config,
+  .results-toolbar-actions, .btn, select, input[type="range"], .seg-pill,
+  .adv-results-header, .step-footer, .modal-backdrop, .chart-tooltip,
+  .drawer-toggle-btn {
+    display: none !important;
+  }
+  .print-only-block { display: block !important; }
+  .results-pane { overflow: visible !important; padding: 0 !important; display: block !important; }
+  .results-inner { max-width: 100% !important; gap: 12px !important; }
+  .results-screen-header { display: none !important; }
+
+  .print-eng-header {
+    border: 1.5px solid #1e3a5f;
+    border-top: 5px solid #1e3a5f;
+    border-radius: 4px;
+    background: #f4f7fb !important;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    break-inside: avoid;
+  }
+  .print-eng-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid #c5ced9;
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+  .print-eng-brand {
+    font-size: 9pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #1e3a5f;
+  }
+  .print-eng-title {
+    font-size: 14pt;
+    font-weight: 700;
+    color: #1b2430;
+    margin: 2px 0;
+  }
+  .print-eng-meta {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px 14px;
+    font-size: 8.8pt;
+  }
+  .print-eng-meta span { color: #4b596b; }
+  .print-eng-meta strong { color: #1b2430; }
+
+  .print-eng-comments {
+    border-left: 3.5px solid #1e3a5f;
+    background: #f4f7fb !important;
+    border-top: 1px solid #c5ced9;
+    border-right: 1px solid #c5ced9;
+    border-bottom: 1px solid #c5ced9;
+    padding: 9px 12px;
+    border-radius: 3px;
+    font-size: 9.5pt;
+    white-space: pre-wrap;
+    break-inside: avoid;
+  }
+
+  .card, .kpi-box, .comfort-card, .verdict-banner, .scenario-row, .adv-drawer, .well {
+    border: 1px solid #c5ced9 !important;
+    border-radius: 4px !important;
+    background: #fafbfd !important;
+    box-shadow: none !important;
+    padding: 11px 13px !important;
+    break-inside: avoid;
+  }
+  .card-title {
+    font-size: 11pt !important;
+    border-bottom: 1px solid #d4dce6;
+    padding-bottom: 5px;
+    margin-bottom: 8px !important;
+    color: #1e3a5f !important;
+  }
+  .kpi-row { gap: 8px !important; }
+  .kpi-val { font-size: 14pt !important; }
+  table { font-size: 8.8pt !important; }
+  th { background: #e9eef5 !important; color: #1b2430 !important; border-bottom: 1.5px solid #9aa8ba !important; }
+  td { border-bottom: 1px solid #d8e0ea !important; }
+  .pill { border: 1px solid #c5ced9 !important; font-size: 8pt !important; padding: 1px 6px !important; }
+  .chart-box { height: 210px !important; }
   .adv-drawer:not([open]) { display: none !important; }
+  .adv-drawer[open] > summary { padding: 6px 8px !important; background: #e9eef5 !important; border-bottom: 1px solid #c5ced9; }
+  .drawer-body { padding: 8px !important; gap: 10px !important; }
+  .sub-tabs { display: none !important; }
+
+  /* Options d'inclusion choisies dans la fenêtre de configuration PDF */
+  body.print-hide-summary #resultsSimpleView { display: none !important; }
+  body.print-hide-inputs #printReportInputs { display: none !important; }
+  body.print-hide-scenarios #simpleScenariosCard { display: none !important; }
+  body.print-hide-variants #resTabComparePane { display: none !important; }
+  body.print-force-variants #resTabComparePane { display: flex !important; }
+  body.print-force-report #resTabReportPane { display: flex !important; }
+  body.print-hide-advanced #advDrawersContainer { display: none !important; }
+  body.print-hide-cooling #activeCoolingEndWrap { display: none !important; }
   .hidden { display: none !important; }
 }

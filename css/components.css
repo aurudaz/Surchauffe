@@ -127,7 +127,7 @@ input[type="range"] { padding: 0; border: none; background: transparent; accent-
 }
 
 .nav-tab.active .pill {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(226, 232, 240, 0.22);
   color: var(--primary-text);
   border-color: transparent;
 }
@@ -198,23 +198,61 @@ input[type="range"] { padding: 0; border: none; background: transparent; accent-
   flex-shrink: 0;
 }
 
-.drawer-chevron {
+.drawer-toggle-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  gap: 5px;
+  padding: 5px 12px;
   border-radius: 999px;
-  background: var(--surface-2);
-  color: var(--text-muted);
+  background: var(--surface-3);
+  border: 1.5px solid var(--primary);
+  color: var(--primary);
   font-size: 12px;
-  transition: transform 0.18s ease, background 0.15s, color 0.15s;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, transform 0.15s;
 }
 
-details[open] > summary .drawer-chevron {
-  transform: rotate(90deg);
-  background: rgba(168, 199, 250, 0.16);
-  color: var(--primary);
+.drawer-toggle-btn::before {
+  content: "+";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.drawer-toggle-btn::after {
+  content: "Afficher";
+}
+
+.collapsible-summary:hover .drawer-toggle-btn,
+.adv-drawer-summary:hover .drawer-toggle-btn {
+  background: var(--primary-bg);
+  color: var(--primary-text);
+}
+
+details[open] > summary .drawer-toggle-btn {
+  background: var(--primary-bg);
+  color: var(--primary-text);
+  border-color: transparent;
+}
+
+details[open] > summary .drawer-toggle-btn::before {
+  content: "−";
+  background: rgba(226, 232, 240, 0.22);
+  color: var(--primary-text);
+}
+
+details[open] > summary .drawer-toggle-btn::after {
+  content: "Masquer";
 }
 
 .drawer-body {
@@ -229,11 +267,14 @@ details[open] > summary .drawer-chevron {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 16px;
   flex-wrap: wrap;
-  padding-top: 12px;
-  margin-top: 6px;
-  border-top: 1px dashed var(--border);
+  padding: 18px 22px;
+  margin-top: 16px;
+  border-radius: 14px;
+  background: var(--surface-2);
+  border: 1.5px solid var(--primary);
+  border-left: 5px solid var(--primary);
 }
 
 .adv-drawers-stack {
@@ -366,7 +407,7 @@ td input, td select { padding: 4px 6px; font-size: 11.5px; }
   font-size: 12px;
   line-height: 1.4;
   color: var(--text);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.42);
+  box-shadow: 0 6px 18px rgba(15, 23, 36, 0.38);
   z-index: 250;
   display: none;
   max-width: 320px;
@@ -902,4 +943,135 @@ button[data-tip], select[data-tip], input[data-tip], .seg-btn[data-tip], .rail-i
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+
+/* Menus déroulants (Fichier .json & Actions variante) */
+.dropdown-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 230px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 10px 28px rgba(15, 23, 36, 0.34);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.dropdown-item {
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+.dropdown-item:hover {
+  background: var(--surface-2);
+}
+
+.dropdown-item.danger {
+  color: var(--ko);
+}
+
+.dropdown-item.danger:hover {
+  background: var(--ko-bg);
+}
+
+.dropdown-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 6px;
+}
+
+/* Section désactivée / lecture seule (ex. station synthétique quand météo réelle ou manuelle active) */
+.section-readonly {
+  opacity: 0.56;
+  pointer-events: none;
+  filter: saturate(0.6);
+}
+
+/* Modales thématiques (Confirmation & Configuration Rapport PDF) */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 36, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 300;
+}
+
+.modal-dialog {
+  width: 100%;
+  max-width: 560px;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 18px 42px rgba(15, 23, 36, 0.45);
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-dialog.modal-sm {
+  max-width: 420px;
+}
+
+.modal-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.modal-head h3 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+
+.modal-body {
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.modal-foot {
+  padding: 13px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.theme-icon {
+  width: 15px;
+  height: 15px;
+  display: inline-block;
+  flex-shrink: 0;
 }

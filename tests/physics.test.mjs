@@ -11,8 +11,10 @@ import {
 import {
   applyClimateDelta,
   buildOpenMeteoArchiveUrl,
+  generateManualDesignDayWeather,
   generateSyntheticWeather,
-  parseAnyWeatherText
+  parseAnyWeatherText,
+  summarizeWeatherData
 } from '../src/methodology/02-weather-model.js';
 import {
   applyBox3dToFloor,
@@ -38,15 +40,24 @@ import {
   evaluateThermalComfort
 } from '../src/methodology/07-thermal-comfort.js';
 import { runFullSimulation } from '../src/methodology/08-scenario-comparator.js';
-import { getSIA180Limits } from '../src/standards/sia180.js';
-import { getMinergieRecommendedWindClass } from '../src/standards/minergie.js';
+import { getProjectComfortLimits, getSIA180Limits } from '../src/standards/sia180.js';
+import {
+  evaluateMinergieVariante2,
+  getMinergieRecommendedWindClass
+} from '../src/standards/minergie.js';
+import {
+  SWISS_STATIONS,
+  findNearestOfficialSiaStation
+} from '../src/standards/swiss-stations.js';
 import { createDefaultStarterProject, createHouseLibrary } from '../src/state/house-library.js';
 import {
   appState,
+  buildWorkspaceExportObject,
   createNewVariant,
   deleteVariant,
   detectAdvancedDetailsInActiveVariant,
   duplicateActiveVariant,
+  importJsonToWorkspace,
   renameVariant,
   resetWorkspaceStorage,
   setActiveVariantInputMode,
@@ -276,10 +287,16 @@ test('Minergie Variante 2 : horizon, écrans latéraux, UHI, détail gains & sc�
   assert.ok(wf.gains.people.peakW > 0 && wf.gains.lighting.peakW > 0 && wf.gains.appliances.peakW > 0);
   assert.ok(wf.gains.solarBlockedByBlinds.summerKWh > 0, 'Les stores doivent bloquer une part mesurable du solaire');
   assert.ok(wf.minergie && typeof wf.minergie.constructivePass === 'boolean');
-  assert.ok(wf.minergie.windRec.minClass >= 5);
+  assert.ok(wf.minergie.windRec.minClass >= 3 && wf.minergie.windRec.gustKmh > 25);
 
-  const windFoehn = getMinergieRecommendedWindClass(6, 'residential', true);
-  assert.equal(windFoehn.minClass, 6, 'Exposition au föhn doit recommander la classe vent 6');
+  const windNoFoehn = getMinergieRecommendedWindClass(6, 'residential', false, 'III', 'SIO');
+  const windFoehn = getMinergieRecommendedWindClass(6, 'residential', true, 'III', 'SIO');
+  assert.ok(windNoFoehn.minClass >= 3, 'En habitat, la classe minimale SIA 342 est ≥ 3');
+  assert.equal(
+    windFoehn.minClass,
+    Math.min(6, windNoFoehn.minClass + 1),
+    'Exposition au föhn doit majorer d’une classe de résistance au vent (+1)'
+  );
 
   assert.ok(Array.isArray(res.behavioralScenarios) && res.behavioralScenarios.length >= 6);
   const sCurr = res.behavioralScenarios.find(s => s.id === 'current');
@@ -544,4 +561,239 @@ test('UX Avancée : projet défaut 1 étage/1 fenêtre Sud, sync 3D ↔ Fenêtre
   assert.equal(formatDayOfYearFR(0), '1 jan.');
   assert.equal(formatDayOfYearFR(181), '1 juil.');
   assert.equal(formatDayOfYearFR(222), '11 août');
+});
+
+test('Nouvelles fonctionnalités : journée type manuelle, structure 3D indépendante des fenêtres, VMC & import/export JSON', () => {
+  // 1. Journée type manuelle (test canicule 14 j) + simulation complète sans erreur
+  const hotDay = generateManualDesignDayWeather({ tMin: 22, tMax: 38, peakIgh: 900, dayOfYear: 201 });
+  const hotStats = summarizeWeatherData(hotDay);
+  assert.equal(hotDay.isManualDesignDay, true);
+  assert.equal(hotStats.hoursCount, 336);
+  assert.ok(Math.abs(hotStats.minTe - 22) < 0.05, `minTe attendu 22, reçu ${hotStats.minTe}`);
+  assert.ok(Math.abs(hotStats.maxTe - 38) < 0.05, `maxTe attendu 38, reçu ${hotStats.maxTe}`);
+  assert.ok(Math.abs(hotStats.peakIgh - 900) < 2, `peakIgh attendu 900, reçu ${hotStats.peakIgh}`);
+
+  const starter = createDefaultStarterProject();
+  starter.openings[0].blindMode = 'always_up';
+  starter.floors[0].nightVentMode = 'none';
+  const resHotDay = runFullSimulation(starter, hotDay);
+  assert.equal(resHotDay.isManualDesignDay, true);
+  assert.ok(resHotDay.worstFloor.overSIA > 20, `Doit surchauffer sous canicule 22..38 °C, reçu ${resHotDay.worstFloor.overSIA} h`);
+
+  const coolDay = generateManualDesignDayWeather({ tMin: 12, tMax: 21, peakIgh: 400, dayOfYear: 201 });
+  const resCoolDay = runFullSimulation(createDefaultStarterProject(), coolDay);
+  assert.equal(resCoolDay.worstFloor.overSIA, 0, 'Aucune surchauffe attendue sous journée fraîche 12..21 °C');
+
+  // 2. Structure 3D pure (preserveOpenings = true) : ne supprime jamais les fenêtres et pivote leur orientation
+  const lib = createHouseLibrary();
+  const boxProj = lib.find(x => x.id === 'tb_lea_bsol').build();
+  const fl = boxProj.floors[0];
+  boxProj.openings.push({
+    ...boxProj.openings[0],
+    id: 'op_extra_right',
+    box3dFace: 'right',
+    orient: 'O',
+    width: 1.5,
+    height: 1.5,
+    qty: 1
+  });
+  const wallAreaBefore = fl.wallExtArea;
+  fl.box3d.frontOrient = 'O'; // Rotation 90° : front devient O, right devient N
+  applyBox3dToFloor(fl, boxProj, { preserveOpenings: true });
+  assert.equal(boxProj.openings.length, 2, 'Les 2 fenêtres doivent être intégralement conservées en mode structure 3D');
+  assert.equal(boxProj.openings[0].orient, 'O', 'La fenêtre Mur Devant doit pivoter vers O');
+  assert.equal(boxProj.openings[1].orient, 'N', 'La fenêtre Mur Droit doit pivoter vers N');
+  assert.ok(fl.wallExtArea <= wallAreaBefore + 0.1);
+
+  // 3. Export / Import JSON (espace multi-variantes complet + projet unique)
+  resetWorkspaceStorage();
+  const v2 = duplicateActiveVariant('Variante 2 — VMC 85%');
+  appState.project.floors[0].hasMechVent = true;
+  appState.project.floors[0].etaWRG = 0.85;
+  const exportedWs = JSON.stringify(buildWorkspaceExportObject());
+
+  resetWorkspaceStorage();
+  assert.equal(appState.variants.length, 1);
+
+  const impWs = importJsonToWorkspace(exportedWs);
+  assert.equal(impWs.kind, 'workspace');
+  assert.equal(impWs.count, 2);
+  assert.equal(appState.variants.length, 2);
+  assert.equal(appState.variants.find(x => x.id === v2.id)?.project.floors[0].etaWRG, 0.85);
+
+  const singleJson = JSON.stringify(createDefaultStarterProject());
+  const impSingle = importJsonToWorkspace(singleJson);
+  assert.equal(impSingle.kind, 'project');
+  assert.equal(appState.project.floors.length, 1);
+
+  resetWorkspaceStorage();
+});
+
+test('Minergie v2023.2 (CALC_1) : benchmark bureau exercice, aération diurne, saison 16 avr.–15 oct., SIA strict, Custom & stores manuels', () => {
+  // 1. Test de référence : bureau exercice 20 m² (Sion 2035, 3.80 m² Sud brut → 3.12 m² verre net, C_R/A_SNP = 46.2, stratégie jour)
+  const fl = {
+    id: 'f1',
+    name: 'Bureau exercice 20 m²',
+    elevationZ: 2.5,
+    area: 20,
+    height: 2.5,
+    depthBehindWin: 5.0,
+    siaCategory: 'III',
+    roomType2024: 'bureau_indiv',
+    spaceType: 'office',
+    cSpec: 125,
+    cSpecMinergie: 46.2,
+    wallExtArea: 6.2,
+    uWallExt: 0.17,
+    roofExtArea: 0,
+    uRoofExt: 0.2,
+    floorGroundArea: 0,
+    bFloorGround: 0,
+    uFloorGround: 0.2,
+    uSlabInter: 1.4,
+    psiTotal: 0.5,
+    occCount: 2,
+    occWatt: 80,
+    occPresenceFactor: 1.0,
+    lightWm2: 2.0,
+    equipWatt: 120,
+    occStart: 8,
+    occEnd: 18,
+    occDays: 5,
+    standbyPct: 10,
+    internalProfileMode: 'sia2024',
+    qHygSpec: 1.0,
+    achInfil: 0.1,
+    hasMechVent: false,
+    etaWRG: 0,
+    dayVentMode: 'none',
+    dayTargetTi: 23.0,
+    dayMinDT: 1.0,
+    nightVentMode: 'none',
+    nightSimpleBasis: 'floor_pct',
+    nightSimplePct: 3.0,
+    nightSimpleEff: 0.6,
+    nightSimpleCross: false,
+    nightVentFixedVal: 0,
+    nightStart: 21,
+    nightEnd: 7,
+    nightTargetTi: 21.0,
+    nightMinDT: 1.5,
+    minergieStrategy: 'day',
+    minergieInternalLoadWhm2d: 160
+  };
+  const op = {
+    id: 'o1',
+    floorId: 'f1',
+    name: 'Fenêtres Sud',
+    orient: 'S',
+    width: 1.9,
+    height: 1.0,
+    qty: 2,
+    uWin: 0.8,
+    gVit: 0.60,
+    gStore: 0.15,
+    gtotMode: 'direct',
+    overhangDepth: 0,
+    frameFactor: 3.12 / 3.80,
+    shadingFactor: 1.0,
+    blindMode: 'auto',
+    blindThreshI: 200,
+    blindThreshT: 22.0,
+    blindRule: 'irr_and_temp',
+    windSafe: true,
+    operable: true,
+    openWidth: 1.0,
+    openHeight: 1.0,
+    openType: 'rect',
+    alphaDeg: 20,
+    cd: 0.6,
+    sillHeight: 0.9
+  };
+  const projClosed = {
+    name: 'Bureau exercice Minergie',
+    projectType: 'minergie',
+    siaCurveMode: 'fig3',
+    stackCoupling: false,
+    foehnExposed: true,
+    terrainCat: 'III',
+    buildingHeightM: 5.0,
+    horizonDeg: 0,
+    albedo: 0.20,
+    climate: { station: 'SIO', scenario: '2035', lat: 46.22, lon: 7.33 },
+    floors: [fl],
+    openings: [op]
+  };
+  const w2035 = generateSyntheticWeather('SIO', '2035', false);
+  const rawClosed = executeEngine(projClosed, w2035.data, false, false);
+  const m = evaluateMinergieVariante2(rawClosed.floorRaw[0], projClosed, rawClosed.floorRaw[0]);
+
+  assert.ok(Math.abs(m.thermalMassWhm2K - 46.2) < 0.05, `C_R/A_SNP attendu 46.2, reçu ${m.thermalMassWhm2K}`);
+  assert.ok(Math.abs(m.glazingIndexZg - 0.156) < 0.002, `Z_g attendu 0.156, reçu ${m.glazingIndexZg.toFixed(4)}`);
+  assert.ok(Math.abs(m.qMaxWhDay - 2600.8) < 1.0, `Q_max attendu 2600.8 Wh/j, reçu ${m.qMaxWhDay.toFixed(1)}`);
+  assert.ok(Math.abs(m.gTotAuthorized - 0.123) < 0.005, `g_tot admis attendu ~0.123, reçu ${m.gTotAuthorized.toFixed(3)}`);
+  assert.ok(Math.abs(m.bilanPct - 117) < 2.0, `Bilan constructif attendu ~117 %, reçu ${m.bilanPct.toFixed(1)} %`);
+  assert.ok(Math.abs(m.gainsLossesRatio - 1.69) < 0.04, `Rapport gains/pertes attendu ~1.69, reçu ${m.gainsLossesRatio.toFixed(2)}`);
+  assert.equal(m.windRec.minClass, 4, `Classe de vent attendue 4, reçu ${m.windRec.minClass}`);
+  assert.ok(Math.abs(m.windRec.gustKmh - 41.5) < 0.3, `Rafale SIA 261 attendue ~41.5 km/h, reçu ${m.windRec.gustKmh}`);
+  assert.equal(m.constructivePass, false, 'Le bureau exercice doit échouer au contrôle constructif (> 100 %)');
+  assert.equal(m.analyticalComfortPass, false, 'Le confort analytique doit être refusé');
+  assert.equal(m.automationRequired, true, 'Charges 160 > 100 Wh/m²j en stratégie jour => automatisation requise');
+  assert.equal(m.coolingRequiredByRule, true, 'Charges 160 > 140 Wh/m²j en stratégie jour => refroidissement requis');
+
+  // 2. Séparation des capacités thermiques Box3D : cSpecMinergie plafonnée à 75 Wh/m²K et inférieure à cSpec 5R1C
+  const lib = createHouseLibrary();
+  const box = lib.find(x => x.id === 'local_bureau_box3d').build();
+  assert.ok(box.floors[0].cSpec > 100, 'cSpec 5R1C doit rester élevé pour béton nu');
+  assert.ok(box.floors[0].cSpecMinergie <= 75, `cSpecMinergie doit être plafonnée à 75 Wh/m²K (reçu ${box.floors[0].cSpecMinergie})`);
+
+  // 3. Aération par les fenêtres en journée (dayVentMode = 'window_occ') : réduit fortement le pic thermique
+  const projDayAir = JSON.parse(JSON.stringify(projClosed));
+  projDayAir.floors[0].dayVentMode = 'window_occ';
+  const rawDayAir = executeEngine(projDayAir, w2035.data, false, false);
+  assert.ok(
+    rawDayAir.floorRaw[0].maxTop < rawClosed.floorRaw[0].maxTop - 2.0,
+    `L’aération fenêtres en journée doit réduire nettement le pic (${rawClosed.floorRaw[0].maxTop.toFixed(1)} -> ${rawDayAir.floorRaw[0].maxTop.toFixed(1)} °C)`
+  );
+
+  // 4. Fenêtre saisonnière Minergie (16 avril – 15 octobre uniquement : d ∈ [105, 287])
+  const hotWinterData = generateManualDesignDayWeather({ tMin: 25, tMax: 35, peakIgh: 600, dayOfYear: 201 }).data.map(
+    (hr, idx) => ({ ...hr, d: 35 + Math.floor(idx / 24) }) // Février (j=35..48, hors 16 avr.–15 oct.)
+  );
+  const rawWinter = executeEngine(projClosed, hotWinterData, false, false);
+  assert.equal(rawWinter.floorRaw[0].overMinergie265, 0, 'Hors période 16 avr.–15 oct., overMinergie265 doit rester à 0');
+  assert.ok(rawWinter.floorRaw[0].over265All > 50, 'La température dépasse bien 26.5 °C mais hors saison Minergie');
+
+  // 5. Mode Strict SIA 2028 : stations officielles Valais (SIO, MVE, GSB ; ZER hors SIA)
+  assert.equal(SWISS_STATIONS.SIO.officialSIA, true);
+  assert.equal(SWISS_STATIONS.MVE.officialSIA, true);
+  assert.equal(SWISS_STATIONS.GSB.officialSIA, true);
+  assert.equal(SWISS_STATIONS.ZER.officialSIA, false);
+  assert.equal(findNearestOfficialSiaStation(46.02, 7.75, 1620).stationKey, 'MVE', 'Zermatt (1620 m) → Montana (MVE)');
+  assert.equal(findNearestOfficialSiaStation(46.103, 7.073, 471).stationKey, 'SIO', 'Martigny (471 m) → Sion (SIO)');
+  assert.equal(findNearestOfficialSiaStation(45.948, 7.207, 2100).stationKey, 'GSB', 'Bourg-St-Pierre (2100 m) → Grand-St-Bernard (GSB)');
+
+  // 6. Réglementation personnalisée (Custom) & stores manuels avec plage horaire dédiée / règle 'none'
+  const limCustomFixed = getProjectComfortLimits(25, { projectType: 'custom', customReg: { limitMode: 'fixed', maxTempC: 27.5, maxHours: 80, countMode: 'all' } });
+  assert.equal(limCustomFixed.upper, 27.5);
+  const limCustomCap = getProjectComfortLimits(30, { projectType: 'custom', customReg: { limitMode: 'adaptive_cap', maxTempC: 28.0, maxHours: 100, countMode: 'occupied' } });
+  assert.equal(limCustomCap.upper, 28.0, 'SIA adaptatif plafonné doit plafonner à 28.0 °C');
+
+  const noonSun = solarPosition(172, 12.5, 46.22, 7.33, 1);
+  const hrSun = { Igh: 850, Ibn: 750, Idh: 150, sun: noonSun };
+  const opManual = {
+    ...op,
+    blindMode: 'manual_day',
+    blindRule: 'schedule_only',
+    blindManualUseOcc: false,
+    blindStart: 12,
+    blindEnd: 16
+  };
+  const solAt10h = computeHourlySolarGains([opManual], hrSun, 25, 22, true, 0.2, 0, true, { hod: 10, isOcc24h: true }).totalW;
+  const solAt14h = computeHourlySolarGains([opManual], hrSun, 25, 22, true, 0.2, 0, true, { hod: 14, isOcc24h: true }).totalW;
+  assert.ok(solAt14h < solAt10h * 0.4, 'En commande manuelle 12h–16h (plage seule), le store doit être baissé à 14h et levé à 10h');
+
+  const opNoneRule = { ...op, blindMode: 'auto', blindRule: 'none' };
+  const solNoneRule = computeHourlySolarGains([opNoneRule], hrSun, 28, 24, true, 0.2, 0, true, { hod: 14, isOcc24h: false }).totalW;
+  assert.ok(Math.abs(solNoneRule - solAt10h) < 1e-6, 'Avec règle « Aucune », le store doit rester ouvert');
 });

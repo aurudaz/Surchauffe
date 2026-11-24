@@ -16,8 +16,8 @@ import { evaluateThermalComfort } from '../methodology/07-thermal-comfort.js';
 import { getSIA180Profile } from '../standards/sia180.js';
 import {
   appState,
-  duplicateActiveVariant,
   escapeHtml,
+  getActiveVariant,
   saveWorkspaceToStorage,
   switchVariant,
   syncActiveVariantSnapshot
@@ -41,7 +41,6 @@ let variantsChartMeta = null;
 let lastRenderCtx = null;
 const variantSimCache = new Map();
 let notifyResultsVariantChange = () => {};
-let notifyResultsDuplicateToConfig = () => {};
 
 function badge(ok, yesLabel = 'Conforme', noLabel = 'Non conforme', warnMode = false, tip = '') {
   const tipAttr = tip ? ` data-tip="${escapeHtml(tip)}"` : '';
@@ -111,7 +110,7 @@ function renderActiveCoolingCard(res, activeFR, project) {
   return `
     <div class="card" style="${ac.level === 'excessive' ? 'border-color:rgba(242,139,130,0.55);' : ''}">
       <h3 class="card-title">
-        <span data-tip="Énergie et puissance frigorifiques nécessaires pour maintenir 0 heure de surchauffe dans le local, comparées aux seuils suisses SIA 180, SIA 382/1, SIA 2024 et MoPEC (EN-102).">Besoins énergétiques de froid actif (si refroidissement pour 0 h de surchauffe)</span>
+        <span data-tip="Énergie et puissance frigorifiques nécessaires pour maintenir 0 heure de surchauffe dans le local, comparées aux seuils suisses SIA 180, SIA 382/1, SIA 2024 et MoPEC (EN-102).">Besoins énergétiques de froid actif</span>
         <span class="pill ${sevCls}">${escapeHtml(ac.statusLabel)}</span>
       </h3>
 
@@ -176,28 +175,39 @@ function renderActiveCoolingCard(res, activeFR, project) {
 function renderSimpleReport(res, activeFR, project) {
   const m = activeFR.minergie;
   const g = activeFR.gains;
-  const prof = getSIA180Profile(project.projectType);
+  const prof = getSIA180Profile(project.projectType, project.customReg);
   const isMinergie = project.projectType === 'minergie';
+  const isCustom = project.projectType === 'custom';
   const mainHours = isMinergie ? activeFR.overMinergie265 : activeFR.overSIA;
   const mainLimit = isMinergie ? 100 : res.limHours;
-  const mainPass = mainHours <= mainLimit;
+  const isManual = Boolean(res.isManualDesignDay);
+  const daysTest = res.weatherDaysCount || 14;
+  const hrsPerDay = mainHours / Math.max(1, daysTest);
+  const mainPass = isManual ? mainHours === 0 : mainHours <= mainLimit;
   const nightPass = activeFR.nomNightSpec >= 10;
 
-  const verdictStatus = mainPass && (!m || m.constructivePass) ? 'ok' : mainPass ? 'warn' : 'ko';
-  const verdictTitle =
-    verdictStatus === 'ok'
+  const verdictStatus = mainPass && (!m || !isMinergie || m.constructivePass) ? 'ok' : mainPass ? 'warn' : 'ko';
+  const verdictTitle = isManual
+    ? mainHours === 0
+      ? 'Journée type : aucune surchauffe détectée'
+      : `Journée type : surchauffe détectée (${hrsPerDay.toFixed(1)} h/jour)`
+    : verdictStatus === 'ok'
       ? 'Protection thermique estivale conforme'
       : verdictStatus === 'warn'
-        ? 'Confort atteint, mais vigilance constructive requise'
+        ? 'Simulation conforme, mais vigilance constructive requise'
         : 'Risque de surchauffe estivale — Mesures nécessaires';
 
   const floorDisplay = activeFR.floor.name.includes('m²')
     ? escapeHtml(activeFR.floor.name)
     : `${escapeHtml(activeFR.floor.name)} (${activeFR.floor.area.toFixed(0)} m²)`;
 
-  const mainCriterionTxt = isMinergie
-    ? `<strong>${activeFR.overMinergie265} h/an &gt; 26.5 °C</strong> (seuil ${escapeHtml(prof.label)} : ≤ 100 h)`
-    : `<strong>${activeFR.overSIA} h/an</strong> au-dessus de la limite SIA 180 (seuil ${escapeHtml(prof.label)} : ≤ ${mainLimit} h)`;
+  const mainCriterionTxt = isManual
+    ? `<strong>${hrsPerDay.toFixed(1)} h/jour</strong> de dépassement (${mainHours} h sur ${daysTest} j identiques)`
+    : isMinergie
+      ? `<strong>${activeFR.overMinergie265} h/an &gt; 26.5 °C</strong> (16 avr.–15 oct. • seuil ${escapeHtml(prof.label)} : ≤ 100 h)`
+      : isCustom
+        ? `<strong>${activeFR.overSIA} h/an</strong> au-dessus de la limite personnalisée (${escapeHtml(prof.shortLabel)})`
+        : `<strong>${activeFR.overSIA} h/an</strong> au-dessus de la limite SIA 180 (${project.siaCurveMode === 'fig4' ? 'Fig. 4 VMC' : 'Fig. 3 nat.'} • seuil : ≤ ${mainLimit} h)`;
 
   document.getElementById('simpleReportTop').innerHTML = `
     <div class="verdict-banner ${verdictStatus}" data-tip="Verdict global de surchauffe pour l'étage analysé selon l'exigence réglementaire sélectionnée (${escapeHtml(prof.label)}).">
@@ -205,21 +215,22 @@ function renderSimpleReport(res, activeFR, project) {
         <h3 class="verdict-title">${verdictTitle}</h3>
         <p class="verdict-sub">
           ${floorDisplay} : ${mainCriterionTxt} •
-          Température maximale d'été : <strong>${activeFR.summerMaxTop.toFixed(1)} °C</strong>.
+          Température maximale : <strong>${activeFR.summerMaxTop.toFixed(1)} °C</strong>.
         </p>
       </div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        ${m ? badge(m.constructivePass, 'Constructif OK', 'Constructif à revoir', false, 'Vérifie que les protections solaires, la masse thermique et la résistance au vent des stores sont suffisantes.') : ''}
-        ${m ? badge(m.comfortPass, `Climat 2035 OK (${m.hoursOver265} h)`, `Climat 2035 : ${m.hoursOver265} h`, false, 'Nombre d\'heures dépassant 26.5 °C sous le climat projeté 2035 (max autorisé : 100 h/an).') : ''}
-        ${badge(activeFR.passSIA, `SIA 180 OK (${activeFR.overSIA} h)`, `SIA 180 : ${activeFR.overSIA} h`, false, 'Nombre d\'heures dépassant la limite adaptative SIA 180 pendant l\'occupation.')}
+        ${m ? badge(m.constructivePass, `Constructif OK (${m.bilanPct.toFixed(0)} %)`, `Constructif ${m.bilanPct.toFixed(0)} %`, false, 'Bilan journalier constructif Minergie Q_in / Q_max ≤ 100 % (stores, masse thermique C_R/A_SNP et vent SIA 342).') : ''}
+        ${!isManual && m && isMinergie ? badge(m.analyticalComfortPass, `Analytique ${m.analyticalBandLabel}`, `Analytique ${m.analyticalBandLabel} (r=${m.gainsLossesRatio.toFixed(2)})`, false, 'Méthode analytique Minergie (rapport gains/pertes journalier, seuils 0.70 / 0.97 / 1.05).') : ''}
+        ${!isManual && m ? badge(m.comfortPass, `Sim. 2035 OK (${m.hoursOver265} h)`, `Sim. 2035 : ${m.hoursOver265} h`, false, 'Simulation dynamique horaire 5R1C : heures > 26.5 °C du 16 avril au 15 octobre sous climat projeté 2035 (max 100 h/an).') : ''}
+        ${!isMinergie ? badge(isManual ? activeFR.overSIA === 0 : activeFR.passSIA, `${isCustom ? 'Custom' : 'SIA 180'} OK (${activeFR.overSIA} h)`, `${isCustom ? 'Custom' : 'SIA 180'} : ${activeFR.overSIA} h`, false, 'Nombre d\'heures dépassant la limite active.') : ''}
       </div>
     </div>
 
     <div class="kpi-row">
-      <div class="kpi-box" data-tip="Nombre total d'heures d'occupation par an où la température intérieure dépasse le seuil de confort (${isMinergie ? '26.5 °C fixe — Minergie' : 'courbe adaptative SIA 180'}).">
-        <div class="kpi-label">${isMinergie ? 'Heures > 26.5 °C (Minergie)' : 'Heures de surchauffe (SIA 180)'}</div>
-        <div class="kpi-val" style="color:${mainPass ? 'var(--ok)' : 'var(--ko)'}">${mainHours} h/an</div>
-        <div class="kpi-sub">Limite autorisée : ≤ ${mainLimit} h/an</div>
+      <div class="kpi-box" data-tip="Nombre total d'heures dépassant le seuil de confort actif (${isMinergie ? '26.5 °C fixe du 16 avr. au 15 oct. — Minergie' : isCustom ? escapeHtml(prof.shortLabel) : project.siaCurveMode === 'fig4' ? 'SIA 180 Fig. 4 (VMC)' : 'SIA 180 Fig. 3 (naturelle)'}).">
+        <div class="kpi-label">${isManual ? 'Surchauffe (journée type)' : isMinergie ? 'Simulation > 26.5 °C (16 avr.–15 oct.)' : isCustom ? 'Heures de surchauffe (Custom)' : 'Heures de surchauffe (SIA 180)'}</div>
+        <div class="kpi-val" style="color:${mainPass ? 'var(--ok)' : 'var(--ko)'}">${isManual ? `${hrsPerDay.toFixed(1)} h/jour` : `${mainHours} h/an`}</div>
+        <div class="kpi-sub">${isManual ? `${mainHours} h cumulées sur ${daysTest} jours` : `Limite autorisée : ≤ ${mainLimit} h/an`}</div>
       </div>
       <div class="kpi-box" data-tip="Pic de température opérative atteint à l'intérieur pendant la saison estivale (mai–septembre), et nombre d'heures de nuit (22h–07h) au-dessus de 26 °C gênant le sommeil.">
         <div class="kpi-label">Température maximale en été</div>
@@ -303,35 +314,35 @@ function renderSimpleReport(res, activeFR, project) {
             </tr>
           </thead>
           <tbody>
-            <tr data-tip="Rapport entre la surface totale des fenêtres (A_G) et la surface de plancher (A_SNP). Plus la proportion vitrée est grande, plus les stores extérieurs doivent être performants.">
-              <td>Surface de référence &amp; vitrages (A_G / A_SNP)</td>
-              <td class="num">${activeFR.fp.winArea.toFixed(1)} m² / ${activeFR.floor.area.toFixed(0)} m² (<strong>${m ? (m.glazingIndexZg * 100).toFixed(0) : 0} %</strong>)</td>
-              <td class="num">Part vitrée modérée</td>
+            <tr data-tip="Rapport entre la surface nette de verre A_G (cadre déduit) et la surface de plancher A_SNP.">
+              <td>Surface de verre nette &amp; indice Z_g (A_G / A_SNP)</td>
+              <td class="num">${m ? m.glassArea.toFixed(2) : activeFR.fp.winArea.toFixed(1)} m² verre (${activeFR.fp.winArea.toFixed(1)} m² brut) / ${activeFR.floor.area.toFixed(0)} m² (<strong>Z_g = ${m ? m.glazingIndexZg.toFixed(3) : '0.000'}</strong>)</td>
+              <td class="num">Cadre déduit (f_F)</td>
               <td><span class="pill neutral">Quantité</span></td>
             </tr>
-            <tr data-tip="Part de l'énergie solaire qui traverse l'ensemble vitrage + store fermé (ex. 0.06 = 6 % entre, 94 % est bloqué). Doit être inférieur au seuil limite SIA 180.">
-              <td>Protection solaire (facteur g_total moyen)</td>
-              <td class="num"><strong>${activeFR.avgGtot.toFixed(2)}</strong></td>
-              <td class="num">≤ ${m ? m.gTotAuthorized.toFixed(2) : '0.15'}</td>
-              <td>${m ? badge(m.gTotOk, 'Efficace', 'Trop élevé') : ''}</td>
+            <tr data-tip="Facteur solaire effectif g_tot comparé au g_tot admissible issu du bilan journalier constructif Minergie (Q_in / Q_max ≤ 100 %).">
+              <td>Protection solaire (g_tot effectif vs admis)</td>
+              <td class="num"><strong>${m ? m.gTotEffective.toFixed(3) : activeFR.avgGtot.toFixed(3)}</strong> (bilan ${m ? m.bilanPct.toFixed(0) : 0} %)</td>
+              <td class="num">≤ ${m ? m.gTotAuthorized.toFixed(3) : '0.150'} (≤ 100 %)</td>
+              <td>${m ? badge(m.constructivePass, 'Constructif OK', 'Bilan > 100 %') : ''}</td>
             </tr>
-            <tr data-tip="Classe de résistance au vent minimale (SIA 342) pour que les stores extérieurs puissent rester baissés par temps venteux en été (Classe 5 = 75 km/h, Classe 6 = 92 km/h en zone föhn ou bâtiment élevé).">
-              <td>Résistance au vent des stores (SIA 342)</td>
-              <td class="num">${project.foehnExposed ? 'Zone föhn' : 'Standard'} (h=${m ? m.buildingHeightM.toFixed(1) : '5'} m)</td>
-              <td class="num">${m ? m.windRec.label : 'Classe 5'}</td>
-              <td>${m ? badge(m.allWindSafe, 'Stores protégés', 'Non protégé') : ''}</td>
+            <tr data-tip="Classe minimale de résistance au vent SIA 342 calculée via le profil de rafale SIA 261 à hauteur du store (terrain Cat. ${project.terrainCat || 'III'}, Föhn ${project.foehnExposed ? '+1 classe' : 'non'}).">
+              <td>Résistance au vent des stores (SIA 261 / 342)</td>
+              <td class="num">v = ${m ? m.windRec.gustKmh.toFixed(1) : '—'} km/h (h=${m ? m.buildingHeightM.toFixed(1) : '5'} m, Cat. ${project.terrainCat || 'III'}${project.foehnExposed ? ', Föhn' : ''})</td>
+              <td class="num">${m ? `Classe ${m.windRec.minClass} (≤ ${m.windRec.windSpeedKmh} km/h)` : 'Classe 3'}</td>
+              <td>${m ? badge(m.allWindSafe, `Classe ${m.windRec.minClass} OK`, 'Non protégé') : ''}</td>
             </tr>
-            <tr data-tip="Capacité des dalles et murs à absorber la chaleur diurne sans que la température de l'air ne grimpe trop vite (≥ 30 Wh/m²K minimum, ≥ 45 Wh/m²K recommandé).">
-              <td>Inertie thermique du local (C_R / A_SNP)</td>
-              <td class="num"><strong>${activeFR.floor.cSpec.toFixed(0)} Wh/(m²·K)</strong></td>
-              <td class="num">≥ 30 min. (45 reco.)</td>
-              <td>${badge(activeFR.floor.cSpec >= 45, 'Forte', activeFR.floor.cSpec >= 30 ? 'Moyenne' : 'Faible', activeFR.floor.cSpec >= 30)}</td>
+            <tr data-tip="Capacité thermique spécifique C_R/A_SNP selon SIA 180 / Bauteile Minergie (plafonnée à 75 Wh/(m²·K)), distincte de la masse 5R1C (${activeFR.floor.cSpec.toFixed(0)} Wh/(m²·K)).">
+              <td>Inertie thermique C_R / A_SNP (Minergie / 5R1C)</td>
+              <td class="num"><strong>${m ? m.thermalMassWhm2K.toFixed(1) : Math.min(75, activeFR.floor.cSpec).toFixed(1)} Wh/(m²·K)</strong> <span style="color:var(--text-muted);font-size:11px;">(5R1C : ${activeFR.floor.cSpec.toFixed(0)})</span></td>
+              <td class="num">≥ 30 min. (plafond 75)</td>
+              <td>${badge((m ? m.thermalMassWhm2K : activeFR.floor.cSpec) >= 45, 'Forte', (m ? m.thermalMassWhm2K : activeFR.floor.cSpec) >= 30 ? 'Moyenne' : 'Faible', (m ? m.thermalMassWhm2K : activeFR.floor.cSpec) >= 30)}</td>
             </tr>
-            <tr data-tip="Quantité de chaleur dégagée chaque jour par m² à l'intérieur par les occupants, l'éclairage et les appareils électriques (valeur standard logement : 113 Wh/(m²·j)).">
-              <td>Charges internes (personnes + lampes + appareils)</td>
+            <tr data-tip="Quantité de chaleur dégagée chaque jour par m² à l'intérieur, comparée à la référence SIA 2024:2015 du type de local (${escapeHtml(m?.roomType2024?.label || 'Local')}).">
+              <td>Charges internes (${escapeHtml(m?.roomType2024?.label || 'SIA 2024')})</td>
               <td class="num"><strong>${g.internalTotal.dailyWhm2d.toFixed(0)} Wh/(m²·j)</strong> (${g.internalTotal.peakW.toFixed(0)} W max)</td>
-              <td class="num">Réf. : ${m ? m.internalLoadRefWhm2d : 113} Wh/(m²·j)</td>
-              <td>${badge(g.internalTotal.dailyWhm2d <= (m ? m.internalLoadRefWhm2d * 1.15 : 130), 'Maîtrisées', 'Élevées', true)}</td>
+              <td class="num">Réf. SIA 2024 : ${m ? m.internalLoadRefWhm2d : 84} Wh/(m²·j)</td>
+              <td>${badge(g.internalTotal.dailyWhm2d <= (m ? m.internalLoadRefWhm2d * 1.15 : 100), 'Maîtrisées', 'Élevées', true)}</td>
             </tr>
             <tr data-tip="Capacité de renouvellement d'air nocturne par les fenêtres ouvertes pour évacuer la chaleur accumulée la journée (≥ 10 m³/(h·m²) recommandé).">
               <td>Ventilation nocturne (rafraîchissement)</td>
@@ -344,7 +355,7 @@ function renderSimpleReport(res, activeFR, project) {
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="simpleScenariosCard">
       <h3 class="card-title">
         <span data-tip="Compare votre configuration aux cas où les occupants oublient de fermer les stores le jour ou d'ouvrir les fenêtres la nuit.">Impact des gestes quotidiens &amp; scénarios (« Et si on oublie... ? »)</span>
         <span class="pill neutral">${isMinergie ? 'Heures > 26.5 °C' : 'Heures SIA 180'}</span>
@@ -540,30 +551,47 @@ function renderConstructiveTab(activeFR, project) {
     document.getElementById('sub-minergie').innerHTML = '<p class="subtitle">Données indisponibles.</p>';
     return;
   }
+  const stC = m.stationClimateConstants || {};
+  const autoStatusHtml = m.automationRequired
+    ? badge(m.shadingAutomated, 'Auto requise : OK', 'Automatisation requise !')
+    : m.automationRecommended
+      ? badge(m.shadingAutomated, 'Auto recommandée : OK', 'Auto recommandée', true)
+      : badge(true, 'Non exigée');
+
   document.getElementById('sub-minergie').innerHTML = `
-    <div style="margin-bottom:10px;">
-      Verdict global : ${badge(m.globalPass, 'Conforme', 'Non conforme')}
-      &nbsp; Volet constructif : ${badge(m.constructivePass, 'Rempli', 'Déficit')}
-      &nbsp; Confort 2035 : ${badge(m.comfortPass, `≤ 100 h > 26.5 °C (${m.hoursOver265} h)`, `Dépassé (${m.hoursOver265} h)`)}
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center;">
+      <span>Volet 1 Constructif (bilan Wh/j) : ${badge(m.constructivePass, `Rempli (${m.bilanPct.toFixed(0)} %)`, `Non rempli (${m.bilanPct.toFixed(0)} %)`)}</span>
+      <span>Volet 2 Analytique (gains/pertes) : ${badge(m.analyticalComfortPass, `OK (${m.analyticalBandLabel})`, `Non respecté (${m.analyticalBandLabel})`)}</span>
+      <span>Simulation dynamique 5R1C (16 avr.–15 oct.) : ${badge(m.simComfortPass, `≤ 100 h (${m.hoursOver265} h)`, `Dépassé (${m.hoursOver265} h)`)}</span>
     </div>
+
+    ${
+      m.coolingRequiredByRule
+        ? `<div class="cool-alert ko" style="margin-bottom:10px;">
+            <strong>Refroidissement actif nécessaire (règle Minergie) :</strong> les charges internes (${m.internalLoadForAnalytical.toFixed(0)} Wh/(m²·j)) dépassent le seuil de <strong>${m.strategyThresholds.coolReq} Wh/(m²·j)</strong> pour la stratégie « ${escapeHtml(m.strategyThresholds.label)} ».
+          </div>`
+        : ''
+    }
+
     <div class="table-wrap">
       <table>
         <thead><tr>
-          <th data-tip="Critère constructif ou de confort vérifié.">Paramètre</th>
+          <th data-tip="Critère constructif ou de confort vérifié selon le justificatif Minergie v2023.2 (CALC_1).">Paramètre (Justificatif Minergie v2023.2)</th>
           <th class="num" data-tip="Valeur calculée pour l'étage actif.">Calculé</th>
           <th class="num" data-tip="Seuil réglementaire ou valeur de référence.">Exigence / Référence</th>
           <th data-tip="Statut de conformité.">Statut</th>
         </tr></thead>
         <tbody>
           <tr data-tip="Surface nette de plancher et vérification que la profondeur de la pièce ne dépasse pas 2.5 fois la hauteur sous plafond."><td>Surface nette de plancher (A_SNP)</td><td class="num">${m.area.toFixed(1)} m²</td><td class="num">Profondeur/h_libre = ${m.depthRatio.toFixed(1)} (max 2.5 reco.)</td><td>${badge(!m.depthWarning, 'OK', 'Profond (>2.5h)', true)}</td></tr>
-          <tr data-tip="Rapport entre la surface totale des vitrages et la surface de plancher."><td>Indice de vitrage Z_g = A_G / A_SNP</td><td class="num">${m.glazingIndexZg.toFixed(2)} (${m.winArea.toFixed(1)} m²)</td><td class="num">—</td><td><span class="pill neutral">Info</span></td></tr>
-          <tr data-tip="Transmission solaire globale moyenne (vitrage + store) comparée à la limite maximale autorisée selon l'orientation."><td>Facteur solaire g_total effectif moyen</td><td class="num">${m.gTotEffective.toFixed(3)}</td><td class="num">≤ ${m.gTotAuthorized.toFixed(3)} (autorisé)</td><td>${badge(m.gTotOk, 'OK', 'Trop élevé')}</td></tr>
-          <tr data-tip="Capacité d'accumulation thermique rapportée au m² de plancher (minimum 30 Wh/m²K, référence 45 Wh/m²K)."><td>Capacité thermique effective (C_R / A_SNP)</td><td class="num">${m.thermalMassWhm2K.toFixed(0)} Wh/(m²·K)</td><td class="num">≥ 30 min. (45 réf.)</td><td>${badge(m.massMinOk, m.massReservePct >= 0 ? 'Réserve' : 'OK', 'Insuffisante', m.massReservePct < 0 && m.massMinOk)}</td></tr>
-          <tr data-tip="Classe de résistance au vent SIA 342 recommandée en fonction de la hauteur du bâtiment et de l'exposition au föhn."><td>Résistance au vent stores (SIA 342)</td><td class="num">${m.windRec.label}</td><td class="num">H_bât=${m.buildingHeightM.toFixed(1)} m • Föhn=${project.foehnExposed ? 'Oui' : 'Non'}</td><td>${badge(m.allWindSafe, 'Respectée', 'Non protégé')}</td></tr>
-          <tr data-tip="Vérifie si les stores sont dotés d'un abaissement automatique au-delà de 200 W/m² d'irradiance (SIA 380/2)."><td>Automatisation stores (SIA 380/2)</td><td class="num">${m.shadingAutomated ? 'Auto (200 W/m²)' : 'Manuelle / Absente'}</td><td class="num">Recommandée si Z_g élevé</td><td>${badge(m.shadingAutomated, 'Auto OK', 'Manuelle', true)}</td></tr>
-          <tr data-tip="Apports internes journaliers (personnes + éclairage + appareils) comparés au standard SIA 2024."><td>Charges internes (SIA 2024)</td><td class="num">${m.internalLoadWhm2d.toFixed(1)} Wh/(m²·j)</td><td class="num">Réf. ${m.internalLoadRefWhm2d} Wh/(m²·j)</td><td>${badge(m.internalLoadWhm2d <= m.internalLoadRefWhm2d * 1.15, 'OK', 'Élevées', true)}</td></tr>
-          <tr data-tip="Débit spécifique de ventilation nocturne sous un écart de température de 8 K."><td>Stratégie estivale (débit nocturne nominal)</td><td class="num">${m.summerStrategyLabel}</td><td class="num">≥ 10.0 m³/(h·m²)</td><td>${badge(m.nightSpecM3hm2 >= 10, 'Efficace', 'Insuffisant', m.nightSpecM3hm2 > 0)}</td></tr>
-          <tr data-tip="Nombre d'heures dépassant 26.5 °C sur le climat actif et sous la projection climatique 2035 (seuil max : 100 h/an)."><td>Heures &gt; 26.5 °C (Climat actif vs 2035)</td><td class="num">${m.hoursOver265Current} h (actif) / <strong>${m.hoursOver265} h (2035)</strong></td><td class="num">≤ 100 h/an (2035)</td><td>${badge(m.comfortPass, 'Conforme 2035', 'Non conforme')}</td></tr>
+          <tr data-tip="Surface de verre nette A_G (cadre déduit) et surface de cadre A_cadre. Indice de vitrage Z_g = A_G / A_SNP."><td>Surface de verre A_G / Cadre A_c &amp; Indice Z_g</td><td class="num">A_G = <strong>${m.glassArea.toFixed(2)} m²</strong> • A_c = ${m.frameArea.toFixed(2)} m² • <strong>Z_g = ${m.glazingIndexZg.toFixed(3)}</strong></td><td class="num">Brut : ${m.winAreaGross.toFixed(2)} m²</td><td><span class="pill neutral">Cadre déduit</span></td></tr>
+          <tr data-tip="Capacité thermique spécifique C_R / A_SNP calculée selon Bauteile (sans mobilier, plafonnée à 75 Wh/(m²·K) en v2023). Distincte de la masse 5R1C (${activeFR.floor.cSpec.toFixed(0)} Wh/(m²·K))."><td>Capacité thermique C_R / A_SNP (Bauteile)</td><td class="num"><strong>${m.thermalMassWhm2K.toFixed(1)} Wh/(m²·K)</strong></td><td class="num">≥ 30 min. • Plafond 75 (5R1C : ${activeFR.floor.cSpec.toFixed(0)})</td><td>${badge(m.massMinOk, 'OK', 'Insuffisante')}</td></tr>
+          <tr data-tip="Énergie solaire journalière maximale admissible Q_max = (q_vent + C_R/A·ΔT − 120)·A_SNP + q_verre·A_G + q_cadre·A_c (constantes ${escapeHtml(project.climate.station)} ${escapeHtml(m.climateScenarioUsed)} : q_vent=${(stC.qVent ?? 0).toFixed(2)}, ΔT=${(stC.dT ?? 0).toFixed(3)} K)."><td>Bilan constructif journalier (Q_in / Q_max)</td><td class="num">Q_in = <strong>${m.qInWhDay.toFixed(0)} Wh/j</strong> / Q_max = <strong>${m.qMaxWhDay.toFixed(1)} Wh/j</strong> (<strong>${m.bilanPct.toFixed(1)} %</strong>)</td><td class="num">≤ 100 % (charges fixes 120 Wh/m²j)</td><td>${badge(m.bilanPct <= 100.05, '≤ 100 % OK', `${m.bilanPct.toFixed(0)} % > 100 %`)}</td></tr>
+          <tr data-tip="Facteur solaire total admissible g_tot,adm = (Q_max − Σ g_vit·Q<200) / Σ Q≥200 comparé au g_tot effectif des stores."><td>Facteur solaire g_tot effectif vs admis</td><td class="num"><strong>${m.gTotEffective.toFixed(3)}</strong></td><td class="num">g_tot,adm ≤ <strong>${m.gTotAuthorized.toFixed(3)}</strong></td><td>${badge(m.gTotOk, 'OK', 'Trop élevé')}</td></tr>
+          <tr data-tip="Classe minimale de résistance au vent SIA 342 calculée par le profil de rafale SIA 261 à la hauteur du store."><td>Résistance au vent stores (SIA 261 / SIA 342)</td><td class="num"><strong>Classe ${m.windRec.minClass}</strong> (v = ${m.windRec.gustKmh.toFixed(1)} km/h)</td><td class="num">H=${m.buildingHeightM.toFixed(1)} m • Terrain ${escapeHtml(m.terrainCat)} • Föhn=${project.foehnExposed ? 'Oui (+1)' : 'Non'}</td><td>${badge(m.allWindSafe, `Classe ${m.windRec.minClass} OK`, 'Non protégé')}</td></tr>
+          <tr data-tip="Rapport analytique gains / pertes (Variante 2) : gains = charges internes + Q_in/A_SNP ; pertes = stratégie + masse + cadre + verre. Seuils : ≤ 0.70 (≤ 70 h), ≤ 0.97 (≤ 100 h), ≤ 1.05 (> 100 h), > 1.05 (> 130 h)."><td>Confort analytique (Rapport gains / pertes)</td><td class="num"><strong>${m.gainsLossesRatio.toFixed(2)}</strong> (${m.gainsWhm2d.toFixed(1)} / ${m.pertesWhm2d.toFixed(1)} Wh/m²j) → <strong>${m.analyticalBandLabel}</strong></td><td class="num">≤ 0.97 (≤ 100 h) + constructif OK</td><td>${badge(m.analyticalComfortPass, 'Respecté', m.constructivePass ? 'Rapport > 0.97' : 'Échec constructif')}</td></tr>
+          <tr data-tip="Règle d'automatisation des stores et de refroidissement actif selon la stratégie (${escapeHtml(m.strategyThresholds.label)}) : auto > ${m.strategyThresholds.autoReq}, froid > ${m.strategyThresholds.coolReq} Wh/(m²·j)."><td>Automatisation stores &amp; Stratégie (${escapeHtml(m.strategyThresholds.label)})</td><td class="num">${m.shadingAutomated ? 'Automatisés (≥ 200 W/m²)' : 'Manuels / Absents'} • Charges ${m.internalLoadForAnalytical.toFixed(0)} Wh/m²j</td><td class="num">Auto &gt; ${m.strategyThresholds.autoReq} • Froid &gt; ${m.strategyThresholds.coolReq} Wh/m²j</td><td>${autoStatusHtml}</td></tr>
+          <tr data-tip="Charges internes journalières par rapport au type de local SIA 2024:2015 (${escapeHtml(m.roomType2024.label)})."><td>Charges internes (${escapeHtml(m.roomType2024.label)})</td><td class="num">${m.internalLoadWhm2d.toFixed(1)} Wh/(m²·j)</td><td class="num">SIA 2024:2015 : ${m.internalLoadRefWhm2d} Wh/(m²·j)</td><td>${badge(m.internalLoadWhm2d <= m.internalLoadRefWhm2d * 1.15, 'OK', 'Élevées', true)}</td></tr>
+          <tr data-tip="Justificatif par simulation dynamique horaire 5R1C : compte uniquement les heures d'occupation > 26.5 °C entre le 16 avril et le 15 octobre. Un justificatif officiel par simulation requiert des données météorologiques DRY 2035."><td>Simulation dynamique 5R1C (&gt; 26.5 °C, 16 avr.–15 oct.)</td><td class="num">${m.hoursOver265Current} h (actif) / <strong>${m.hoursOver265} h (2035)</strong></td><td class="num">≤ 100 h/an (16 avr.–15 oct., DRY 2035)</td><td>${badge(m.simComfortPass, 'Sim. OK', 'Sim. dépassée')}</td></tr>
         </tbody>
       </table>
     </div>
@@ -751,43 +779,14 @@ function renderVariantsComparator() {
     appState.compareVariantIds = appState.variants.map(v => v.id);
   }
 
-  const checksWrap = document.getElementById('variantCompareChecks');
-  checksWrap.innerHTML = '';
   const selectedEntries = [];
-
   appState.variants.forEach((v, idx) => {
     const color = pal.series[idx % pal.series.length];
-    const isChecked = appState.compareVariantIds.includes(v.id);
-    const lbl = document.createElement('label');
-    lbl.className = `variant-check-chip${isChecked ? ' checked' : ''}`;
-    lbl.dataset.tip = `Inclure ou exclure « ${v.name} » du tableau et du graphique comparatifs.`;
-    lbl.innerHTML = `
-      <input type="checkbox" ${isChecked ? 'checked' : ''} data-cmp-var="${escapeHtml(v.id)}" />
-      <span class="variant-color-dot" style="background:${color};"></span>
-      <span>${escapeHtml(v.name)}</span>
-      <span class="pill neutral" style="padding:0 6px;font-size:10px;">${v.inputMode === 'advanced' ? 'Av.' : 'Simp.'}</span>
-    `;
-    lbl.querySelector('input').addEventListener('change', e => {
-      if (e.target.checked) {
-        if (!appState.compareVariantIds.includes(v.id)) appState.compareVariantIds.push(v.id);
-      } else {
-        if (appState.compareVariantIds.length <= 1) {
-          e.target.checked = true;
-          return;
-        }
-        appState.compareVariantIds = appState.compareVariantIds.filter(id => id !== v.id);
-      }
-      saveWorkspaceToStorage();
-      renderVariantsComparator();
-    });
-    checksWrap.appendChild(lbl);
-
-    if (isChecked) {
+    if (appState.compareVariantIds.includes(v.id)) {
       const vRes = simulateVariantFast(v);
       selectedEntries.push({
         id: v.id,
         name: v.name,
-        inputMode: v.inputMode,
         project: v.project,
         color,
         res: vRes,
@@ -853,35 +852,44 @@ function renderVariantsComparator() {
   tableWrap.querySelectorAll('[data-jump-var]').forEach(btn => {
     btn.addEventListener('click', () => {
       const vid = btn.dataset.jumpVar;
-      appState.resultsTab = 'report';
+      appState.compareMode = false;
       if (vid !== appState.activeVariantId) {
         switchVariant(vid);
         notifyResultsVariantChange();
       } else {
-        applyResultsTabUI();
+        refreshCompareView();
       }
     });
   });
 
   const winMode = document.getElementById('variantPlotWindow')?.value || 'hottest14';
   requestAnimationFrame(() => {
-    variantsChartMeta = drawVariantsComparisonChart(selectedEntries, winMode);
+    variantsChartMeta = drawVariantsComparisonChart(selectedEntries, winMode, appState.activeVariantId);
+    const noteEl = document.getElementById('variantLimitMismatchNote');
+    if (noteEl) {
+      if (variantsChartMeta && variantsChartMeta.limitDiffers) {
+        const grpDesc = (variantsChartMeta.limitGroups || [])
+          .map(
+            g =>
+              `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:8px;"><span class="variant-color-dot" style="background:${g.rep.color};"></span><strong>Lim. ${escapeHtml(g.tag)}</strong> (${g.members.map(m => escapeHtml(m.name)).join(', ')})</span>`
+          )
+          .join('');
+        noteEl.innerHTML =
+          `<strong>Limites distinctes tracées sur le graphique :</strong> chaque courbe limite en pointillés est tracée dans la couleur de sa variante afin de comparer clairement les exigences (ex. ventilation naturelle Fig. 3 vs VMC Fig. 4, Minergie ou Custom).<div style="margin-top:4px;">${grpDesc}</div>`;
+        noteEl.classList.remove('hidden');
+      } else {
+        noteEl.classList.add('hidden');
+      }
+    }
   });
 }
 
-function applyResultsTabUI() {
+export function refreshCompareView() {
   const hasMulti = appState.variants.length > 1;
-  if (!hasMulti && appState.resultsTab === 'compare') {
-    appState.resultsTab = 'report';
+  if (!hasMulti) {
+    appState.compareMode = false;
   }
-  const isCompare = hasMulti && appState.resultsTab === 'compare';
-
-  document.getElementById('resViewTabsBar')?.classList.toggle('hidden', !hasMulti);
-  const cntBadge = document.getElementById('resCompareCountBadge');
-  if (cntBadge) cntBadge.textContent = String(appState.variants.length);
-
-  document.getElementById('btnResTabReport')?.classList.toggle('active-blue', !isCompare);
-  document.getElementById('btnResTabCompare')?.classList.toggle('active-blue', isCompare);
+  const isCompare = hasMulti && Boolean(appState.compareMode);
 
   document.getElementById('resTabReportPane')?.classList.toggle('hidden', isCompare);
   document.getElementById('resTabComparePane')?.classList.toggle('hidden', !isCompare);
@@ -907,7 +915,7 @@ function redrawOpenDrawerCharts() {
     const winMode = document.getElementById('plotWindow')?.value || 'hottest14';
     const compareFloors = Boolean(document.getElementById('plotCompareFloors')?.checked);
     timeChartMeta = drawTimeChart(res, activeFR, winMode, compareFloors);
-    drawSIAChart(activeFR, project.siaCurveMode);
+    drawSIAChart(activeFR, project.siaCurveMode, project);
     drawBalanceChart(activeFR);
   }
   if (document.getElementById('drawer-gains')?.open) {
@@ -922,6 +930,7 @@ function redrawSimpleChart() {
   if (!lastRenderCtx) return;
   const { res, activeFR, project } = lastRenderCtx;
   const isMinergie = project.projectType === 'minergie';
+  const isCustom = project.projectType === 'custom';
   const winMode = document.getElementById('simplePlotWindow')?.value || 'hottest14';
   const compareFloors = Boolean(document.getElementById('simpleCompareFloors')?.checked);
 
@@ -933,14 +942,20 @@ function redrawSimpleChart() {
   const titleEl = document.getElementById('simpleChartTitle');
   if (titleEl) titleEl.textContent = titleMap[winMode] || titleMap.hottest14;
 
+  const limitLabel = isMinergie
+    ? 'Seuil Minergie (26.5 °C)'
+    : isCustom
+      ? 'Limite personnalisée'
+      : project.siaCurveMode === 'fig4'
+        ? 'SIA 180 Fig. 4 (VMC)'
+        : 'SIA 180 Fig. 3 (nat.)';
+
   const subEl = document.getElementById('simpleChartSub');
   if (subEl) {
-    subEl.textContent = isMinergie
-      ? 'Compare la température intérieure (bleu) à la température extérieure (gris) et au seuil Minergie de 26.5 °C (vert). Zone rouge = dépassement.'
-      : 'Compare la température intérieure (bleu) à la température extérieure (gris) et à la courbe limite SIA 180 (vert). Zone rouge = dépassement.';
+    subEl.textContent = `Compare la température intérieure (bleu) à la température extérieure (gris) et à la limite « ${limitLabel} » (vert). Zone rouge = dépassement.`;
   }
 
-  simpleChartMeta = drawSimpleHeatwaveChart(res, activeFR, 26.5, winMode, compareFloors, !isMinergie);
+  simpleChartMeta = drawSimpleHeatwaveChart(res, activeFR, limitLabel, winMode, compareFloors);
 }
 
 function syncToggleAllDrawersBtn() {
@@ -948,7 +963,7 @@ function syncToggleAllDrawersBtn() {
   if (!btn) return;
   const drawers = [...document.querySelectorAll('#advDrawersContainer .adv-drawer')];
   const allOpen = drawers.length > 0 && drawers.every(d => d.open);
-  btn.textContent = allOpen ? 'Tout replier' : 'Tout déplier';
+  btn.textContent = allOpen ? '− Tout replier' : `+ Tout déplier (${drawers.length} rubriques)`;
 }
 
 export function renderResultsView(onEnsureSimulation) {
@@ -1171,32 +1186,239 @@ export function renderResultsView(onEnsureSimulation) {
 
   renderComfortSection(activeFR);
   syncToggleAllDrawersBtn();
-  applyResultsTabUI();
+  refreshCompareView();
 }
 
-export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVariantChanged, onDuplicateToConfig }) {
+function buildEngineeringPrintBlocks() {
+  if (!lastRenderCtx) return;
+  const { res, activeFR, project } = lastRenderCtx;
+  const prof = getSIA180Profile(project.projectType, project.customReg);
+  const meta = appState.reportMeta || {};
+  const curVar = getActiveVariant();
+  const isMinergie = project.projectType === 'minergie';
+  const mainHours = isMinergie ? activeFR.overMinergie265 : activeFR.overSIA;
+  const mainLimit = isMinergie ? 100 : res.limHours;
+  const pass = res.isManualDesignDay ? mainHours === 0 : mainHours <= mainLimit;
+  const todayStr = new Date().toLocaleDateString('fr-CH', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+
+  const hdr = document.getElementById('printReportHeader');
+  if (hdr) {
+    hdr.innerHTML = `
+      <div class="print-eng-header">
+        <div class="print-eng-top">
+          <div>
+            <div class="print-eng-brand">SIA Thermic Studio — Justificatif de protection thermique estivale (5R1C ISO 13790)</div>
+            <div class="print-eng-title">${escapeHtml(project.name)}${curVar && appState.variants.length > 1 ? ` — ${escapeHtml(curVar.name)}` : ''}</div>
+          </div>
+          <div>${badge(pass, 'CONFORME', 'NON CONFORME')}</div>
+        </div>
+        <div class="print-eng-meta">
+          <div><span>Exigence :</span> <strong>${escapeHtml(prof.label)}</strong></div>
+          <div><span>Date du rapport :</span> <strong>${todayStr}</strong></div>
+          <div><span>Référence dossier :</span> <strong>${escapeHtml(meta.ref || '—')}</strong></div>
+          <div><span>Auteur / Bureau :</span> <strong>${escapeHtml(meta.author || '—')}</strong></div>
+          <div><span>Maître d’ouvrage :</span> <strong>${escapeHtml(meta.client || '—')}</strong></div>
+          <div><span>Climat simulé :</span> <strong>${escapeHtml(res.weatherLabel)}</strong></div>
+        </div>
+      </div>
+    `;
+  }
+
+  const cmt = document.getElementById('printReportComments');
+  if (cmt) {
+    const cleanTxt = String(meta.comments || '').trim();
+    cmt.innerHTML = cleanTxt
+      ? `<div class="print-eng-comments"><div style="font-weight:700;font-size:9.5pt;color:#1e3a5f;margin-bottom:4px;">Remarques &amp; conclusions de l’ingénieur</div>${escapeHtml(cleanTxt)}</div>`
+      : '';
+  }
+
+  const inp = document.getElementById('printReportInputs');
+  if (inp) {
+    const floorRows = project.floors
+      .map(fl => {
+        const ops = project.openings.filter(o => o.floorId === fl.id);
+        const winA = ops.reduce((s, o) => s + o.width * o.height * o.qty, 0);
+        const vmcTxt = fl.hasMechVent
+          ? `VMC (η = ${Math.round((fl.etaWRG || 0) * 100)} %, q_th = ${fl.qHygSpec})`
+          : `Naturelle (q_th = ${fl.qHygSpec})`;
+        return `<tr>
+          <td><strong>${escapeHtml(fl.name)}</strong></td>
+          <td class="num">${fl.area.toFixed(1)} m² (h=${fl.height.toFixed(2)} m)</td>
+          <td class="num">${fl.cSpec.toFixed(0)} Wh/m²K</td>
+          <td class="num">U_mur=${fl.uWallExt.toFixed(2)} / U_toit=${fl.uRoofExt.toFixed(2)}</td>
+          <td class="num">${winA.toFixed(1)} m² (${ops.length} poste(s))</td>
+          <td>${vmcTxt}</td>
+        </tr>`;
+      })
+      .join('');
+    inp.innerHTML = `
+      <div class="card">
+        <h3 class="card-title">Hypothèses &amp; caractéristiques du bâtiment</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Étage / Local</th>
+              <th class="num">Surface &amp; Hauteur</th>
+              <th class="num">Inertie C_R/A_SNP</th>
+              <th class="num">Enveloppe opaque</th>
+              <th class="num">Vitrages</th>
+              <th>Ventilation diurne</th>
+            </tr></thead>
+            <tbody>${floorRows}</tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+}
+
+function openPdfReportModal() {
+  const modal = document.getElementById('pdfReportModal');
+  if (!modal) {
+    window.print();
+    return;
+  }
+  const m = appState.reportMeta;
+  const setVal = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.value = v || '';
+  };
+  const setChk = (id, v) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = Boolean(v);
+  };
+  setVal('pdfAuthor', m.author);
+  setVal('pdfClient', m.client);
+  setVal('pdfRef', m.ref);
+  setVal('pdfComments', m.comments);
+  setChk('pdfIncSummary', m.includeSummary !== false);
+  setChk('pdfIncInputs', m.includeInputs !== false);
+  setChk('pdfIncScenarios', m.includeScenarios !== false);
+  setChk('pdfIncVariants', appState.variants.length > 1 ? Boolean(m.includeVariants || appState.compareMode) : false);
+  setChk('pdfIncAdvanced', Boolean(m.includeAdvanced));
+  setChk('pdfIncCooling', m.includeCooling !== false);
+  document.getElementById('pdfIncVariantsWrap')?.classList.toggle('hidden', appState.variants.length <= 1);
+  modal.classList.remove('hidden');
+}
+
+function executeEngineeringPdfPrint() {
+  const m = appState.reportMeta;
+  m.author = document.getElementById('pdfAuthor')?.value || '';
+  m.client = document.getElementById('pdfClient')?.value || '';
+  m.ref = document.getElementById('pdfRef')?.value || '';
+  m.comments = document.getElementById('pdfComments')?.value || '';
+  m.includeSummary = Boolean(document.getElementById('pdfIncSummary')?.checked);
+  m.includeInputs = Boolean(document.getElementById('pdfIncInputs')?.checked);
+  m.includeScenarios = Boolean(document.getElementById('pdfIncScenarios')?.checked);
+  m.includeVariants = appState.variants.length > 1 && Boolean(document.getElementById('pdfIncVariants')?.checked);
+  m.includeAdvanced = Boolean(document.getElementById('pdfIncAdvanced')?.checked);
+  m.includeCooling = Boolean(document.getElementById('pdfIncCooling')?.checked);
+  saveWorkspaceToStorage();
+
+  document.getElementById('pdfReportModal')?.classList.add('hidden');
+  buildEngineeringPrintBlocks();
+
+  // Sauvegarde l'état visuel actuel pour restauration exacte après impression
+  const prevTheme = document.documentElement.dataset.theme;
+  const drawers = [...document.querySelectorAll('#advDrawersContainer .adv-drawer')];
+  const prevDrawerStates = drawers.map(d => d.open);
+  const body = document.body;
+
+  const printClasses = [
+    'print-hide-summary',
+    'print-hide-inputs',
+    'print-hide-scenarios',
+    'print-hide-variants',
+    'print-force-variants',
+    'print-force-report',
+    'print-hide-advanced',
+    'print-hide-cooling'
+  ];
+  body.classList.remove(...printClasses);
+
+  if (!m.includeSummary) body.classList.add('print-hide-summary');
+  if (!m.includeInputs) body.classList.add('print-hide-inputs');
+  if (!m.includeScenarios) body.classList.add('print-hide-scenarios');
+  if (!m.includeCooling) body.classList.add('print-hide-cooling');
+
+  if (m.includeSummary || m.includeAdvanced || m.includeCooling || m.includeScenarios) {
+    body.classList.add('print-force-report');
+  }
+  if (m.includeVariants) {
+    body.classList.add('print-force-variants');
+  } else {
+    body.classList.add('print-hide-variants');
+  }
+  if (!m.includeAdvanced) {
+    body.classList.add('print-hide-advanced');
+  } else {
+    drawers.forEach(d => {
+      d.open = true;
+    });
+  }
+
+  // Passage temporaire en palette papier claire pour que les graphiques Canvas soient nets sur PDF
+  document.documentElement.dataset.theme = 'light';
+  const cmpPane = document.getElementById('resTabComparePane');
+  const repPane = document.getElementById('resTabReportPane');
+  const prevCmpHidden = cmpPane?.classList.contains('hidden');
+  const prevRepHidden = repPane?.classList.contains('hidden');
+  if (m.includeVariants && cmpPane) cmpPane.classList.remove('hidden');
+  if (repPane) repPane.classList.remove('hidden');
+
+  if (m.includeVariants) renderVariantsComparator();
+  redrawSimpleChart();
+  redrawOpenDrawerCharts();
+
+  const restore = () => {
+    window.removeEventListener('afterprint', restore);
+    body.classList.remove(...printClasses);
+    document.documentElement.dataset.theme = prevTheme;
+    drawers.forEach((d, idx) => {
+      d.open = prevDrawerStates[idx];
+    });
+    if (cmpPane && prevCmpHidden) cmpPane.classList.add('hidden');
+    if (repPane && prevRepHidden) repPane.classList.add('hidden');
+    syncToggleAllDrawersBtn();
+    requestAnimationFrame(() => {
+      if (appState.compareMode && appState.variants.length > 1) {
+        renderVariantsComparator();
+      } else {
+        redrawSimpleChart();
+        redrawOpenDrawerCharts();
+      }
+    });
+  };
+
+  window.addEventListener('afterprint', restore);
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      window.print();
+    });
+  });
+}
+
+export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVariantChanged }) {
   notifyResultsVariantChange = onVariantChanged || (() => {});
-  notifyResultsDuplicateToConfig = onDuplicateToConfig || (() => {});
-
-  document.getElementById('btnResTabReport')?.addEventListener('click', () => {
-    appState.resultsTab = 'report';
-    applyResultsTabUI();
-  });
-
-  document.getElementById('btnResTabCompare')?.addEventListener('click', () => {
-    if (appState.variants.length <= 1) return;
-    appState.resultsTab = 'compare';
-    applyResultsTabUI();
-  });
-
-  document.getElementById('btnDuplicateFromResults')?.addEventListener('click', () => {
-    duplicateActiveVariant();
-    notifyResultsDuplicateToConfig();
-  });
 
   document.getElementById('variantPlotWindow')?.addEventListener('change', () => {
     renderVariantsComparator();
   });
+
+  // Modale de configuration du rapport PDF ingénieur
+  const closePdfModal = () => document.getElementById('pdfReportModal')?.classList.add('hidden');
+  document.getElementById('btnPrintReport')?.addEventListener('click', openPdfReportModal);
+  document.getElementById('btnPdfCancel')?.addEventListener('click', closePdfModal);
+  document.getElementById('btnPdfCloseX')?.addEventListener('click', closePdfModal);
+  document.getElementById('pdfReportModal')?.addEventListener('click', e => {
+    if (e.target.id === 'pdfReportModal') closePdfModal();
+  });
+  document.getElementById('btnPdfGenerate')?.addEventListener('click', executeEngineeringPdfPrint);
+
   document.querySelectorAll('.sub-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
@@ -1270,21 +1492,19 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVaria
   bindHoverTooltip(
     'chartSimpleHeatwave',
     () => simpleChartMeta,
-    (pt, meta) => {
-      const lim = meta.useAdaptiveLimit ? pt.limUpper : meta.thresholdC;
-      return `<strong>${formatDayOfYearFR(pt.d)} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
+    (pt, meta) => `<strong>${formatDayOfYearFR(pt.d)} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
       Temp. intérieure : <strong>${pt.Top.toFixed(1)} °C</strong><br>
       Temp. extérieure : ${pt.Te.toFixed(1)} °C<br>
-      Seuil confort : ${lim.toFixed(1)} °C`;
-    }
+      ${escapeHtml(meta.limitLabel || 'Seuil confort')} : ${pt.limUpper.toFixed(1)} °C`
   );
 
-  // Infobulle dédiée au graphique superposé multi-variantes
+  // Infobulle dédiée au graphique superposé multi-variantes (affiche la limite propre à chaque variante si elles diffèrent)
   const cmpCanvas = document.getElementById('chartVariantsCompare');
   if (cmpCanvas) {
     cmpCanvas.addEventListener('mousemove', e => {
       if (!variantsChartMeta) return;
-      const { c, i0, i1, pad, pw, entries } = variantsChartMeta;
+      const { c, i0, i1, pad, pw, entries, activeEntry, limitDiffers, getEntryLim } =
+        variantsChartMeta;
       const rect = c.getBoundingClientRect();
       const mx = e.clientX - rect.left;
       if (mx < pad.l || mx > pad.l + pw) {
@@ -1292,16 +1512,22 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVaria
         return;
       }
       const idx = Math.min(i1, Math.max(i0, Math.round(i0 + ((mx - pad.l) / pw) * (i1 - i0))));
-      const refPt = entries[0].wf.series[idx];
+      const refPt = (activeEntry || entries[0]).wf.series[idx];
       const rows = entries
-        .map(
-          en =>
-            `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${en.color};margin-right:5px;"></span>${escapeHtml(en.name)} : <strong>${en.wf.series[idx].Top.toFixed(1)} °C</strong>`
-        )
+        .map(en => {
+          const ownLim = getEntryLim ? getEntryLim(en, idx) : refPt.limUpper;
+          const limHint = limitDiffers
+            ? ` <span style="color:var(--text-muted);font-size:11px;">(lim. ${ownLim.toFixed(1)} °C)</span>`
+            : '';
+          return `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${en.color};margin-right:5px;"></span>${escapeHtml(en.name)} : <strong>${en.wf.series[idx].Top.toFixed(1)} °C</strong>${limHint}`;
+        })
         .join('<br>');
-      tooltipEl.innerHTML = `<strong>${formatDayOfYearFR(refPt.d)} — ${String(refPt.hod).padStart(2, '0')}h00</strong><br>${rows}<br><span style="color:var(--text-muted);">Limite SIA : ${refPt.limUpper.toFixed(1)} °C</span>`;
+      tooltipEl.innerHTML =
+        `<strong>${formatDayOfYearFR(refPt.d)} — ${String(refPt.hod).padStart(2, '0')}h00</strong><br>` +
+        `${rows}<br>` +
+        `<span style="color:var(--text-muted);">Ext. : ${refPt.Te.toFixed(1)} °C${limitDiffers ? '' : ` • Seuil : ${refPt.limUpper.toFixed(1)} °C`}</span>`;
       tooltipEl.style.display = 'block';
-      tooltipEl.style.left = Math.min(window.innerWidth - 260, e.clientX + 14) + 'px';
+      tooltipEl.style.left = Math.min(window.innerWidth - 280, e.clientX + 14) + 'px';
       tooltipEl.style.top = e.clientY - 12 + 'px';
     });
     cmpCanvas.addEventListener('mouseleave', () => {
@@ -1322,7 +1548,6 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVaria
   document.getElementById('plotCompareFloors').addEventListener('change', () => {
     if (appState.lastResults) requestAnimationFrame(redrawOpenDrawerCharts);
   });
-  document.getElementById('btnPrintReport').addEventListener('click', () => window.print());
 
   document.getElementById('btnExportCSV').addEventListener('click', () => {
     if (!appState.lastResults) onEnsureSimulation();

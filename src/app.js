@@ -22,9 +22,25 @@ import {
   syncAllUI,
   updateInspector
 } from './ui/config-view.js';
-import { bindResultsEvents, renderResultsView } from './ui/results-view.js';
+import { bindResultsEvents, refreshCompareView, renderResultsView } from './ui/results-view.js';
 
 let liveSimTimer = null;
+
+const ICON_SUN_SVG = `<svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>`;
+const ICON_MOON_SVG = `<svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>`;
+
+function syncThemeToggleButton() {
+  const btn = document.getElementById('btnThemeToggle');
+  if (!btn) return;
+  const isDark = document.documentElement.dataset.theme !== 'light';
+  if (isDark) {
+    btn.innerHTML = `${ICON_SUN_SVG}<span>Clair</span>`;
+    btn.dataset.tip = 'Passer au thème clair doux.';
+  } else {
+    btn.innerHTML = `${ICON_MOON_SVG}<span>Sombre</span>`;
+    btn.dataset.tip = 'Passer au thème sombre.';
+  }
+}
 
 function initHoverTooltips() {
   const tipEl = document.getElementById('chartTooltip');
@@ -122,7 +138,7 @@ function runFastBadgeSimulation() {
       : customWeather
     : generateSyntheticWeather(project.climate.station, project.climate.scenario, uhi);
   const raw = executeEngine(project, weatherObj.data, false, false);
-  const quick = enrichWithSIA180(raw, project.projectType);
+  const quick = enrichWithSIA180(raw, project.projectType, project);
   const isMinergie = project.projectType === 'minergie';
   const hrs = isMinergie ? quick.worstFloor.overMinergie265 : quick.worstFloor.overSIA;
   updateNavBadge(hrs, quick.limHours);
@@ -173,12 +189,14 @@ function setMode(mode) {
   document.getElementById('btnModeConfig').classList.toggle('active', !isRes);
   document.getElementById('btnModeResults').classList.toggle('active', isRes);
   if (isRes) {
-    appState.resultsTab = 'report';
+    appState.compareMode = false;
     if (appState.resultsStale || !appState.lastResults) {
       runSimulation();
     }
+    renderVariantBar(true);
     refreshResults();
   } else {
+    renderVariantBar(false);
     requestAnimationFrame(refresh3DViewers);
   }
 }
@@ -190,9 +208,9 @@ function handleProjectChanged() {
 }
 
 function handleVariantSwitched() {
-  renderVariantBar();
-  if (isResultsVisible()) {
-    appState.resultsTab = 'report';
+  const resVis = isResultsVisible();
+  renderVariantBar(resVis);
+  if (resVis) {
     runSimulation();
     refreshResults();
   } else {
@@ -208,7 +226,9 @@ document.getElementById('btnThemeToggle').addEventListener('click', () => {
   const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
   document.documentElement.dataset.theme = next;
   appState.theme = next;
+  syncThemeToggleButton();
   saveWorkspaceToStorage();
+  renderVariantBar(isResultsVisible());
   if (isResultsVisible()) {
     refreshResults();
   } else {
@@ -227,6 +247,7 @@ window.addEventListener('resize', () => {
 // Restauration automatique de l'espace de travail local (variantes + thème)
 loadWorkspaceFromStorage();
 document.documentElement.dataset.theme = appState.theme || 'dark';
+syncThemeToggleButton();
 
 initHoverTooltips();
 
@@ -235,7 +256,10 @@ bindConfigEvents({
   onResultsRefresh: refreshResults,
   onProjectChanged: handleProjectChanged,
   onVariantSwitched: handleVariantSwitched,
-  onOpenResults: () => setMode('results')
+  onOpenResults: () => setMode('results'),
+  onCompareChanged: () => {
+    if (isResultsVisible()) refreshCompareView();
+  }
 });
 
 bindResultsEvents({
@@ -243,13 +267,9 @@ bindResultsEvents({
   onRenderResults: refreshResults,
   onVariantChanged: () => {
     syncAllUI(refreshResults);
+    renderVariantBar(isResultsVisible());
     runSimulation();
     refreshResults();
-  },
-  onDuplicateToConfig: () => {
-    syncAllUI(refreshResults);
-    setMode('config');
-    scheduleLiveBadgeUpdate(30);
   }
 });
 

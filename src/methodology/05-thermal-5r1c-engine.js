@@ -4,7 +4,7 @@
  * et calcul de la puissance/besoin de refroidissement fictif pour 0 h de surchauffe.
  */
 
-import { getSIA180Limits } from '../standards/sia180.js';
+import { getProjectComfortLimits } from '../standards/sia180.js';
 import { SIA380_CATEGORIES } from '../standards/sia380-1.js';
 import {
   buildFloorThermalParams,
@@ -13,6 +13,7 @@ import {
 } from './03-envelope-and-gains.js';
 import {
   computeBuildingStackSpan,
+  computeFloorDayWindowFlowM3h,
   computeFloorNightFlowM3h
 } from './04-natural-ventilation.js';
 
@@ -230,7 +231,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       if (buf48.length > 48) sum48 -= buf48.shift();
 
       const tRm48 = sum48 / buf48.length;
-      const lim = getSIA180Limits(tRm48, projObj.siaCurveMode);
+      const lim = getProjectComfortLimits(tRm48, projObj);
+      const countAllHours = projObj.projectType === 'custom' && projObj.customReg?.countMode === 'all';
       const dow = Math.floor(hr.h / 24) % 7;
       const dayIdx = Math.min(en16798TrmByDay.length - 1, Math.floor(hr.h / 24));
       const isSummer = hr.d >= 120 && hr.d <= 273; // 1er mai – 30 septembre
@@ -292,7 +294,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             isOcc,
             projObj.albedo ?? 0.20,
             projObj.horizonDeg ?? 0,
-            projObj.useFresnelIncidence !== false
+            projObj.useFresnelIncidence !== false,
+            { hod: hr.hod, isOcc24h: fl.occStart === 0 && fl.occEnd === 24 }
           );
           const P_sol = solRes.totalW;
 
@@ -324,7 +327,6 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           const qHyg_m3h = isOcc ? fl.qHygSpec * fl.area : 0;
           const qInf_m3h = fl.achInfil * fp.vol;
           const etaEff = TairPrev[k] > 22.0 && hr.Te < TairPrev[k] ? 0 : (fl.etaWRG || 0);
-          const H_ve_day = 0.335 * (qHyg_m3h * (1 - etaEff) + qInf_m3h);
 
           const canNightCool =
             isNight &&
@@ -339,6 +341,25 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
                 projObj.stackCoupling
               )
             : 0;
+
+          // Aération par les fenêtres en journée pendant l'occupation quand θ_i > θ_e (stratégies Minergie)
+          const canDayWindow =
+            fl.dayVentMode === 'window_occ' &&
+            isOcc &&
+            !canNightCool &&
+            TairPrev[k] > (fl.dayTargetTi ?? 23.0) &&
+            TairPrev[k] - hr.Te >= (fl.dayMinDT ?? 1.0);
+          const qDayWin_m3h = canDayWindow
+            ? computeFloorDayWindowFlowM3h(
+                fp,
+                TairPrev[k],
+                hr.Te,
+                buildingStackSpan,
+                projObj.stackCoupling
+              )
+            : 0;
+
+          const H_ve_day = 0.335 * (qHyg_m3h * (1 - etaEff) + qInf_m3h + qDayWin_m3h);
           const H_ve_night = 0.335 * qNight_m3h;
           const H_ve = H_ve_day + H_ve_night;
 
@@ -374,8 +395,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           acc[k].veNight += H_ve_night * (hr.Te - out.Tair);
 
           if (withCoolingPass) {
-            const coolSetpoint =
-              projObj.projectType === 'minergie' ? Math.min(lim.upper, 26.5) : lim.upper;
+            const coolSetpoint = lim.upper;
             const canNightC =
               isNight &&
               TairCoolPrev[k] > fl.nightTargetTi &&
@@ -389,9 +409,25 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
                   projObj.stackCoupling
                 )
               : 0;
-            const H_veC = H_ve_day + 0.335 * qNC;
+            const canDayWinC =
+              fl.dayVentMode === 'window_occ' &&
+              isOcc &&
+              !canNightC &&
+              TairCoolPrev[k] > (fl.dayTargetTi ?? 23.0) &&
+              TairCoolPrev[k] - hr.Te >= (fl.dayMinDT ?? 1.0);
+            const qDayWinC = canDayWinC
+              ? computeFloorDayWindowFlowM3h(
+                  fp,
+                  TairCoolPrev[k],
+                  hr.Te,
+                  buildingStackSpan,
+                  projObj.stackCoupling
+                )
+              : 0;
+            const etaEffC = TairCoolPrev[k] > 22.0 && hr.Te < TairCoolPrev[k] ? 0 : (fl.etaWRG || 0);
+            const H_veC = 0.335 * (qHyg_m3h * (1 - etaEffC) + qInf_m3h + qDayWinC + qNC);
             const c0 = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, 0);
-            if (isOcc && c0.Top > coolSetpoint) {
+            if ((countAllHours || isOcc) && c0.Top > coolSetpoint) {
               const c1 = step5R1C(
                 fp,
                 TmCool[k],
@@ -445,12 +481,15 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       }
 
       if (record) {
+        // Saison réglementaire Minergie : du 16 avril (j=105) au 15 octobre (j=287) inclus
+        const isMinergieSeason = hr.d >= 105 && hr.d <= 287;
         for (let k = 0; k < F; k++) {
           const Top = acc[k].op / subSteps;
           const Tair = acc[k].air / subSteps;
           const Ts = acc[k].ts / subSteps;
           const st = stats[k];
-          const isOver = acc[k].isOcc && Top > lim.upper;
+          const inRegWindow = projObj.projectType === 'minergie' ? isMinergieSeason : true;
+          const isOver = inRegWindow && (countAllHours || acc[k].isOcc) && Top > lim.upper;
 
           st.totalHours++;
           if (Top < st.minTop) {
@@ -468,7 +507,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           }
           if (acc[k].isOcc) {
             st.occH++;
-            if (Top > 26.5) {
+            if (isMinergieSeason && Top > 26.5) {
               st.overMinergie265++;
               st.dhMinergie265 += Top - 26.5;
             }

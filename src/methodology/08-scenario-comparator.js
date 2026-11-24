@@ -60,7 +60,7 @@ export function runFullSimulation(project, customWeather = null, comfortUserPara
   const optRaw = executeEngine(pOpt, weatherObj.data, false, true);
 
   const base = enrichWithSIA180(baseRaw, project.projectType, project, raw2035, optRaw);
-  const r2035 = enrichWithSIA180(raw2035, project.projectType);
+  const r2035 = enrichWithSIA180(raw2035, project.projectType, project);
 
   // Calcul du confort thermique pour chaque étage
   base.floorResults = base.floorResults.map(fr => ({
@@ -88,17 +88,18 @@ export function runFullSimulation(project, customWeather = null, comfortUserPara
     f.nightVentMode = 'none';
   });
 
-  const rOpt = enrichWithSIA180(optRaw, project.projectType);
-  const rNoBlinds = enrichWithSIA180(executeEngine(pNoBlinds, weatherObj.data, false, false), project.projectType);
-  const rNoNight = enrichWithSIA180(executeEngine(pNoNight, weatherObj.data, false, false), project.projectType);
-  const rBad = enrichWithSIA180(executeEngine(pBad, weatherObj.data, false, false), project.projectType);
+  const rOpt = enrichWithSIA180(optRaw, project.projectType, project);
+  const rNoBlinds = enrichWithSIA180(executeEngine(pNoBlinds, weatherObj.data, false, false), project.projectType, project);
+  const rNoNight = enrichWithSIA180(executeEngine(pNoNight, weatherObj.data, false, false), project.projectType, project);
+  const rBad = enrichWithSIA180(executeEngine(pBad, weatherObj.data, false, false), project.projectType, project);
 
   const weather2050 = customWeather
     ? applyClimateDelta(customWeather, '2050', uhi)
     : generateSyntheticWeather(project.climate.station, '2050', uhi);
   const r2050 = enrichWithSIA180(
     executeEngine(project, weather2050.data, false, false),
-    project.projectType
+    project.projectType,
+    project
   );
 
   const variants = [
@@ -180,6 +181,9 @@ export function runFullSimulation(project, customWeather = null, comfortUserPara
 
   return {
     weatherLabel: weatherObj.sourceLabel,
+    isManualDesignDay: Boolean(weatherObj.isManualDesignDay),
+    manualConfig: weatherObj.manualConfig || null,
+    weatherDaysCount: Math.max(1, Math.round(weatherObj.data.length / 24)),
     ...base,
     variants,
     behavioralScenarios

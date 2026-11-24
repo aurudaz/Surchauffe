@@ -46,8 +46,20 @@ function hydrateProjectFloors(proj) {
   proj.floors.forEach((fl, idx) => ensureFloorDefaults(fl, idx, proj.floors.length));
   if (!Array.isArray(proj.openings)) proj.openings = [];
   if (!proj.climate) {
-    proj.climate = { station: 'SIO', scenario: 'REF', lat: 46.22, lon: 7.33, tzMode: 'cet_cest', urbanHeatIsland: false };
+    proj.climate = {
+      mode: 'strict_sia',
+      station: 'SIO',
+      localityId: 'sion',
+      scenario: 'REF',
+      lat: 46.22,
+      lon: 7.33,
+      altM: 482,
+      tzMode: 'cet_cest',
+      urbanHeatIsland: false
+    };
   }
+  if (!proj.climate.mode) proj.climate.mode = 'custom';
+  if (!proj.terrainCat) proj.terrainCat = 'III';
   return true;
 }
 
@@ -63,9 +75,22 @@ export const appState = {
   lastResults: null,
   resultsStale: true,
   resultsTab: 'report',
+  compareMode: false,
   applyAllFloorsOpenings: false,
   applyAllFloorsSia: false,
   theme: 'dark',
+  reportMeta: {
+    author: '',
+    client: '',
+    ref: '',
+    comments: '',
+    includeSummary: true,
+    includeInputs: true,
+    includeScenarios: true,
+    includeVariants: false,
+    includeAdvanced: false,
+    includeCooling: true
+  },
   uiModes: {
     global: initialVariant.inputMode,
     floorsEditor: initialVariant.floorsEditor,
@@ -157,7 +182,7 @@ export function createNewVariant({ inputMode = 'simple', floorsEditor = 'table',
   const newId = `var_${Date.now()}_${nextNum}`;
   const v = makeDefaultVariant(
     newId,
-    name || `Variante ${nextNum} — ${inputMode === 'advanced' ? 'Avancé' : 'Simple'}`,
+    name || `Variante ${nextNum}`,
     inputMode,
     floorsEditor,
     templateIdx
@@ -283,6 +308,7 @@ export function saveWorkspaceToStorage() {
     compareVariantIds: appState.compareVariantIds,
     activeStep: appState.uiModes.activeStep,
     comfortParams: appState.comfortParams,
+    reportMeta: appState.reportMeta,
     variants: appState.variants.map(v => ({
       id: v.id,
       name: v.name,
@@ -345,6 +371,9 @@ export function loadWorkspaceFromStorage() {
     if (parsed.comfortParams && typeof parsed.comfortParams === 'object') {
       appState.comfortParams = { ...COMFORT_DEFAULTS, ...parsed.comfortParams };
     }
+    if (parsed.reportMeta && typeof parsed.reportMeta === 'object') {
+      appState.reportMeta = { ...appState.reportMeta, ...parsed.reportMeta };
+    }
     if (parsed.activeStep) {
       appState.uiModes.activeStep = parsed.activeStep;
     }
@@ -353,6 +382,93 @@ export function loadWorkspaceFromStorage() {
   } catch {
     return false;
   }
+}
+
+/**
+ * Exporte l'espace complet (toutes les variantes + métadonnées rapport) au format JSON portable.
+ */
+export function buildWorkspaceExportObject() {
+  syncActiveVariantSnapshot();
+  return {
+    format: 'sia_thermic_studio_workspace',
+    version: 2,
+    exportedAt: new Date().toISOString(),
+    activeVariantId: appState.activeVariantId,
+    compareVariantIds: appState.compareVariantIds,
+    reportMeta: appState.reportMeta,
+    variants: appState.variants.map(v => ({
+      id: v.id,
+      name: v.name,
+      inputMode: v.inputMode,
+      floorsEditor: v.floorsEditor,
+      activeFloorId: v.activeFloorId,
+      project: v.project,
+      customWeather: v.customWeather || null
+    }))
+  };
+}
+
+/**
+ * Importe un fichier JSON exporté (soit un projet/variante unique, soit un espace multi-variantes complet).
+ * @returns {{ kind: 'workspace'|'project', count: number, msg: string }}
+ */
+export function importJsonToWorkspace(text) {
+  const parsed = JSON.parse(String(text || '').trim());
+  if (!parsed || typeof parsed !== 'object') {
+    throw new Error('Fichier JSON invalide.');
+  }
+
+  // Cas 1 : Espace multi-variantes complet
+  if (Array.isArray(parsed.variants) && parsed.variants.length > 0) {
+    const validVariants = parsed.variants
+      .filter(v => v && hydrateProjectFloors(v.project))
+      .map((v, idx) => ({
+        id: String(v.id || `var_imp_${Date.now()}_${idx}`),
+        name: String(v.name || `Variante ${idx + 1}`),
+        inputMode: v.inputMode === 'advanced' ? 'advanced' : 'simple',
+        floorsEditor: v.floorsEditor === 'box3d' ? 'box3d' : 'table',
+        project: v.project,
+        customWeather: v.customWeather && Array.isArray(v.customWeather.data) ? v.customWeather : null,
+        activeFloorId: v.activeFloorId || v.project.floors[0].id
+      }));
+    if (validVariants.length === 0) {
+      throw new Error('Aucune variante valide trouvée dans le fichier JSON.');
+    }
+    appState.variants = validVariants;
+    const activeV = validVariants.find(v => v.id === parsed.activeVariantId) || validVariants[0];
+    appState.compareVariantIds = Array.isArray(parsed.compareVariantIds)
+      ? parsed.compareVariantIds.filter(id => validVariants.some(v => v.id === id))
+      : validVariants.map(v => v.id);
+    if (appState.compareVariantIds.length === 0) appState.compareVariantIds = [activeV.id];
+    if (parsed.reportMeta && typeof parsed.reportMeta === 'object') {
+      appState.reportMeta = { ...appState.reportMeta, ...parsed.reportMeta };
+    }
+    applyVariantToAppState(activeV);
+    saveWorkspaceToStorage();
+    return {
+      kind: 'workspace',
+      count: validVariants.length,
+      msg: `Espace importé : ${validVariants.length} variante(s).`
+    };
+  }
+
+  // Cas 2 : Projet unique (.json) → remplace la variante active
+  if (Array.isArray(parsed.floors) && Array.isArray(parsed.openings)) {
+    hydrateProjectFloors(parsed);
+    const has3d = parsed.floors.some(f => f.box3d);
+    replaceActiveVariantProject(parsed, {
+      inputMode: has3d ? 'advanced' : null,
+      floorsEditor: has3d ? 'box3d' : 'table',
+      customWeather: null
+    });
+    return {
+      kind: 'project',
+      count: 1,
+      msg: `Projet « ${parsed.name || 'Sans nom'} » importé (${parsed.floors.length} étage(s), ${parsed.openings.length} ouverture(s)).`
+    };
+  }
+
+  throw new Error('Structure JSON non reconnue (ni projet SIA, ni espace de variantes).');
 }
 
 export function resetWorkspaceStorage() {

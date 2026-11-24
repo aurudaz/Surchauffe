@@ -378,7 +378,7 @@ export function enrichWithSIA180(
   sim2035Raw = null,
   optRaw = null
 ) {
-  const limHours = getSIA180ToleranceHours(projectType);
+  const limHours = getSIA180ToleranceHours(projectType, project?.customReg);
 
   const floorResults = engineRes.floorRaw.map(fr => {
     const score = computeResilienceScore(fr, limHours, projectType);

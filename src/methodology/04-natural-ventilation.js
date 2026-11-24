@@ -140,3 +140,49 @@ export function computeFloorNightFlowM3h(fp, TairC, TeC, buildingStackSpan, stac
   }
   return sum;
 }
+
+/**
+ * Calcule le débit d'aération naturelle par les fenêtres en journée (pendant l'occupation
+ * lorsque θ_i > θ_e), en utilisant le même modèle physique d'ouvrants que la ventilation nocturne.
+ * Permet de simuler les stratégies Minergie « fenêtres le jour », « jour & nuit » et « traversante ».
+ */
+export function computeFloorDayWindowFlowM3h(fp, TairC, TeC, buildingStackSpan, stackCoupling) {
+  const fl = fp.fl;
+  if (fl.dayVentMode !== 'window_occ' || TairC <= TeC) return 0;
+
+  const isMultiStack = Boolean(stackCoupling) && buildingStackSpan > fl.height + 0.5;
+  const span = isMultiStack ? buildingStackSpan : fl.height;
+
+  // Si l'étage a des ouvrants détaillés configurés (ou mode physique), utilise directement ces ouvrants
+  if (fl.nightVentMode === 'physical') {
+    let sum = 0;
+    for (const op of fp.ops) {
+      sum += calcOpeningFlowM3s(op, TairC, TeC, span, isMultiStack) * 3600;
+    }
+    return sum;
+  }
+
+  // Si mode simple_pct actif, utilise la même proportion ouvrante (fenêtres ouvertes par les occupants)
+  if (fl.nightVentMode === 'simple_pct' && (fl.nightSimplePct ?? 0) > 0) {
+    return calcSimplePctNightFlowM3s(fl, fp.winArea, TairC, TeC, span, isMultiStack).m3s * 3600;
+  }
+
+  // Sinon (ex. stratégie « fenêtres le jour uniquement », nightVentMode === 'none' ou débit fixe),
+  // calcule via les ouvrants physiques si présents, sinon repli normatif 3 % surface plancher en oscillo-battant
+  let physSum = 0;
+  for (const op of fp.ops) {
+    if (op.operable) {
+      physSum += calcOpeningFlowM3s(op, TairC, TeC, span, isMultiStack) * 3600;
+    }
+  }
+  if (physSum > 0) return physSum;
+
+  const fallbackFl = {
+    ...fl,
+    nightSimpleBasis: 'floor_pct',
+    nightSimplePct: 3.0,
+    nightSimpleEff: 0.60,
+    nightSimpleCross: Boolean(fl.nightSimpleCross)
+  };
+  return calcSimplePctNightFlowM3s(fallbackFl, fp.winArea, TairC, TeC, span, isMultiStack).m3s * 3600;
+}

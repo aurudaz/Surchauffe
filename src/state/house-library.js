@@ -2,7 +2,10 @@
  * @fileoverview Bibliothèque de bâtiments types SIA pré-configurés et normalisation des étages.
  */
 
-import { deriveSiaInternalDefaults } from '../standards/sia380-1.js';
+import {
+  deriveSiaInternalDefaults,
+  getDefaultRoomTypeForSiaCat
+} from '../standards/sia380-1.js';
 import {
   applyBox3dToFloor,
   computeAutoEnvelopeFromFloor
@@ -21,11 +24,21 @@ export function ensureFloorDefaults(fl, idx = 0, total = 1) {
   if (fl.occPresenceFactor === undefined) {
     fl.occPresenceFactor = fl.spaceType === 'residential' ? 0.5 : 1.0;
   }
+  if (fl.roomType2024 === undefined) {
+    fl.roomType2024 = getDefaultRoomTypeForSiaCat(fl.siaCategory || 'I');
+  }
+  if (fl.cSpecMinergie === undefined) {
+    fl.cSpecMinergie = Math.min(75, Math.max(10, Number(fl.cSpec) || 45));
+  }
+  if (fl.dayVentMode === undefined) fl.dayVentMode = 'none';
+  if (fl.dayTargetTi === undefined) fl.dayTargetTi = 23.0;
+  if (fl.dayMinDT === undefined) fl.dayMinDT = 1.0;
   if (fl.nightSimpleBasis === undefined) fl.nightSimpleBasis = 'floor_pct';
   if (fl.nightSimplePct === undefined) fl.nightSimplePct = 5.0;
   if (fl.nightSimpleEff === undefined) fl.nightSimpleEff = 0.60;
   if (fl.nightSimpleCross === undefined) fl.nightSimpleCross = false;
   if (fl.internalProfileMode === undefined) fl.internalProfileMode = 'sia2024';
+  if (fl.hasMechVent === undefined) fl.hasMechVent = (fl.etaWRG || 0) > 0;
   if (fl.nightVentMode === undefined) fl.nightVentMode = 'simple_pct';
   if (fl.uSlabInter === undefined) fl.uSlabInter = 1.4;
   if (fl.psiTotal === undefined) fl.psiTotal = Math.round((fl.area || 50) * 0.03 * 10) / 10;
@@ -58,9 +71,11 @@ function makeFloor(
     simplePos: pos,
     envelopeStd: uStd,
     siaCategory: cat,
+    roomType2024: getDefaultRoomTypeForSiaCat(cat),
     spaceType: sia.spaceType,
     inertiaClass: String(cSpec),
     cSpec,
+    cSpecMinergie: Math.min(75, cSpec),
     gainFactorPct: 100,
     wallExtArea: 0,
     uWallExt: 0.2,
@@ -83,7 +98,11 @@ function makeFloor(
     internalProfileMode: 'sia2024',
     qHygSpec: sia.qHygSpec,
     achInfil: 0.1,
+    hasMechVent: false,
     etaWRG: 0.0,
+    dayVentMode: 'none',
+    dayTargetTi: 23.0,
+    dayMinDT: 1.0,
     nightVentMode: 'simple_pct',
     nightSimpleBasis: 'floor_pct',
     nightSimplePct: nightPct,

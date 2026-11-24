@@ -12,17 +12,17 @@ export const SIA180_TOLERANCE_PROFILES = {
   minergie: {
     hours: 100,
     tempLimitC: 26.5,
-    label: 'Minergie (Variante 2)',
+    label: 'Minergie',
     shortLabel: 'Minergie (≤ 100 h > 26.5 °C)',
     description:
-      'Label Minergie / Minergie-P / Minergie-A (protection thermique estivale, Variante 2) : ≤ 100 h/an au-dessus de 26.5 °C (climat 2035) + bilan constructif (g_total, inertie, vent SIA 342).'
+      'Label Minergie, Minergie-P et Minergie-A (exigence estivale identique pour les 3 labels) : simulation dynamique ≤ 100 h/an au-dessus de 26.5 °C (climat 2035) + contrôle constructif (g_total, inertie, vent SIA 342).'
   },
   new: {
     hours: 100,
     label: 'SIA 180:2014 — Construction neuve',
     shortLabel: 'SIA 180 — Neuf (≤ 100 h/an)',
     description:
-      'Norme SIA 180:2014 pour constructions neuves (et bureaux/écoles) : ≤ 100 h/an de dépassement de la courbe limite adaptative (Fig. 3 ou Fig. 4) pendant l’occupation.'
+      'Norme SIA 180:2014 pour constructions neuves : ≤ 100 h/an de dépassement pendant l’occupation (Fig. 3 auto en ventilation naturelle, Fig. 4 auto si VMC active).'
   },
   strict_100: {
     hours: 100,
@@ -36,7 +36,7 @@ export const SIA180_TOLERANCE_PROFILES = {
     label: 'SIA 180:2014 — Rénovation / Transformation',
     shortLabel: 'SIA 180 — Rénovation (≤ 400 h/an)',
     description:
-      'Norme SIA 180:2014 pour transformations, rénovations et bâtiments existants : tolérance élargie à ≤ 400 h/an au-dessus de la courbe limite adaptative pendant l’occupation.'
+      'Norme SIA 180:2014 pour transformations, rénovations et bâtiments existants : tolérance élargie à ≤ 400 h/an (Fig. 3 auto en ventilation naturelle, Fig. 4 auto si VMC active).'
   },
   residential_400: {
     hours: 400,
@@ -50,16 +50,57 @@ export const SIA180_TOLERANCE_PROFILES = {
     label: 'MoPEC / EN-102 — Sans refroidissement',
     shortLabel: 'MoPEC / EN-102 (0 h/an)',
     description:
-      'Modèle de prescriptions énergétiques des cantons (MoPEC / justificatif EN-102) : exigence stricte sans installation de refroidissement (0 h/an de dépassement toléré).'
+      'Modèle de prescriptions énergétiques des cantons (MoPEC / justificatif EN-102) : exigence stricte sans installation de refroidissement (0 h/an, Fig. 3 auto si naturelle, Fig. 4 auto si VMC).'
+  },
+  custom: {
+    hours: 100,
+    label: 'Réglementation personnalisée',
+    shortLabel: 'Custom (≤ 100 h > 27.0 °C)',
+    description:
+      'Exigence personnalisée : définissez librement le type de courbe limite, la température de plafonnement [°C], le nombre maximal d’heures tolérées et la période de comptage.'
   }
 };
 
-export function getSIA180Profile(projectType) {
+export const DEFAULT_CUSTOM_REG = {
+  limitMode: 'fixed', // 'fixed' | 'adaptive_cap' | 'fig4'
+  maxTempC: 27.0,
+  maxHours: 100,
+  countMode: 'occupied' // 'occupied' | 'all'
+};
+
+export function normalizeCustomReg(customReg = null) {
+  const c = customReg && typeof customReg === 'object' ? customReg : {};
+  const limitMode = ['fixed', 'adaptive_cap', 'fig4'].includes(c.limitMode)
+    ? c.limitMode
+    : DEFAULT_CUSTOM_REG.limitMode;
+  const maxTempC = Math.max(20, Math.min(36, Number(c.maxTempC ?? DEFAULT_CUSTOM_REG.maxTempC) || 27.0));
+  const maxHours = Math.max(0, Math.min(8760, Math.round(Number(c.maxHours ?? DEFAULT_CUSTOM_REG.maxHours) || 0)));
+  const countMode = c.countMode === 'all' ? 'all' : 'occupied';
+  return { limitMode, maxTempC, maxHours, countMode };
+}
+
+export function getSIA180Profile(projectType, customReg = null) {
+  if (projectType === 'custom') {
+    const cr = normalizeCustomReg(customReg);
+    const limTxt =
+      cr.limitMode === 'fixed'
+        ? `> ${cr.maxTempC.toFixed(1)} °C`
+        : cr.limitMode === 'adaptive_cap'
+          ? `SIA plaf. ${cr.maxTempC.toFixed(1)} °C`
+          : `Fig. 4 max ${cr.maxTempC.toFixed(1)} °C`;
+    return {
+      ...SIA180_TOLERANCE_PROFILES.custom,
+      hours: cr.maxHours,
+      tempLimitC: cr.maxTempC,
+      shortLabel: `Custom (≤ ${cr.maxHours} h, ${limTxt})`,
+      description: `Réglementation personnalisée : ≤ ${cr.maxHours} h/an (${limTxt}, ${cr.countMode === 'all' ? '24h/24' : 'heures occupées'}).`
+    };
+  }
   return SIA180_TOLERANCE_PROFILES[projectType] || SIA180_TOLERANCE_PROFILES.new;
 }
 
-export function getSIA180ToleranceHours(projectType) {
-  return getSIA180Profile(projectType).hours;
+export function getSIA180ToleranceHours(projectType, customReg = null) {
+  return getSIA180Profile(projectType, customReg).hours;
 }
 
 /**
@@ -91,6 +132,47 @@ export function getSIA180Limits(tRm48, mode = 'fig3') {
     upper = 26.5;
   }
   return { upper, lower };
+}
+
+/**
+ * Calcule la limite de confort effective pour un projet selon son exigence active :
+ *  - Minergie : seuil fixe 26.5 °C (sans courbe SIA)
+ *  - Custom : seuil fixe, SIA adaptatif plafonné ou rampe Fig. 4 plafonnée
+ *  - SIA 180 / MoPEC : Fig. 3 (ventilation naturelle) ou Fig. 4 (VMC)
+ */
+export function getProjectComfortLimits(tRm48, project) {
+  const pt = project?.projectType || 'new';
+  const lower = Math.min(22.0, Math.max(20.5, 0.33 * tRm48 + 14.3));
+  if (pt === 'minergie') {
+    return { upper: 26.5, lower, label: 'Minergie (26.5 °C)' };
+  }
+  if (pt === 'custom') {
+    const cr = normalizeCustomReg(project?.customReg);
+    if (cr.limitMode === 'fixed') {
+      return { upper: cr.maxTempC, lower, label: `Custom (${cr.maxTempC.toFixed(1)} °C)` };
+    }
+    if (cr.limitMode === 'adaptive_cap') {
+      const raw = Math.max(25.0, 0.33 * tRm48 + 21.8);
+      return {
+        upper: Math.min(cr.maxTempC, raw),
+        lower,
+        label: `SIA plaf. ${cr.maxTempC.toFixed(1)} °C`
+      };
+    }
+    let upper = Math.min(24.5, cr.maxTempC);
+    if (tRm48 > 12.0 && tRm48 < 17.5) {
+      upper = upper + ((cr.maxTempC - upper) / 5.5) * (tRm48 - 12.0);
+    } else if (tRm48 >= 17.5) {
+      upper = cr.maxTempC;
+    }
+    return { upper, lower, label: `Fig. 4 max ${cr.maxTempC.toFixed(1)} °C` };
+  }
+  const mode = project?.siaCurveMode === 'fig4' ? 'fig4' : 'fig3';
+  const base = getSIA180Limits(tRm48, mode);
+  return {
+    ...base,
+    label: mode === 'fig4' ? 'SIA Fig. 4 (VMC)' : 'SIA Fig. 3 (nat.)'
+  };
 }
 
 /**

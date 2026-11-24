@@ -9,7 +9,7 @@
  */
 
 import { EN16798_LIMITS } from '../standards/comfort-references.js';
-import { getSIA180Limits } from '../standards/sia180.js';
+import { getProjectComfortLimits, getSIA180Limits } from '../standards/sia180.js';
 
 const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 const MONTH_SHORT_FR = [
@@ -280,7 +280,7 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
   return { c, i0, i1, pad, pw, activeFR };
 }
 
-export function drawSIAChart(activeFR, siaCurveMode) {
+export function drawSIAChart(activeFR, siaCurveMode, project = null) {
   const prep = prepCanvas('chartSIA');
   if (!prep || !activeFR.series) return;
   const { ctx, w, h } = prep;
@@ -288,6 +288,8 @@ export function drawSIAChart(activeFR, siaCurveMode) {
   const pad = { l: 46, r: 16, t: 22, b: 30 };
   const pw = w - pad.l - pad.r;
   const ph = h - pad.t - pad.b;
+
+  const limAt = x => (project ? getProjectComfortLimits(x, project) : getSIA180Limits(x, siaCurveMode));
 
   const xMin = 5;
   const xMax = 28;
@@ -300,12 +302,12 @@ export function drawSIAChart(activeFR, siaCurveMode) {
   ctx.fillStyle = cssVar('--chart-band');
   ctx.beginPath();
   for (let x = xMin; x <= xMax; x += 0.25) {
-    const l = getSIA180Limits(x, siaCurveMode);
+    const l = limAt(x);
     if (x === xMin) ctx.moveTo(xOf(x), yOf(l.upper));
     else ctx.lineTo(xOf(x), yOf(l.upper));
   }
   for (let x = xMax; x >= xMin; x -= 0.25) {
-    ctx.lineTo(xOf(x), yOf(getSIA180Limits(x, siaCurveMode).lower));
+    ctx.lineTo(xOf(x), yOf(limAt(x).lower));
   }
   ctx.closePath();
   ctx.fill();
@@ -339,7 +341,7 @@ export function drawSIAChart(activeFR, siaCurveMode) {
   ctx.lineWidth = 1.8;
   ctx.beginPath();
   for (let x = xMin; x <= xMax; x += 0.25) {
-    const l = getSIA180Limits(x, siaCurveMode);
+    const l = limAt(x);
     if (x === xMin) ctx.moveTo(xOf(x), yOf(l.upper));
     else ctx.lineTo(xOf(x), yOf(l.upper));
   }
@@ -564,10 +566,9 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
 export function drawSimpleHeatwaveChart(
   res,
   activeFR,
-  thresholdC = 26.5,
+  limitLabel = 'Seuil SIA 180',
   winMode = 'hottest14',
-  compareFloors = false,
-  useAdaptiveLimit = false
+  compareFloors = false
 ) {
   const prep = prepCanvas('chartSimpleHeatwave');
   if (!prep || !activeFR.series || activeFR.series.length < 2) return null;
@@ -583,7 +584,7 @@ export function drawSimpleHeatwaveChart(
   if (len < 2) return null;
 
   const cmp = compareFloors && res && res.floorResults && res.floorResults.length > 1;
-  const getLim = pt => (useAdaptiveLimit ? pt.limUpper : thresholdC);
+  const getLim = pt => pt.limUpper;
 
   let yMin = 100;
   let yMax = -100;
@@ -651,7 +652,7 @@ export function drawSimpleHeatwaveChart(
 
   const leg = [
     ['Temp. extérieure', pal.ext],
-    [useAdaptiveLimit ? 'Seuil SIA 180' : `Seuil (${thresholdC.toFixed(1)} °C)`, pal.limit],
+    [limitLabel, pal.limit],
     ['Surchauffe', pal.danger]
   ];
   if (cmp) {
@@ -695,15 +696,16 @@ export function drawSimpleHeatwaveChart(
     lx += itemW + 8;
   }
 
-  return { c, i0, i1, pad, pw, activeFR, thresholdC, useAdaptiveLimit };
+  return { c, i0, i1, pad, pw, activeFR, limitLabel };
 }
 
 /**
- * Superpose les températures opératives intérieures de plusieurs variantes de projet (comparateur Lesosai).
- * @param {Array<{ id: string, name: string, color: string, wf: object }>} entries
- * @param {'hottest14'|'summer'|'year'} winMode
+ * Superpose les températures opératives intérieures de plusieurs variantes de projet
+ * sur un graphique identique au rapport principal. Si des variantes ont des limites différentes
+ * (ex. ventilation naturelle Fig. 3 vs VMC Fig. 4, Minergie ou Custom), chaque limite distincte
+ * est tracée clairement en pointillés dans la couleur de sa variante.
  */
-export function drawVariantsComparisonChart(entries, winMode = 'hottest14') {
+export function drawVariantsComparisonChart(entries, winMode = 'hottest14', activeVariantId = null) {
   const prep = prepCanvas('chartVariantsCompare');
   if (!prep || !entries || entries.length === 0) return null;
   const valid = entries.filter(e => e.wf && e.wf.series && e.wf.series.length >= 2);
@@ -715,25 +717,64 @@ export function drawVariantsComparisonChart(entries, winMode = 'hottest14') {
   const pw = w - pad.l - pad.r;
   const ph = h - pad.t - pad.b;
 
-  const refS = valid[0].wf.series;
+  const activeEntry = valid.find(e => e.id === activeVariantId) || valid[0];
+  const refS = activeEntry.wf.series;
   const minLen = Math.min(...valid.map(e => e.wf.series.length));
   const { i0, i1 } = resolveWindowBounds(
     refS.slice(0, minLen),
-    Math.min(minLen - 1, valid[0].wf.maxTopHour || 0),
+    Math.min(minLen - 1, activeEntry.wf.maxTopHour || 0),
     winMode
   );
   const len = i1 - i0 + 1;
   if (len < 2) return null;
 
+  const getEntryLim = (e, idx) => e.wf.series[idx].limUpper;
+  const shortLimitTag = proj => {
+    const pt = proj?.projectType || 'new';
+    if (pt === 'minergie') return '26.5°C';
+    if (pt === 'custom') {
+      const cr = proj?.customReg || {};
+      const t = Number(cr.maxTempC ?? 27.0).toFixed(1);
+      return cr.limitMode === 'adaptive_cap' ? `Plaf. ${t}°` : `${t}°C`;
+    }
+    return proj?.siaCurveMode === 'fig4' ? 'Fig. 4 (VMC)' : 'Fig. 3 (nat.)';
+  };
+
+  // Regroupe les variantes qui partagent exactement la même courbe limite (écart ≤ 0.35 °C)
+  const limitGroups = [];
+  const stepCheck = Math.max(1, Math.floor((i1 - i0) / 48));
+  for (const e of valid) {
+    let matched = null;
+    for (const grp of limitGroups) {
+      let same = true;
+      for (let i = i0; i <= i1; i += stepCheck) {
+        if (Math.abs(getEntryLim(e, i) - getEntryLim(grp.rep, i)) > 0.35) {
+          same = false;
+          break;
+        }
+      }
+      if (same) {
+        matched = grp;
+        break;
+      }
+    }
+    if (matched) {
+      matched.members.push(e);
+    } else {
+      limitGroups.push({ rep: e, members: [e], tag: shortLimitTag(e.project) });
+    }
+  }
+  const limitDiffers = limitGroups.length > 1;
+
   let yMin = 100;
   let yMax = -100;
   for (let i = i0; i <= i1; i++) {
-    yMin = Math.min(yMin, refS[i].limUpper - 4);
-    yMax = Math.max(yMax, refS[i].limUpper + 1);
+    yMin = Math.min(yMin, refS[i].Te, refS[i].Top);
+    yMax = Math.max(yMax, refS[i].Te, refS[i].Top);
     for (const e of valid) {
-      const top = e.wf.series[i].Top;
-      yMin = Math.min(yMin, top);
-      yMax = Math.max(yMax, top);
+      const pt = e.wf.series[i];
+      yMin = Math.min(yMin, pt.Top, pt.limUpper - 2);
+      yMax = Math.max(yMax, pt.Top, pt.limUpper + 1);
     }
   }
   yMin = Math.floor((yMin - 1) / 5) * 5;
@@ -760,25 +801,68 @@ export function drawVariantsComparisonChart(entries, winMode = 'hottest14') {
   }
 
   drawDateAxisLabels(ctx, refS, i0, len, xOf, h, winMode, txtCol);
+  fillOverheatZone(ctx, refS, i0, i1, xOf, yOf, pt => pt.limUpper, pal.dangerFill);
 
-  // Limite SIA de référence (pointillés verts)
-  ctx.strokeStyle = pal.limit;
-  ctx.lineWidth = 1.6;
-  ctx.setLineDash([5, 4]);
+  // Température extérieure de la variante active
+  ctx.strokeStyle = pal.ext;
+  ctx.lineWidth = winMode === 'year' ? 0.9 : 1.2;
   ctx.beginPath();
   for (let i = i0; i <= i1; i++) {
     const px = xOf(i - i0);
-    const py = yOf(refS[i].limUpper);
+    const py = yOf(refS[i].Te);
     if (i === i0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
   ctx.stroke();
-  ctx.setLineDash([]);
 
-  const leg = [['Limite SIA', pal.limit]];
-  valid.forEach((entry, idx) => {
+  // Courbe(s) limite(s) : 1 courbe verte si identique, sinon 1 courbe pointillée par limite distincte dans la couleur de sa variante
+  const leg = [['Temp. extérieure', pal.ext, false]];
+  if (!limitDiffers) {
+    ctx.strokeStyle = pal.limit;
+    ctx.lineWidth = 1.8;
+    ctx.setLineDash([6, 4]);
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const px = xOf(i - i0);
+      const py = yOf(refS[i].limUpper);
+      if (i === i0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    leg.push([`Seuil ${limitGroups[0].tag}`, pal.limit, true]);
+  } else {
+    limitGroups.forEach(grp => {
+      const limCol = grp.rep.color;
+      ctx.strokeStyle = limCol;
+      ctx.lineWidth = 1.75;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      for (let i = i0; i <= i1; i++) {
+        const px = xOf(i - i0);
+        const py = yOf(getEntryLim(grp.rep, i));
+        if (i === i0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Étiquette directe en bout de courbe pour distinguer instantanément les 2 limites (ex. Fig. 3 vs Fig. 4)
+      const endY = yOf(getEntryLim(grp.rep, i1));
+      ctx.font = 'bold 10px Inter, sans-serif';
+      ctx.fillStyle = limCol;
+      ctx.textAlign = 'right';
+      ctx.fillText(`Lim. ${grp.tag}`, w - pad.r - 4, Math.max(pad.t + 10, endY - 5));
+      ctx.font = '11px Inter, sans-serif';
+      leg.push([`Lim. ${grp.tag}`, limCol, true]);
+    });
+  }
+  leg.push(['Surchauffe', pal.danger, false]);
+
+  valid.forEach(entry => {
+    const isAct = entry === activeEntry;
     ctx.strokeStyle = entry.color;
-    ctx.lineWidth = idx === 0 ? (winMode === 'year' ? 1.6 : 2.4) : (winMode === 'year' ? 1.4 : 2.0);
+    ctx.lineWidth = isAct ? (winMode === 'year' ? 1.6 : 2.4) : (winMode === 'year' ? 1.3 : 1.9);
     ctx.beginPath();
     for (let i = i0; i <= i1; i++) {
       const px = xOf(i - i0);
@@ -787,20 +871,42 @@ export function drawVariantsComparisonChart(entries, winMode = 'hottest14') {
       else ctx.lineTo(px, py);
     }
     ctx.stroke();
-    leg.unshift([entry.name.slice(0, 18), entry.color]);
+    leg.unshift([entry.name.slice(0, 15), entry.color, false]);
   });
 
   let lx = pad.l + 4;
-  for (const [lbl, col] of leg) {
-    const itemW = ctx.measureText(lbl).width + 24;
+  for (const [lbl, col, isDashed] of leg) {
+    const itemW = ctx.measureText(lbl).width + 22;
     if (lx + itemW > w - pad.r) break;
-    ctx.fillStyle = col;
-    ctx.fillRect(lx, 8, 12, 3.5);
+    if (isDashed) {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 2]);
+      ctx.beginPath();
+      ctx.moveTo(lx, 10);
+      ctx.lineTo(lx + 12, 10);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    } else {
+      ctx.fillStyle = col;
+      ctx.fillRect(lx, 8, 12, 3.5);
+    }
     ctx.fillStyle = cssVar('--text');
     ctx.textAlign = 'left';
     ctx.fillText(lbl, lx + 16, 13);
-    lx += itemW + 8;
+    lx += itemW + 6;
   }
 
-  return { c, i0, i1, pad, pw, entries: valid };
+  return {
+    c,
+    i0,
+    i1,
+    pad,
+    pw,
+    entries: valid,
+    activeEntry,
+    limitDiffers,
+    limitGroups,
+    getEntryLim
+  };
 }

@@ -121,10 +121,16 @@ export function ensureBox3dDefaults(fl, floorOpenings = []) {
 
 /**
  * Convertit la configuration 3D « Paroi par paroi » (6 faces) d'un étage en
- * paramètres thermiques 5R1C (`wallExtArea`, `uWallExt`, `cSpec`, etc.) et
- * met à jour les ouvertures correspondantes dans `project.openings`.
+ * paramètres thermiques 5R1C (`wallExtArea`, `uWallExt`, `cSpec`, etc.).
+ *
+ * - Par défaut (`preserveOpenings = false`, utilisé par les modèles pré-configurés) :
+ *   génère les ouvertures dans `project.openings` à partir de `b3.walls`.
+ * - En mode structure seule (`preserveOpenings = true`, utilisé par l'éditeur 3D étape 2
+ *   et par l'étape 3 Vitrages & Stores) : conserve intactes les fenêtres placées par
+ *   l'utilisateur, met à jour leur orientation si `frontOrient` pivote, et soustrait
+ *   leurs surfaces réelles des surfaces opaques des 6 parois.
  */
-export function applyBox3dToFloor(fl, project) {
+export function applyBox3dToFloor(fl, project, { preserveOpenings = false } = {}) {
   const b3 = ensureBox3dDefaults(fl, project.openings.filter(o => o.floorId === fl.id));
   const dx = Math.max(1.0, Number(b3.dimX) || 4.0);
   const dy = Math.max(1.0, Number(b3.dimY) || 5.0);
@@ -150,8 +156,10 @@ export function applyBox3dToFloor(fl, project) {
   let groundArea = 0;
   let groundUA = 0;
   let groundB = 0.3;
-  // Capacité thermique effective ISO 13786 : Σ (A_paroi · κ_paroi) + mobilier (~8 Wh/(m²·K))
+  // Capacité thermique effective ISO 13786 (modèle horaire 5R1C) : Σ (A_paroi · κ_5R1C) + mobilier (~8 Wh/(m²·K))
   let totalCapWhK = 8.0 * fl.area;
+  // Capacité thermique spécifique SIA 180 / Minergie Bauteile (sans mobilier, plafonnée à 75 Wh/(m²·K))
+  let totalCapMinergieWhK = 0;
 
   const prevOps = project.openings.filter(o => o.floorId === fl.id);
   const defaultBlindThreshI = b3.blindThreshI ?? prevOps[0]?.blindThreshI ?? 200;
@@ -159,6 +167,22 @@ export function applyBox3dToFloor(fl, project) {
   const defaultBlindRule = b3.blindRule ?? prevOps[0]?.blindRule ?? 'irr_and_temp';
   const defaultFrameFactor = b3.frameFactor ?? prevOps[0]?.frameFactor ?? 0.78;
   const defaultShadingFactor = b3.shadingFactor ?? prevOps[0]?.shadingFactor ?? 1.0;
+
+  const winAreaByFace = { front: 0, back: 0, right: 0, left: 0, ceiling: 0, floor: 0 };
+  if (preserveOpenings) {
+    for (const op of prevOps) {
+      let fk = op.box3dFace;
+      if (fk && orients[fk]) {
+        op.orient = orients[fk];
+      } else {
+        fk = Object.keys(orients).find(k => orients[k] === op.orient) || null;
+        if (fk) op.box3dFace = fk;
+      }
+      if (fk && winAreaByFace[fk] !== undefined) {
+        winAreaByFace[fk] += Math.max(0, (op.width || 0) * (op.height || 0) * (op.qty || 1));
+      }
+    }
+  }
 
   const newOpenings = [];
 
@@ -168,7 +192,9 @@ export function applyBox3dToFloor(fl, project) {
     const uVal = w.preset === 'custom' ? Math.max(0.05, Number(w.u) || 0.2) : preset.u;
 
     let winArea = 0;
-    if (faceKey !== 'floor' && w.winPreset && w.winPreset !== 'none') {
+    if (preserveOpenings) {
+      winArea = Math.min(grossAreas[faceKey] * 0.95, winAreaByFace[faceKey] || 0);
+    } else if (faceKey !== 'floor' && w.winPreset && w.winPreset !== 'none') {
       const wp = BOX3D_WINDOW_PRESETS[w.winPreset];
       const ww = w.winPreset === 'custom' ? Math.max(0.2, Number(w.winW) || 1.4) : wp.w;
       const wh = w.winPreset === 'custom' ? Math.max(0.2, Number(w.winH) || 1.4) : wp.h;
@@ -224,9 +250,12 @@ export function applyBox3dToFloor(fl, project) {
     }
 
     const netOpaque = Math.max(0, grossAreas[faceKey] - winArea);
-    // Contribution physique ISO 13786 : surface opaque interne × capacité surfacique périodique κ [Wh/(m²·K)]
+    // Contribution physique ISO 13786 (5R1C horaire) : surface opaque interne × κ_5R1C [Wh/(m²·K)]
     const kappa = preset.kappa ?? preset.mass ?? 30;
     totalCapWhK += netOpaque * kappa;
+    // Contribution SIA 180 / Minergie Bauteile (sans mobilier, plafonnée ensuite à 75 Wh/(m²·K))
+    const kappaMin = preset.kappaMinergie ?? Math.min(28, kappa * 0.45);
+    totalCapMinergieWhK += netOpaque * kappaMin;
 
     if (contact.b > 0 && netOpaque > 0) {
       if (faceKey === 'ceiling') {
@@ -256,9 +285,16 @@ export function applyBox3dToFloor(fl, project) {
   if (!b3.manualCSpec) {
     fl.cSpec = autoCSpec;
   }
+  const autoCSpecMin = Math.round(Math.max(5, Math.min(75, totalCapMinergieWhK / Math.max(1, fl.area))) * 10) / 10;
+  b3.autoCSpecMinergie = autoCSpecMin;
+  if (!b3.manualCSpecMinergie) {
+    fl.cSpecMinergie = autoCSpecMin;
+  }
   fl.inertiaClass = 'custom';
 
-  project.openings = project.openings.filter(o => o.floorId !== fl.id).concat(newOpenings);
+  if (!preserveOpenings) {
+    project.openings = project.openings.filter(o => o.floorId !== fl.id).concat(newOpenings);
+  }
 }
 
 /**
@@ -428,7 +464,8 @@ export function computeHourlySolarGains(
   isOcc,
   albedo = 0.20,
   horizonDeg = 0,
-  useFresnel = true
+  useFresnel = true,
+  occInfo = null
 ) {
   let totalW = 0;
   let unshadedW = 0;
@@ -437,6 +474,9 @@ export function computeHourlySolarGains(
   const byOrientW = {};
   const byOrientUnshadedW = {};
   const byOrientIrrWm2 = {};
+
+  const hod = occInfo?.hod ?? hourWeather?.hod ?? 12;
+  const isOcc24h = Boolean(occInfo?.isOcc24h);
 
   for (const op of ops) {
     const g = ORIENTATIONS[op.orient] || ORIENTATIONS.S;
@@ -468,7 +508,11 @@ export function computeHourlySolarGains(
     const blindRule = op.blindRule || 'irr_and_temp';
 
     let trig = false;
-    if (blindRule === 'irr_or_temp') {
+    if (blindRule === 'none') {
+      trig = false;
+    } else if (blindRule === 'schedule_only') {
+      trig = true;
+    } else if (blindRule === 'irr_or_temp') {
       // Mode bSol Pro : baisse si I ≥ seuil (hors chauffage) OU θ_i ≥ seuil (avec soleil > 50 W/m²)
       trig = (irrSensor >= threshI && (tAirPrev >= 21.0 || tRm48 >= 12.0)) || (tAirPrev >= threshT && irrSensor > 50);
     } else if (blindRule === 'irr_only') {
@@ -480,9 +524,29 @@ export function computeHourlySolarGains(
     }
 
     let closed = false;
-    if (op.blindMode === 'always_down') closed = true;
-    else if (op.blindMode === 'auto') closed = trig;
-    else if (op.blindMode === 'manual_day') closed = isOcc && trig;
+    if (op.blindMode === 'always_down') {
+      closed = true;
+    } else if (op.blindMode === 'always_up' || op.blindMode === 'none') {
+      closed = false;
+    } else if (op.blindMode === 'auto') {
+      closed = trig;
+    } else if (op.blindMode === 'manual_day') {
+      const useOccWindow = op.blindManualUseOcc !== false && !isOcc24h;
+      let inManualWindow = false;
+      if (useOccWindow) {
+        inManualWindow = isOcc;
+      } else {
+        const bStart = op.blindStart ?? 10;
+        const bEnd = op.blindEnd ?? 18;
+        inManualWindow =
+          bStart === bEnd || (bStart === 0 && bEnd === 24)
+            ? true
+            : bStart > bEnd
+              ? hod >= bStart || hod < bEnd
+              : hod >= bStart && hod < bEnd;
+      }
+      closed = inManualWindow && trig;
+    }
 
     const gVitEff = op.gVit * op.frameFactor * op.shadingFactor;
     const gEff = closed

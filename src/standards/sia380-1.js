@@ -18,6 +18,53 @@ export const SIA380_CATEGORIES = {
   XII: { name: 'Piscine couverte',      ti: 28, Ap: 20,  Qp: 60,  tp: 4,  Efel: 56, fel: 0.7, qth: 0.7, spaceType: 'office',      occStart: 8,  occEnd: 21, occDays: 7, standby: 30 }
 };
 
+/**
+ * Types de locaux selon SIA 2024:2015 (charges internes journalières [Wh/(m²·j)],
+ * débit d'air neuf standard [m³/(h·m²)] et recommandation d'automatisation des stores).
+ */
+export const SIA2024_ROOM_TYPES = {
+  hab_collectif:   { siaCat: 'I',    label: '1.1 Habitat collectif (logement)',          dailyLoadWhm2d: 84,  qHygSpec: 0.7, autoBlindsRec: false, spaceType: 'residential' },
+  hab_individuel:  { siaCat: 'II',   label: '1.2 Habitat individuel (maison)',           dailyLoadWhm2d: 71,  qHygSpec: 0.7, autoBlindsRec: false, spaceType: 'residential' },
+  hotel_chambre:   { siaCat: 'I',    label: '2.1 Chambre d’hôtel',                       dailyLoadWhm2d: 97,  qHygSpec: 1.0, autoBlindsRec: false, spaceType: 'residential' },
+  bureau_indiv:    { siaCat: 'III',  label: '3.1 Bureau individuel / collectif',         dailyLoadWhm2d: 107, qHygSpec: 1.0, autoBlindsRec: true,  spaceType: 'office' },
+  bureau_paysage:  { siaCat: 'III',  label: '3.2 Bureau paysagé (open-space)',           dailyLoadWhm2d: 235, qHygSpec: 1.5, autoBlindsRec: true,  spaceType: 'office' },
+  salle_reunion:   { siaCat: 'III',  label: '3.3 Salle de réunion / conférence',         dailyLoadWhm2d: 113, qHygSpec: 3.0, autoBlindsRec: true,  spaceType: 'office' },
+  accueil_guichet: { siaCat: 'III',  label: '3.4 Réception / guichet',                   dailyLoadWhm2d: 82,  qHygSpec: 1.2, autoBlindsRec: false, spaceType: 'office' },
+  salle_classe:    { siaCat: 'IV',   label: '4.1 Salle de classe (école)',               dailyLoadWhm2d: 120, qHygSpec: 3.0, autoBlindsRec: true,  spaceType: 'office' },
+  salle_maitres:   { siaCat: 'IV',   label: '4.2 Salle des maîtres / bibliothèque',      dailyLoadWhm2d: 89,  qHygSpec: 1.5, autoBlindsRec: true,  spaceType: 'office' },
+  commerce_alim:   { siaCat: 'V',    label: '5.1 Commerce alimentaire',                  dailyLoadWhm2d: 235, qHygSpec: 1.5, autoBlindsRec: true,  spaceType: 'office' },
+  commerce_std:    { siaCat: 'V',    label: '5.2 Commerce / boutique standard',          dailyLoadWhm2d: 152, qHygSpec: 1.5, autoBlindsRec: true,  spaceType: 'office' },
+  restaurant:      { siaCat: 'VI',   label: '6.1 Restaurant / salle à manger',           dailyLoadWhm2d: 240, qHygSpec: 3.0, autoBlindsRec: true,  spaceType: 'office' },
+  cafeteria:       { siaCat: 'VI',   label: '6.2 Cafétéria / libre-service',             dailyLoadWhm2d: 195, qHygSpec: 2.5, autoBlindsRec: true,  spaceType: 'office' },
+  salle_spectacle: { siaCat: 'VII',  label: '7.1 Salle polyvalente / conférence',        dailyLoadWhm2d: 125, qHygSpec: 3.0, autoBlindsRec: true,  spaceType: 'office' },
+  musee_expo:      { siaCat: 'VII',  label: '7.2 Musée / exposition',                    dailyLoadWhm2d: 95,  qHygSpec: 1.5, autoBlindsRec: true,  spaceType: 'office' },
+  hopital_chambre: { siaCat: 'VIII', label: '8.1 Chambre d’hôpital / EMS',               dailyLoadWhm2d: 130, qHygSpec: 1.5, autoBlindsRec: true,  spaceType: 'residential' },
+  cabinet_medical: { siaCat: 'VIII', label: '8.2 Cabinet médical / traitement',          dailyLoadWhm2d: 145, qHygSpec: 2.0, autoBlindsRec: true,  spaceType: 'office' },
+  atelier_prod:    { siaCat: 'IX',   label: '9.1 Atelier / production légère',           dailyLoadWhm2d: 135, qHygSpec: 1.5, autoBlindsRec: false, spaceType: 'office' },
+  laboratoire:     { siaCat: 'IX',   label: '9.2 Laboratoire',                           dailyLoadWhm2d: 210, qHygSpec: 2.5, autoBlindsRec: true,  spaceType: 'office' },
+  depot_archive:   { siaCat: 'X',    label: '10.1 Dépôt / archives',                     dailyLoadWhm2d: 35,  qHygSpec: 0.3, autoBlindsRec: false, spaceType: 'office' },
+  salle_sport:     { siaCat: 'XI',   label: '11.1 Salle de sport',                       dailyLoadWhm2d: 75,  qHygSpec: 2.0, autoBlindsRec: false, spaceType: 'office' },
+  piscine:         { siaCat: 'XII',  label: '12.1 Piscine couverte',                     dailyLoadWhm2d: 165, qHygSpec: 2.0, autoBlindsRec: false, spaceType: 'office' }
+};
+
+export function getDefaultRoomTypeForSiaCat(catKey) {
+  const map = {
+    I: 'hab_collectif',
+    II: 'hab_individuel',
+    III: 'bureau_indiv',
+    IV: 'salle_classe',
+    V: 'commerce_std',
+    VI: 'restaurant',
+    VII: 'salle_spectacle',
+    VIII: 'hopital_chambre',
+    IX: 'atelier_prod',
+    X: 'depot_archive',
+    XI: 'salle_sport',
+    XII: 'piscine'
+  };
+  return map[catKey] || 'hab_collectif';
+}
+
 export const ORIENTATIONS = {
   N:  { az: 0,   tilt: 90, label: 'Nord' },
   NE: { az: 45,  tilt: 90, label: 'Nord-Est' },

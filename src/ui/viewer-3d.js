@@ -205,7 +205,7 @@ export class BuildingViewer3D {
     };
 
     // Grille de sol & boussole cardinale (N/E/S/O) — lisible sur le fond ardoise sombre du canvas 3D
-    const gridStroke = isLight ? 'rgba(255, 255, 255, 0.09)' : 'rgba(255,255,255,0.06)';
+    const gridStroke = isLight ? 'rgba(226, 232, 240, 0.09)' : 'rgba(226, 232, 240, 0.06)';
     const maxSide = Math.max(4, ...dims.map(d => Math.max(d.dx, d.dy)));
     const gHalf = Math.ceil(maxSide * 0.7);
     const stepG = Math.max(1, Math.round(gHalf / 3));
@@ -224,7 +224,7 @@ export class BuildingViewer3D {
     ctx.font = 'bold 11px Inter, sans-serif';
     ctx.textAlign = 'center';
     for (const [lbl, cx, cy2, col] of dirs) {
-      drawLine3D([0, 0, minZ], [cx * 0.85, cy2 * 0.85, minZ], 'rgba(255,255,255,0.08)', 1);
+      drawLine3D([0, 0, minZ], [cx * 0.85, cy2 * 0.85, minZ], 'rgba(226, 232, 240, 0.08)', 1);
       const p = projectPt(cx, cy2, minZ);
       ctx.fillStyle = col;
       ctx.fillText(lbl, p.x, p.y + 4);

@@ -6,40 +6,55 @@
 import {
   GLAZING_PRESETS,
   ORIENTATIONS,
+  SIA2024_ROOM_TYPES,
   SIA380_CATEGORIES,
   STORE_PRESETS,
-  deriveSiaInternalDefaults
+  deriveSiaInternalDefaults,
+  getDefaultRoomTypeForSiaCat
 } from '../standards/sia380-1.js';
-import { getSIA180Profile } from '../standards/sia180.js';
+import {
+  DEFAULT_CUSTOM_REG,
+  getSIA180Profile,
+  normalizeCustomReg
+} from '../standards/sia180.js';
 import {
   BOX3D_CONTACTS,
   BOX3D_WALL_PRESETS,
-  BOX3D_WINDOW_PRESETS,
   getWallOrientations
 } from '../standards/box3d-presets.js';
-import { SWISS_STATIONS } from '../standards/swiss-stations.js';
+import {
+  SWISS_LOCALITIES,
+  SWISS_STATIONS,
+  findNearestOfficialSiaStation
+} from '../standards/swiss-stations.js';
 import {
   applyBox3dToFloor,
   buildFloorThermalParams,
   computeAutoEnvelopeFromFloor,
-  ensureBox3dDefaults,
-  syncOpeningBackToBox3d
+  ensureBox3dDefaults
 } from '../methodology/03-envelope-and-gains.js';
 import {
   computeBuildingStackSpan,
   computeFloorNightFlowM3h
 } from '../methodology/04-natural-ventilation.js';
-import { fetchLiveWeatherData, parseAnyWeatherText } from '../methodology/02-weather-model.js';
+import {
+  fetchLiveWeatherData,
+  generateManualDesignDayWeather,
+  parseAnyWeatherText,
+  summarizeWeatherData
+} from '../methodology/02-weather-model.js';
 import { parseHouseFile } from '../parsers/house-importers.js';
 import {
   HOUSE_LIBRARY,
   appState,
+  buildWorkspaceExportObject,
   createNewVariant,
   deleteVariant,
   detectAdvancedDetailsInActiveVariant,
   duplicateActiveVariant,
   escapeHtml,
   getActiveVariant,
+  importJsonToWorkspace,
   renameVariant,
   replaceActiveVariantProject,
   resetWorkspaceStorage,
@@ -48,9 +63,10 @@ import {
   switchVariant,
   syncActiveVariantSnapshot
 } from '../state/project-store.js';
+import { getChartPalette } from './charts.js';
 import { BuildingViewer3D } from './viewer-3d.js';
 
-const CONFIG_STEPS = ['step-house', 'step-floors', 'step-openings', 'step-sia', 'step-climate'];
+const CONFIG_STEPS = ['step-house', 'step-climate', 'step-floors', 'step-openings', 'step-sia'];
 
 let viewerInspector = null;
 let viewerMain3D = null;
@@ -58,6 +74,70 @@ let simpleWarnDismissedForVariantId = null;
 let notifyProjectChanged = () => {};
 let notifyVariantSwitched = () => {};
 let notifyOpenResults = () => {};
+let notifyCompareChanged = () => {};
+
+function isResultsCurrentlyVisible() {
+  const el = document.getElementById('view-results');
+  return Boolean(el && !el.classList.contains('hidden'));
+}
+
+export function showConfirmModal({ title = 'Confirmation', message = '', confirmLabel = 'Confirmer', danger = false } = {}) {
+  return new Promise(resolve => {
+    const backdrop = document.getElementById('confirmModal');
+    const titleEl = document.getElementById('confirmModalTitle');
+    const msgEl = document.getElementById('confirmModalMsg');
+    const btnOk = document.getElementById('btnConfirmOk');
+    const btnCancel = document.getElementById('btnConfirmCancel');
+    if (!backdrop || !btnOk || !btnCancel) {
+      resolve(true);
+      return;
+    }
+    if (titleEl) titleEl.textContent = title;
+    if (msgEl) msgEl.textContent = message;
+    btnOk.textContent = confirmLabel;
+    btnOk.className = danger ? 'btn btn-sm ko' : 'btn btn-run btn-sm';
+    backdrop.classList.remove('hidden');
+
+    const cleanup = val => {
+      backdrop.classList.add('hidden');
+      btnOk.removeEventListener('click', onOk);
+      btnCancel.removeEventListener('click', onCancel);
+      backdrop.removeEventListener('click', onBackdrop);
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onOk = () => cleanup(true);
+    const onCancel = () => cleanup(false);
+    const onBackdrop = e => {
+      if (e.target === backdrop) cleanup(false);
+    };
+    const onKey = e => {
+      if (e.key === 'Escape') cleanup(false);
+    };
+
+    btnOk.addEventListener('click', onOk);
+    btnCancel.addEventListener('click', onCancel);
+    backdrop.addEventListener('click', onBackdrop);
+    document.addEventListener('keydown', onKey);
+  });
+}
+
+function setupDropdown(btnId, menuId) {
+  const btn = document.getElementById(btnId);
+  const menu = document.getElementById(menuId);
+  if (!btn || !menu) return;
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const willOpen = menu.classList.contains('hidden');
+    document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.add('hidden'));
+    if (willOpen) menu.classList.remove('hidden');
+  });
+  menu.addEventListener('click', e => {
+    if (e.target.closest('.dropdown-item')) {
+      menu.classList.add('hidden');
+    }
+  });
+}
 
 function isBox3dActiveForFloor(fl) {
   return Boolean(fl && fl.box3d && appState.uiModes.floorsEditor === 'box3d');
@@ -106,9 +186,39 @@ function detectStorePresetKey(ops) {
   return 'custom';
 }
 
+export function syncAutoSiaCurveMode() {
+  const { project } = appState;
+  const hasVmc = (project.floors || []).some(f => Boolean(f.hasMechVent));
+  const pt = project.projectType || 'new';
+  if (pt !== 'minergie' && pt !== 'custom') {
+    project.siaCurveMode = hasVmc ? 'fig4' : 'fig3';
+  }
+  const pill = document.getElementById('autoCurveStatusPill');
+  if (!pill) return;
+  if (pt === 'minergie') {
+    pill.textContent = 'Seuil fixe Minergie : 26.5 °C (16 avr.–15 oct.)';
+    pill.className = 'pill neutral';
+  } else if (pt === 'custom') {
+    const cr = normalizeCustomReg(project.customReg);
+    pill.textContent =
+      cr.limitMode === 'fixed'
+        ? `Custom : fixe ${cr.maxTempC.toFixed(1)} °C`
+        : cr.limitMode === 'adaptive_cap'
+          ? `Custom : SIA plaf. ${cr.maxTempC.toFixed(1)} °C`
+          : `Custom : Fig. 4 max ${cr.maxTempC.toFixed(1)} °C`;
+    pill.className = 'pill req-pill';
+  } else if (project.siaCurveMode === 'fig4') {
+    pill.textContent = 'SIA 180 Fig. 4 (auto — VMC active)';
+    pill.className = 'pill req-pill';
+  } else {
+    pill.textContent = 'SIA 180 Fig. 3 (auto — ventilation naturelle)';
+    pill.className = 'pill neutral';
+  }
+}
+
 export function syncHeaderRequirementBadge() {
   const { project } = appState;
-  const prof = getSIA180Profile(project.projectType);
+  const prof = getSIA180Profile(project.projectType, project.customReg);
   const hdr = document.getElementById('headerReqBadge');
   if (hdr) {
     hdr.textContent = prof.shortLabel;
@@ -124,8 +234,24 @@ export function syncHeaderRequirementBadge() {
         : project.projectType === 'strict_100'
           ? 'new'
           : project.projectType;
-    sel.value = ['minergie', 'new', 'reno', 'zero'].includes(mapped) ? mapped : 'new';
+    sel.value = ['minergie', 'new', 'reno', 'zero', 'custom'].includes(mapped) ? mapped : 'new';
   }
+
+  const isCustom = project.projectType === 'custom';
+  document.getElementById('customRegBox')?.classList.toggle('hidden', !isCustom);
+  if (isCustom) {
+    project.customReg = normalizeCustomReg(project.customReg || DEFAULT_CUSTOM_REG);
+    const cr = project.customReg;
+    const lm = document.getElementById('customRegLimitMode');
+    const mt = document.getElementById('customRegMaxTemp');
+    const mh = document.getElementById('customRegMaxHours');
+    const cm = document.getElementById('customRegCountMode');
+    if (lm) lm.value = cr.limitMode;
+    if (mt) mt.value = cr.maxTempC;
+    if (mh) mh.value = cr.maxHours;
+    if (cm) cm.value = cr.countMode;
+  }
+  syncAutoSiaCurveMode();
 }
 
 function syncMainCategorySelect() {
@@ -370,25 +496,21 @@ export function renderSimpleOpeningsForFloor(fl) {
   if (cGM) cGM.value = curGtotMode;
 
   const blindSel = document.getElementById('simpBlindPreset');
+  const blindBox = document.getElementById('simpCustomBlindBox');
+  const detectedBlind = detectSimpleBlindPreset(firstOp);
   if (blindSel) {
-    const detectedBlind = detectSimpleBlindPreset(firstOp);
-    const cBlind = blindSel.querySelector('option[value="custom"]');
-    if (detectedBlind === 'custom' && firstOp) {
-      const lbl = `Personnalisé (I≥${firstOp.blindThreshI ?? 200} W/m², T≥${firstOp.blindThreshT ?? 22}°C)`;
-      if (!cBlind) {
-        const opt = document.createElement('option');
-        opt.value = 'custom';
-        opt.textContent = lbl;
-        blindSel.appendChild(opt);
-      } else {
-        cBlind.textContent = lbl;
-      }
-      blindSel.value = 'custom';
-    } else {
-      if (cBlind) cBlind.remove();
-      blindSel.value = detectedBlind;
-    }
+    const keepCustom = blindSel.dataset.forceCustom === '1';
+    blindSel.value = keepCustom ? 'custom' : detectedBlind;
+    if (blindBox) blindBox.classList.toggle('hidden', blindSel.value !== 'custom');
   }
+  const cBI = document.getElementById('simpBlindThreshI');
+  const cBT = document.getElementById('simpBlindThreshT');
+  const cBR = document.getElementById('simpBlindRule');
+  const cBM = document.getElementById('simpBlindMode');
+  if (cBI) cBI.value = firstOp?.blindThreshI ?? 200;
+  if (cBT) cBT.value = firstOp?.blindThreshT ?? 22.0;
+  if (cBR) cBR.value = firstOp?.blindRule || 'irr_and_temp';
+  if (cBM) cBM.value = firstOp?.blindMode === 'manual_day' ? 'manual_day' : 'auto';
 
   if (firstOp) {
     document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
@@ -448,11 +570,26 @@ export function applySimpleGlazingFromInputs() {
     gtotMode = sp.gtotMode;
   }
 
-  const blindPreset = document.getElementById('simpBlindPreset')?.value || 'auto_sia';
-  const { blindMode, blindRule, blindThreshI, blindThreshT } = resolveSimpleBlindPreset(
-    blindPreset,
-    existingOps[0]
-  );
+  // 3. Commande & seuils des stores (avec seuils I & T personnalisables en Mode Simple)
+  const blindSel = document.getElementById('simpBlindPreset');
+  const blindPreset = blindSel?.value || 'auto_sia';
+  let blindMode;
+  let blindRule;
+  let blindThreshI;
+  let blindThreshT;
+  if (blindPreset === 'custom') {
+    if (blindSel) blindSel.dataset.forceCustom = '1';
+    blindThreshI = Math.max(50, Math.min(600, parseFloat(document.getElementById('simpBlindThreshI')?.value) || 200));
+    blindThreshT = Math.max(16, Math.min(30, parseFloat(document.getElementById('simpBlindThreshT')?.value) || 22.0));
+    blindRule = document.getElementById('simpBlindRule')?.value || 'irr_and_temp';
+    blindMode = document.getElementById('simpBlindMode')?.value === 'manual_day' ? 'manual_day' : 'auto';
+  } else {
+    if (blindSel) delete blindSel.dataset.forceCustom;
+    ({ blindMode, blindRule, blindThreshI, blindThreshT } = resolveSimpleBlindPreset(
+      blindPreset,
+      existingOps[0]
+    ));
+  }
   const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
 
   const targetFloors = getTargetFloorsForOpenings();
@@ -521,7 +658,7 @@ export function renderOpenings() {
   const allMode = appState.applyAllFloorsOpenings && project.floors.length > 1;
   const box3dDriven = !allMode && isBox3dActiveForFloor(fl);
   document.getElementById('box3dOpeningsBanner')?.classList.toggle('hidden', !box3dDriven);
-  document.getElementById('btnAddOpening')?.classList.toggle('hidden', box3dDriven);
+  document.getElementById('btnAddOpening')?.classList.remove('hidden');
 
   if (uiModes.openings === 'simple') {
     renderSimpleOpeningsForFloor(fl);
@@ -535,12 +672,20 @@ export function renderOpenings() {
   const tbody = document.getElementById('openingsTableBody');
   const orients = Object.keys(ORIENTATIONS);
 
-  // 1. TABLEAU FENÊTRES, VITRAGES & OMBRAGES (compact, sans ouvrants nuit — ceux-ci sont à l'étape 4)
+  const faceNames = {
+    front: 'Devant',
+    right: 'Droit',
+    back: 'Fond',
+    left: 'Gauche',
+    ceiling: 'Toit'
+  };
+
+  // 1. TABLEAU FENÊTRES, VITRAGES & OMBRAGES (compact, 100 % éditable même avec structure 3D)
   if (thead) {
     thead.innerHTML = `<tr>
-      ${multiFloor && !box3dDriven ? '<th data-tip="Étage auquel appartient la fenêtre.">Étage</th>' : ''}
+      ${multiFloor ? '<th data-tip="Étage auquel appartient la fenêtre.">Étage</th>' : ''}
       <th data-tip="Nom ou repère de la fenêtre.">Nom</th>
-      <th data-tip="${box3dDriven ? 'Orientation définie par la paroi 3D (modifiable dans le Constructeur 3D).' : 'Orientation cardinale (S, SO, O, NO, N, NE, E, SE) ou R = Toiture.'}">Orient.</th>
+      <th data-tip="${box3dDriven ? 'Paroi 3D sur laquelle est placée cette fenêtre (oriente automatiquement la fenêtre et déduit sa surface du mur opaque).' : 'Orientation cardinale (S, SO, O, NO, N, NE, E, SE) ou R = Toiture.'}">${box3dDriven ? 'Paroi 3D' : 'Orient.'}</th>
       <th data-tip="Largeur unitaire de la fenêtre [m].">L [m]</th>
       <th data-tip="Hauteur unitaire de la fenêtre [m].">H [m]</th>
       <th data-tip="Nombre de fenêtres identiques.">Qté</th>
@@ -549,7 +694,7 @@ export function renderOpenings() {
       <th data-tip="Profondeur de la casquette / balcon au-dessus de la fenêtre [m].">Casq. [m]</th>
       <th data-tip="Profondeur des écrans latéraux (joues verticales gauche/droite) [m].">Écr. lat [m]</th>
       <th data-tip="Angle d'obstruction de l'horizon en face de cette fenêtre [°].">Hor. [°]</th>
-      ${box3dDriven ? '' : '<th></th>'}
+      <th></th>
     </tr>`;
   }
 
@@ -557,23 +702,37 @@ export function renderOpenings() {
   list.forEach(op => {
     const opFl = project.floors.find(f => f.id === op.floorId);
     const opIs3d = isBox3dActiveForFloor(opFl);
+    let orientCellHtml = '';
+    if (opIs3d) {
+      const b3Orients = getWallOrientations(opFl.box3d.frontOrient || 'S');
+      const curFace =
+        op.box3dFace && b3Orients[op.box3dFace]
+          ? op.box3dFace
+          : Object.keys(b3Orients).find(k => b3Orients[k] === op.orient) || 'front';
+      orientCellHtml = `<select data-op="${escapeHtml(op.id)}" data-k="box3dFace" style="min-width:118px;">${['front', 'right', 'back', 'left', 'ceiling']
+        .map(fk => {
+          const wall = opFl.box3d.walls?.[fk];
+          const isAdiab = wall?.contact === 'adiabatic';
+          return `<option value="${fk}" ${fk === curFace ? 'selected' : ''}>${faceNames[fk]} (${b3Orients[fk]})${isAdiab ? ' — adiab.' : ''}</option>`;
+        })
+        .join('')}</select>`;
+    } else {
+      orientCellHtml = `<select data-op="${escapeHtml(op.id)}" data-k="orient" style="width:62px;">${orients
+        .map(o => `<option value="${o}" ${o === op.orient ? 'selected' : ''}>${o}</option>`)
+        .join('')}</select>`;
+    }
+
     const tr = document.createElement('tr');
     tr.innerHTML = `
       ${
-        multiFloor && !box3dDriven
+        multiFloor
           ? `<td><select data-op="${escapeHtml(op.id)}" data-k="floorId" style="min-width:95px;">${project.floors
               .map(f => `<option value="${escapeHtml(f.id)}" ${f.id === op.floorId ? 'selected' : ''}>${escapeHtml(f.name)}</option>`)
               .join('')}</select></td>`
           : ''
       }
       <td><input type="text" value="${escapeHtml(op.name)}" data-op="${escapeHtml(op.id)}" data-k="name" style="min-width:110px;" /></td>
-      <td>${
-        opIs3d
-          ? `<span class="pill neutral" data-tip="Orientation liée à la paroi 3D (modifiable dans le Constructeur 3D).">${op.orient}</span>`
-          : `<select data-op="${escapeHtml(op.id)}" data-k="orient" style="width:62px;">${orients
-              .map(o => `<option value="${o}" ${o === op.orient ? 'selected' : ''}>${o}</option>`)
-              .join('')}</select>`
-      }</td>
+      <td>${orientCellHtml}</td>
       <td><input type="number" step="0.1" min="0.2" value="${op.width}" data-op="${escapeHtml(op.id)}" data-k="width" style="width:58px;" /></td>
       <td><input type="number" step="0.1" min="0.2" value="${op.height}" data-op="${escapeHtml(op.id)}" data-k="height" style="width:58px;" /></td>
       <td><input type="number" step="1" min="1" value="${op.qty}" data-op="${escapeHtml(op.id)}" data-k="qty" style="width:50px;" /></td>
@@ -582,7 +741,7 @@ export function renderOpenings() {
       <td><input type="number" step="0.1" min="0" value="${op.overhangDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="overhangDepth" style="width:58px;" /></td>
       <td><input type="number" step="0.1" min="0" value="${op.leftFinDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="sideFinDepth" style="width:58px;" /></td>
       <td><input type="number" step="5" min="0" max="60" value="${op.horizonDeg ?? project.horizonDeg ?? 0}" data-op="${escapeHtml(op.id)}" data-k="horizonDeg" style="width:54px;" /></td>
-      ${box3dDriven ? '' : `<td>${opIs3d ? '' : `<button class="btn btn-danger" data-del-op="${escapeHtml(op.id)}" data-tip="Supprimer cette fenêtre.">✕</button>`}</td>`}
+      <td><button class="btn btn-danger" data-del-op="${escapeHtml(op.id)}" data-tip="Supprimer cette fenêtre.">✕</button></td>
     `;
     tbody.appendChild(tr);
   });
@@ -596,38 +755,83 @@ export function renderOpenings() {
             <th data-tip="Fenêtre concernée et orientation.">Fenêtre</th>
             <th data-tip="Facteur de réduction du store g_store [-] (ou g_total si le mode g_tot est choisi).">g_store</th>
             <th data-tip="g×g : g_total = g_vit × g_store. g_tot : valeur directe combinée.">Mode</th>
-            <th data-tip="Mode de fermeture du store : Auto, Manuel (si occupé), Fermé ou Ouvert.">Commande</th>
+            <th data-tip="Mode de fermeture du store : Auto (24h/24), Manuel (plage horaire ou occupation), Fermé ou Aucun / Ouvert.">Commande</th>
+            <th data-tip="Condition logique de baisse : I ET T (SIA), I OU T (bSol), I seul, Plage horaire seule ou Aucune (store inactif).">Règle</th>
             <th data-tip="Seuil d'ensoleillement sur la façade [W/m²] (SIA 380/2 : 200 W/m²).">Seuil I [W/m²]</th>
             <th data-tip="Seuil de température intérieure [°C] (typ. 22 °C).">Seuil T [°C]</th>
-            <th data-tip="Condition logique : I ET T (SIA), I OU T (bSol), ou I seul.">Règle</th>
+            <th data-tip="Pour une commande Manuelle : cochez « Occ. » pour suivre l'occupation (hors occupation 24h/24) ou définissez directement la plage horaire de baisse [De h à h].">Plage manuelle</th>
             <th class="num" data-tip="Facteur solaire effectif résultant lorsque le store est baissé.">g_tot eff.</th>
           </tr></thead>
           <tbody>${list
             .map(op => {
-              const gtotEff = op.gtotMode === 'direct' ? op.gStore : op.gVit * op.gStore;
+              const opFl = project.floors.find(f => f.id === op.floorId) || fl;
+              const isOcc24h = opFl && opFl.occStart === 0 && opFl.occEnd === 24;
+              const curMode = op.blindMode || 'auto';
+              const curRule = op.blindRule || 'irr_and_temp';
+              const gtotEff =
+                curMode === 'always_up' || curRule === 'none'
+                  ? op.gVit
+                  : op.gtotMode === 'direct'
+                    ? op.gStore
+                    : op.gVit * op.gStore;
               const flPrefix = allMode
-                ? `<span style="color:var(--text-muted);font-size:11px;">${escapeHtml(project.floors.find(f => f.id === op.floorId)?.name || '')} • </span>`
+                ? `<span style="color:var(--text-muted);font-size:11px;">${escapeHtml(opFl?.name || '')} • </span>`
                 : '';
+              const isManual = curMode === 'manual_day';
+              const noThresh =
+                curMode === 'always_up' ||
+                curMode === 'always_down' ||
+                curRule === 'none' ||
+                curRule === 'schedule_only';
+              const noTemp = noThresh || curRule === 'irr_only';
+              const useOcc = !isOcc24h && op.blindManualUseOcc !== false;
+              const bStart = Number.isFinite(Number(op.blindStart)) ? Number(op.blindStart) : 10;
+              const bEnd = Number.isFinite(Number(op.blindEnd)) ? Number(op.blindEnd) : 18;
+
+              let manualCell = '<span style="color:var(--text-muted);font-size:11.5px;">—</span>';
+              if (isManual) {
+                const occTip = isOcc24h
+                  ? 'Occupation 24h/24 sur cet étage : définissez explicitement la plage horaire de baisse des stores.'
+                  : 'Baisser les stores durant les heures d’occupation de l’étage (décochez pour fixer une plage horaire dédiée).';
+                manualCell = `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
+                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;cursor:pointer;" data-tip="${escapeHtml(occTip)}">
+                    <input type="checkbox" ${useOcc ? 'checked' : ''} ${isOcc24h ? 'disabled' : ''} data-op="${escapeHtml(op.id)}" data-k="blindManualUseOcc" />
+                    <span>Occ.</span>
+                  </label>
+                  ${
+                    !useOcc
+                      ? `<input type="number" min="0" max="23" value="${bStart}" data-op="${escapeHtml(op.id)}" data-k="blindStart" style="width:46px;padding:3px 4px;font-size:11.5px;" data-tip="Heure de baisse manuelle des stores [0..23 h]." />` +
+                        `<span style="font-size:11px;color:var(--text-muted);">–</span>` +
+                        `<input type="number" min="1" max="24" value="${bEnd}" data-op="${escapeHtml(op.id)}" data-k="blindEnd" style="width:46px;padding:3px 4px;font-size:11.5px;" data-tip="Heure de relevage manuel des stores [1..24 h]." />` +
+                        `<span style="font-size:11px;color:var(--text-muted);">h</span>`
+                      : `<span style="font-size:11px;color:var(--text-muted);">(${opFl.occStart}h–${opFl.occEnd}h)</span>`
+                  }
+                </div>`;
+              }
+
               return `<tr>
                 <td>${flPrefix}<strong>${escapeHtml(op.name)}</strong> <span style="color:var(--text-muted);">(${op.orient}, ×${op.qty})</span></td>
-                <td><input type="number" step="0.01" min="0.02" max="1" value="${op.gStore}" data-op="${escapeHtml(op.id)}" data-k="gStore" style="width:64px;" /></td>
-                <td><select data-op="${escapeHtml(op.id)}" data-k="gtotMode" style="width:74px;">
+                <td><input type="number" step="0.01" min="0.02" max="1" value="${op.gStore}" data-op="${escapeHtml(op.id)}" data-k="gStore" style="width:62px;" /></td>
+                <td><select data-op="${escapeHtml(op.id)}" data-k="gtotMode" style="width:70px;">
                   <option value="product" ${op.gtotMode === 'product' ? 'selected' : ''}>g×g</option>
                   <option value="direct" ${op.gtotMode === 'direct' ? 'selected' : ''}>g_tot</option>
                 </select></td>
-                <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:90px;">
-                  <option value="auto" ${op.blindMode === 'auto' ? 'selected' : ''}>Auto</option>
-                  <option value="manual_day" ${op.blindMode === 'manual_day' ? 'selected' : ''}>Manuel</option>
-                  <option value="always_down" ${op.blindMode === 'always_down' ? 'selected' : ''}>Fermé</option>
-                  <option value="always_up" ${op.blindMode === 'always_up' ? 'selected' : ''}>Ouvert</option>
+                <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:94px;">
+                  <option value="auto" ${curMode === 'auto' ? 'selected' : ''}>Auto</option>
+                  <option value="manual_day" ${curMode === 'manual_day' ? 'selected' : ''}>Manuel</option>
+                  <option value="always_down" ${curMode === 'always_down' ? 'selected' : ''}>Fermé</option>
+                  <option value="always_up" ${curMode === 'always_up' ? 'selected' : ''}>Aucun / Ouvert</option>
                 </select></td>
-                <td><input type="number" step="25" min="50" max="600" value="${op.blindThreshI ?? 200}" data-op="${escapeHtml(op.id)}" data-k="blindThreshI" style="width:68px;" /></td>
-                <td><input type="number" step="0.5" min="16" max="30" value="${op.blindThreshT ?? 22.0}" data-op="${escapeHtml(op.id)}" data-k="blindThreshT" style="width:64px;" /></td>
-                <td><select data-op="${escapeHtml(op.id)}" data-k="blindRule" style="width:82px;">
-                  <option value="irr_and_temp" ${(op.blindRule || 'irr_and_temp') === 'irr_and_temp' ? 'selected' : ''}>I ET T</option>
-                  <option value="irr_or_temp" ${op.blindRule === 'irr_or_temp' ? 'selected' : ''}>I OU T</option>
-                  <option value="irr_only" ${op.blindRule === 'irr_only' ? 'selected' : ''}>I seul</option>
+                <td><select data-op="${escapeHtml(op.id)}" data-k="blindRule" style="width:92px;" ${curMode === 'always_up' || curMode === 'always_down' ? 'disabled' : ''}>
+                  <option value="irr_and_temp" ${curRule === 'irr_and_temp' ? 'selected' : ''}>I ET T</option>
+                  <option value="irr_or_temp" ${curRule === 'irr_or_temp' ? 'selected' : ''}>I OU T</option>
+                  <option value="irr_only" ${curRule === 'irr_only' ? 'selected' : ''}>I seul</option>
+                  <option value="schedule_only" ${curRule === 'schedule_only' ? 'selected' : ''}>Plage seule</option>
+                  <option value="none" ${curRule === 'none' ? 'selected' : ''}>Aucune</option>
                 </select></td>
+                <td><input type="number" step="25" min="50" max="600" value="${op.blindThreshI ?? 200}" data-op="${escapeHtml(op.id)}" data-k="blindThreshI" style="width:62px;" ${noThresh ? 'disabled' : ''} /></td>
+                <td><input type="number" step="0.5" min="16" max="30" value="${op.blindThreshT ?? 22.0}" data-op="${escapeHtml(op.id)}" data-k="blindThreshT" style="width:58px;" ${noTemp ? 'disabled' : ''} /></td>
+                <td>${manualCell}</td>
                 <td class="num"><span class="pill ${gtotEff <= 0.15 ? 'ok' : gtotEff <= 0.3 ? 'warn' : 'ko'}">${gtotEff.toFixed(2)}</span></td>
               </tr>`;
             })
@@ -641,9 +845,30 @@ export function renderOpenings() {
       const op = project.openings.find(o => o.id === e.target.dataset.op);
       const k = e.target.dataset.k;
       if (!op) return;
-      if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'blindRule'].includes(k)) {
+      const opFl = project.floors.find(f => f.id === op.floorId);
+      if (k === 'box3dFace') {
+        op.box3dFace = e.target.value;
+        if (opFl && opFl.box3d) {
+          const b3Orients = getWallOrientations(opFl.box3d.frontOrient || 'S');
+          if (b3Orients[op.box3dFace]) op.orient = b3Orients[op.box3dFace];
+        }
+        renderOpenings();
+      } else if (k === 'blindManualUseOcc') {
+        op.blindManualUseOcc = e.target.checked;
+        if (!op.blindManualUseOcc) {
+          if (op.blindStart === undefined) op.blindStart = 10;
+          if (op.blindEnd === undefined) op.blindEnd = 18;
+        }
+        renderOpenings();
+      } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'blindRule'].includes(k)) {
         op[k] = e.target.value;
-        if (['name', 'orient', 'gtotMode', 'floorId'].includes(k)) renderOpenings();
+        if (k === 'blindMode' && e.target.value === 'manual_day') {
+          const is24 = opFl && opFl.occStart === 0 && opFl.occEnd === 24;
+          if (is24) op.blindManualUseOcc = false;
+          if (op.blindStart === undefined) op.blindStart = 10;
+          if (op.blindEnd === undefined) op.blindEnd = 18;
+        }
+        if (['name', 'orient', 'gtotMode', 'floorId', 'blindMode', 'blindRule'].includes(k)) renderOpenings();
       } else if (k === 'sideFinDepth') {
         const v = Math.max(0, Number(e.target.value) || 0);
         op.leftFinDepth = v;
@@ -652,9 +877,9 @@ export function renderOpenings() {
         op[k] = Number(e.target.value);
         if (['qty', 'gVit', 'gStore'].includes(k)) renderOpenings();
       }
-      const opFl = project.floors.find(f => f.id === op.floorId);
-      if (isBox3dActiveForFloor(opFl)) {
-        syncOpeningBackToBox3d(op, opFl, project);
+      const targetFl = project.floors.find(f => f.id === op.floorId);
+      if (isBox3dActiveForFloor(targetFl)) {
+        applyBox3dToFloor(targetFl, project, { preserveOpenings: true });
       }
       updateNightVentUI();
       updateInspector();
@@ -665,7 +890,12 @@ export function renderOpenings() {
 
   tbody.querySelectorAll('[data-del-op]').forEach(btn => {
     btn.addEventListener('click', () => {
+      const target = project.openings.find(o => o.id === btn.dataset.delOp);
+      const opFl = target ? project.floors.find(f => f.id === target.floorId) : null;
       project.openings = project.openings.filter(o => o.id !== btn.dataset.delOp);
+      if (isBox3dActiveForFloor(opFl)) {
+        applyBox3dToFloor(opFl, project, { preserveOpenings: true });
+      }
       renderOpenings();
       updateNightVentUI();
       updateInspector();
@@ -695,9 +925,6 @@ function renderBox3dBuilder(wrap) {
   ];
 
   const capMJ = ((activeFl.cSpec * activeFl.area * 3600) / 1e6).toFixed(1);
-  const b3BlindRule = b3.blindRule || flOps[0]?.blindRule || 'irr_and_temp';
-  const b3BlindThreshI = b3.blindThreshI ?? flOps[0]?.blindThreshI ?? 200;
-  const b3BlindThreshT = b3.blindThreshT ?? flOps[0]?.blindThreshT ?? 22.0;
 
   const card = document.createElement('div');
   card.className = 'well';
@@ -708,22 +935,25 @@ function renderBox3dBuilder(wrap) {
         <select id="b3FloorSel" style="width:220px;font-weight:600;">
           ${project.floors.map(f => `<option value="${escapeHtml(f.id)}" ${f.id === activeFl.id ? 'selected' : ''}>${escapeHtml(f.name)}</option>`).join('')}
         </select>
-        <span class="pill neutral" data-tip="Surface nette de plancher et capacité thermique totale effective (ISO 13786) de la pièce.">Surface : ${activeFl.area.toFixed(1)} m² • Inertie : ${activeFl.cSpec} Wh/m²K (${capMJ} MJ/K)</span>
+        <span class="pill neutral" data-tip="Surface nette de plancher, masse thermique 5R1C (calcul horaire) et capacité spécifique C_R/A_SNP selon SIA 180 / Minergie Bauteile (plafonnée à 75 Wh/m²K).">Surface : ${activeFl.area.toFixed(1)} m² • 5R1C : ${activeFl.cSpec} Wh/m²K (${capMJ} MJ/K) • C_R/A Minergie : ${(activeFl.cSpecMinergie ?? Math.min(75, activeFl.cSpec)).toFixed(1)} Wh/m²K</span>
       </div>
-      ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(activeFl.id)}">Supprimer</button>` : ''}
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="btn btn-sm" id="btnGoOpeningsFromBox3d" data-tip="Passer à l'étape 3 pour placer, ajouter ou modifier les fenêtres et stores sur les parois 3D.">Fenêtres &amp; Stores →</button>
+        ${project.floors.length > 1 ? `<button class="btn btn-danger" data-del-floor="${escapeHtml(activeFl.id)}">Supprimer</button>` : ''}
+      </div>
     </div>
 
     <div class="box3d-grid">
       <div>
         <div class="wall-panel">
-          <div class="wall-panel-head"><strong>Dimensions &amp; Orientation du volume</strong></div>
+          <div class="wall-panel-head"><strong>Dimensions &amp; Orientation de la structure</strong></div>
           <div class="g3">
             <div class="field" data-tip="Largeur du local le long du Mur Devant [m]."><label>Largeur X [m]</label><input type="number" id="b3DimX" step="0.2" min="1" value="${b3.dimX}" /></div>
             <div class="field" data-tip="Profondeur du local perpendiculairement au Mur Devant [m]."><label>Profondeur Y [m]</label><input type="number" id="b3DimY" step="0.2" min="1" value="${b3.dimY}" /></div>
             <div class="field" data-tip="Hauteur libre sous plafond [m]."><label>Hauteur Z [m]</label><input type="number" id="b3DimZ" step="0.05" min="1.8" value="${activeFl.height}" /></div>
           </div>
           <div class="g2" style="margin-top:8px;">
-            <div class="field" data-tip="Orientation cardinale de la façade Devant (les 3 autres murs tournent automatiquement à 90°).">
+            <div class="field" data-tip="Orientation cardinale de la façade Devant (les 3 autres murs et leurs fenêtres tournent automatiquement à 90°).">
               <label>Orient. Mur Devant</label>
               <select id="b3FrontOrient">
                 ${Object.keys(ORIENTATIONS).filter(o => o !== 'R').map(o => `<option value="${o}" ${o === b3.frontOrient ? 'selected' : ''}>${o} (${ORIENTATIONS[o].label})</option>`).join('')}
@@ -742,36 +972,14 @@ function renderBox3dBuilder(wrap) {
             <span class="pill neutral" style="font-size:10.5px;">${capMJ} MJ/K</span>
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <label data-tip="Calcule automatiquement la capacité thermique C_R/A_SNP à partir de la surface et de la composition des 6 parois (béton nu, faux-plafond acoustique, parquet, cloison plâtre, bois)." style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+            <label data-tip="Calcule automatiquement la capacité thermique C_R/A_SNP à partir de la surface et de la composition des 6 parois opaques (béton nu, faux-plafond acoustique, parquet, cloison plâtre, bois)." style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
               <input type="checkbox" id="b3AutoCSpec" ${!b3.manualCSpec ? 'checked' : ''} />
               Auto depuis les 6 parois
             </label>
-            <div style="display:flex;align-items:center;gap:6px;" data-tip="Capacité thermique spécifique effective rapportée à la surface de plancher [Wh/(m²·K)]. Décochez « Auto » pour imposer une valeur manuelle (ex. 176 Wh/m²K pour le TB Léa / bSol).">
+            <div style="display:flex;align-items:center;gap:6px;" data-tip="Capacité thermique spécifique effective rapportée à la surface de plancher [Wh/(m²·K)]. Décochez « Auto » pour imposer une valeur manuelle.">
               <label style="font-size:11.5px;color:var(--text-muted);">C_R/A_SNP :</label>
               <input type="number" id="b3ManualCSpec" step="5" min="10" max="250" value="${activeFl.cSpec}" ${!b3.manualCSpec ? 'disabled' : ''} style="width:74px;" />
               <span style="font-size:11px;color:var(--text-muted);">Wh/m²K</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="wall-panel">
-          <div class="wall-panel-head"><strong>Régulation des stores (seuils d'abaissement)</strong></div>
-          <div class="field" data-tip="Condition logique d'abaissement des stores automatiques sur les fenêtres de ce local.">
-            <label>Condition d'abaissement</label>
-            <select id="b3BlindRule">
-              <option value="irr_and_temp" ${b3BlindRule === 'irr_and_temp' ? 'selected' : ''}>Soleil ≥ seuil ET T° int. ≥ seuil (SIA / Lesosai)</option>
-              <option value="irr_or_temp" ${b3BlindRule === 'irr_or_temp' ? 'selected' : ''}>Soleil ≥ seuil OU T° int. ≥ seuil (bSol Pro)</option>
-              <option value="irr_only" ${b3BlindRule === 'irr_only' ? 'selected' : ''}>Ensoleillement seul (pyranomètre)</option>
-            </select>
-          </div>
-          <div class="g2" style="margin-top:6px;">
-            <div class="field" data-tip="Rayonnement solaire incident sur la façade [W/m²] déclenchant la descente des stores (SIA 380/2 : 200 W/m²).">
-              <label>Seuil soleil [W/m²]</label>
-              <input type="number" id="b3BlindThreshI" step="25" min="50" max="600" value="${b3BlindThreshI}" />
-            </div>
-            <div class="field" data-tip="Température intérieure [°C] au-delà de laquelle les stores s'abaissent (bSol : 22 °C).">
-              <label>Seuil T° int. [°C]</label>
-              <input type="number" id="b3BlindThreshT" step="0.5" min="16" max="30" value="${b3BlindThreshT}" />
             </div>
           </div>
         </div>
@@ -793,14 +1001,23 @@ function renderBox3dBuilder(wrap) {
         ${faceLabels
           .map(([fk, flabel]) => {
             const w = b3.walls[fk];
-            const isFloor = fk === 'floor';
             const showCustomU = w.preset === 'custom';
-            const showCustomWin = !isFloor && w.winPreset === 'custom';
+            const faceOps = flOps.filter(
+              o => o.box3dFace === fk || (!o.box3dFace && o.orient === orients[fk])
+            );
+            const faceWinArea = faceOps.reduce((s, o) => s + o.width * o.height * o.qty, 0);
+            const winBadge =
+              fk !== 'floor' && faceWinArea > 0
+                ? `<span class="pill req-pill" style="font-size:10.5px;">${faceOps.reduce((s, o) => s + (o.qty || 1), 0)} fen. • ${faceWinArea.toFixed(1)} m²</span>`
+                : '';
             return `
             <div class="wall-panel">
               <div class="wall-panel-head">
                 <strong>${flabel}</strong>
-                <span class="pill neutral" style="font-size:10.5px;">U=${(w.preset === 'custom' ? w.u : (BOX3D_WALL_PRESETS[w.preset]?.u ?? 0.2)).toFixed(2)} W/m²K</span>
+                <span style="display:flex;gap:5px;align-items:center;">
+                  ${winBadge}
+                  <span class="pill neutral" style="font-size:10.5px;">U=${(w.preset === 'custom' ? w.u : (BOX3D_WALL_PRESETS[w.preset]?.u ?? 0.2)).toFixed(2)} W/m²K</span>
+                </span>
               </div>
               <div class="g2">
                 <div class="field">
@@ -827,45 +1044,6 @@ function renderBox3dBuilder(wrap) {
                      </div>`
                   : ''
               }
-              ${
-                !isFloor
-                  ? `<div class="g2" style="margin-top:6px;">
-                      <div class="field">
-                        <label>Vitrage / Ouverture</label>
-                        <select data-b3wall="${fk}" data-k="winPreset">
-                          ${Object.entries(BOX3D_WINDOW_PRESETS)
-                            .map(([wk, wv]) => `<option value="${wk}" ${w.winPreset === wk ? 'selected' : ''}>${wv.label}</option>`)
-                            .join('')}
-                        </select>
-                      </div>
-                      ${
-                        w.winPreset !== 'none'
-                          ? `<div class="field">
-                              <label>Store (g_store / commande)</label>
-                              <div style="display:flex;gap:4px;">
-                                <input type="number" step="0.02" min="0.02" max="1" value="${w.gStore ?? 0.12}" data-b3wall="${fk}" data-k="gStore" title="g_store" />
-                                <select data-b3wall="${fk}" data-k="blindMode">
-                                  <option value="auto" ${(w.blindMode || 'auto') === 'auto' ? 'selected' : ''}>Auto</option>
-                                  <option value="always_down" ${w.blindMode === 'always_down' ? 'selected' : ''}>Fermé</option>
-                                  <option value="always_up" ${w.blindMode === 'always_up' ? 'selected' : ''}>Sans</option>
-                                </select>
-                              </div>
-                            </div>`
-                          : '<div></div>'
-                      }
-                    </div>`
-                  : ''
-              }
-              ${
-                showCustomWin
-                  ? `<div class="g4" style="margin-top:6px;">
-                      <div class="field"><label>Larg. [m]</label><input type="number" step="0.1" min="0.2" value="${w.winW}" data-b3wall="${fk}" data-k="winW" /></div>
-                      <div class="field"><label>Haut. [m]</label><input type="number" step="0.1" min="0.2" value="${w.winH}" data-b3wall="${fk}" data-k="winH" /></div>
-                      <div class="field"><label>Qté</label><input type="number" step="1" min="1" value="${w.winQty}" data-b3wall="${fk}" data-k="winQty" /></div>
-                      <div class="field"><label>Casq. [m]</label><input type="number" step="0.1" min="0" value="${w.overhang ?? 0}" data-b3wall="${fk}" data-k="overhang" /></div>
-                    </div>`
-                  : ''
-              }
             </div>`;
           })
           .join('')}
@@ -876,13 +1054,17 @@ function renderBox3dBuilder(wrap) {
   wrap.appendChild(card);
 
   const commitBox3d = (rerender = false) => {
-    applyBox3dToFloor(activeFl, project);
+    applyBox3dToFloor(activeFl, project, { preserveOpenings: true });
     updateRailCounts();
     updateInspector();
     if (rerender) renderFloors();
     else refresh3DViewers();
     notifyProjectChanged();
   };
+
+  card.querySelector('#btnGoOpeningsFromBox3d')?.addEventListener('click', () => {
+    activateConfigStep('step-openings', true);
+  });
 
   card.querySelector('#b3FloorSel').addEventListener('change', e => {
     appState.activeFloorId = e.target.value;
@@ -922,18 +1104,6 @@ function renderBox3dBuilder(wrap) {
     activeFl.cSpec = Math.max(10, Math.min(250, Number(e.target.value) || 80));
     commitBox3d(true);
   });
-  card.querySelector('#b3BlindRule')?.addEventListener('change', e => {
-    b3.blindRule = e.target.value;
-    commitBox3d(false);
-  });
-  card.querySelector('#b3BlindThreshI')?.addEventListener('change', e => {
-    b3.blindThreshI = Math.max(50, Math.min(800, Number(e.target.value) || 200));
-    commitBox3d(false);
-  });
-  card.querySelector('#b3BlindThreshT')?.addEventListener('change', e => {
-    b3.blindThreshT = Math.max(16, Math.min(30, Number(e.target.value) || 22.0));
-    commitBox3d(false);
-  });
 
   card.querySelectorAll('[data-b3wall]').forEach(el => {
     el.addEventListener('change', e => {
@@ -941,19 +1111,10 @@ function renderBox3dBuilder(wrap) {
       const k = e.target.dataset.k;
       const w = b3.walls[fk];
       if (!w) return;
-      if (['contact', 'preset', 'winPreset', 'blindMode'].includes(k)) {
+      if (['contact', 'preset'].includes(k)) {
         w[k] = e.target.value;
         if (k === 'preset' && BOX3D_WALL_PRESETS[w.preset]) {
           w.u = BOX3D_WALL_PRESETS[w.preset].u;
-        }
-        if (k === 'winPreset' && BOX3D_WINDOW_PRESETS[w.winPreset]) {
-          const wp = BOX3D_WINDOW_PRESETS[w.winPreset];
-          w.winW = wp.w;
-          w.winH = wp.h;
-          w.winQty = wp.qty;
-          w.uWin = wp.uWin;
-          w.gVit = wp.gVit;
-          w.gStore = wp.gStore;
         }
         commitBox3d(true);
       } else {
@@ -1262,7 +1423,7 @@ function renderNightPhysicalOpeningsTable(fl) {
       }
       const opFl = project.floors.find(f => f.id === op.floorId);
       if (isBox3dActiveForFloor(opFl)) {
-        syncOpeningBackToBox3d(op, opFl, project);
+        applyBox3dToFloor(opFl, project, { preserveOpenings: true });
       }
       if (k === 'operable') {
         renderNightPhysicalOpeningsTable(fl);
@@ -1311,10 +1472,81 @@ export function updateNightVentUI(targetFl = null) {
   updateNightVentLiveBadge(fl);
 
   const fcEl = document.getElementById('inNightFreeCool24h');
-  if (fcEl) {
-    const is24 = (fl.nightStart === 0 && fl.nightEnd === 24) || fl.nightStart === fl.nightEnd;
-    fcEl.checked = is24;
+  const is24 = (fl.nightStart === 0 && fl.nightEnd === 24) || fl.nightStart === fl.nightEnd;
+  if (fcEl) fcEl.checked = is24;
+
+  // Plage d'ouverture en Mode Simple
+  const simpSchedBox = document.getElementById('simpNightScheduleBox');
+  if (simpSchedBox) simpSchedBox.classList.toggle('hidden', isNone);
+  const sStart = document.getElementById('simpNightStart');
+  const sEnd = document.getElementById('simpNightEnd');
+  const s24 = document.getElementById('simpNightFree24h');
+  if (sStart) {
+    sStart.value = fl.nightStart ?? 21;
+    sStart.disabled = is24;
   }
+  if (sEnd) {
+    sEnd.value = fl.nightEnd ?? 7;
+    sEnd.disabled = is24;
+  }
+  if (s24) s24.checked = is24;
+}
+
+function populateSiaRoomTypeSelect() {
+  const sel = document.getElementById('siaRoomTypeSelect');
+  if (!sel || sel.options.length > 0) return;
+  sel.innerHTML = Object.entries(SIA2024_ROOM_TYPES)
+    .map(
+      ([k, rt]) =>
+        `<option value="${escapeHtml(k)}">${escapeHtml(rt.label)} (${rt.dailyLoadWhm2d} Wh/m²j)</option>`
+    )
+    .join('');
+}
+
+function populateStrictLocalitySelect() {
+  const sel = document.getElementById('strictLocalitySelect');
+  if (!sel || sel.options.length > 0) return;
+  sel.innerHTML =
+    SWISS_LOCALITIES.map(
+      loc =>
+        `<option value="${escapeHtml(loc.id)}">${escapeHtml(loc.name)} (${escapeHtml(loc.canton)}, ${loc.altM} m)</option>`
+    ).join('') + '<option value="custom_coords">— Coordonnées personnalisées —</option>';
+}
+
+function updateMechVentUI(fl) {
+  if (!fl) return;
+  const hasVmc = Boolean(fl.hasMechVent);
+  const etaPct = Math.round((fl.etaWRG || 0) * 100);
+
+  const chk = document.getElementById('inHasMechVent');
+  if (chk) chk.checked = hasVmc;
+  document.getElementById('mechVentConfigBox')?.classList.toggle('hidden', !hasVmc);
+  document.getElementById('mechVentNaturalHint')?.classList.toggle('hidden', hasVmc);
+  document.getElementById('ventDayNatQHygWrap')?.classList.toggle('hidden', hasVmc);
+
+  const etaEl = document.getElementById('inEtaWrgPct');
+  if (etaEl) etaEl.value = etaPct;
+
+  const presetEl = document.getElementById('inVmcPreset');
+  if (presetEl) {
+    const keepCustom = presetEl.dataset.forceCustom === '1';
+    if (keepCustom) {
+      presetEl.value = 'custom';
+    } else if (etaPct === 0) {
+      presetEl.value = 'sf';
+    } else if (etaPct === 75) {
+      presetEl.value = 'df_std';
+    } else if (etaPct === 85) {
+      presetEl.value = 'df_hp';
+    } else {
+      presetEl.value = 'custom';
+    }
+  }
+
+  const qEl = document.getElementById('inQHyg');
+  const qNatEl = document.getElementById('inQHygNat');
+  if (qEl) qEl.value = fl.qHygSpec;
+  if (qNatEl) qNatEl.value = fl.qHygSpec;
 }
 
 export function loadSiaFloorInputs() {
@@ -1322,7 +1554,12 @@ export function loadSiaFloorInputs() {
   const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
   if (!fl) return;
 
+  populateSiaRoomTypeSelect();
   document.getElementById('siaCategorySelect').value = fl.siaCategory || 'custom';
+  const rtSel = document.getElementById('siaRoomTypeSelect');
+  if (rtSel) {
+    rtSel.value = fl.roomType2024 || getDefaultRoomTypeForSiaCat(fl.siaCategory || 'I');
+  }
   const profModeEl = document.getElementById('inInternalProfileMode');
   if (profModeEl) profModeEl.value = fl.internalProfileMode || 'sia2024';
   document.getElementById('siaGainFactor').value = fl.gainFactorPct ?? 100;
@@ -1337,9 +1574,9 @@ export function loadSiaFloorInputs() {
   document.getElementById('inOccEnd').value = fl.occEnd;
   document.getElementById('inOccDays').value = fl.occDays;
   document.getElementById('inStandbyPct').value = fl.standbyPct;
-  document.getElementById('inQHyg').value = fl.qHygSpec;
   document.getElementById('inAchInfil').value = fl.achInfil;
-  document.getElementById('inEtaWrg').value = fl.etaWRG;
+  const dayWinEl = document.getElementById('inDayWindowVent');
+  if (dayWinEl) dayWinEl.checked = fl.dayVentMode === 'window_occ';
   document.getElementById('inNightMode').value = fl.nightVentMode;
   document.getElementById('inNightFixed').value = fl.nightVentFixedVal;
   document.getElementById('inNightStart').value = fl.nightStart;
@@ -1347,24 +1584,30 @@ export function loadSiaFloorInputs() {
   document.getElementById('inNightTargetTi').value = fl.nightTargetTi;
   document.getElementById('inNightMinDT').value = fl.nightMinDT;
 
+  updateMechVentUI(fl);
   updateSiaCatChips(fl);
   updateNightVentUI(fl);
 }
 
 function updateSiaCatChips(fl) {
   const c = SIA380_CATEGORIES[fl.siaCategory];
+  const rt = SIA2024_ROOM_TYPES[fl.roomType2024 || getDefaultRoomTypeForSiaCat(fl.siaCategory || 'I')];
+  const rtPill = rt
+    ? `<span class="pill req-pill" data-tip="Charge interne journalière de référence SIA 2024:2015 pour ce type de local (utilisée pour le justificatif Minergie).">SIA 2024 : ${rt.dailyLoadWhm2d} Wh/(m²·j) • q_th=${rt.qHygSpec}${rt.autoBlindsRec ? ' • Stores auto reco.' : ''}</span>`
+    : '';
   document.getElementById('siaCatChips').innerHTML = c
-    ? `<span class="pill neutral" data-tip="Consigne minimale de chauffage hivernal SIA 380/1.">θ_i = ${c.ti} °C</span>
+    ? `${rtPill}
+       <span class="pill neutral" data-tip="Consigne minimale de chauffage hivernal SIA 380/1.">θ_i = ${c.ti} °C</span>
        <span class="pill neutral" data-tip="Surface nette de plancher par personne selon SIA 380/1.">A_P = ${c.Ap} m²/P</span>
        <span class="pill neutral" data-tip="Puissance de chaleur dégagée par personne et durée de présence journalière.">Q_P = ${c.Qp} W/P (t_p = ${c.tp} h/j)</span>
-       <span class="pill neutral" data-tip="Consommation annuelle d'électricité (éclairage + appareils) et facteur de conversion en chaleur interne f_el.">E_F,el = ${c.Efel} kWh/m² (f_el = ${c.fel})</span>
-       <span class="pill neutral" data-tip="Débit spécifique d'air neuf hygiénique pendant l'occupation.">q_th = ${c.qth} m³/(h·m²)</span>`
-    : '<span class="pill neutral" data-tip="Vous avez personnalisé manuellement les valeurs de gains internes ou d\'occupation en Mode Avancé.">Valeurs manuelles actives pour cet étage.</span>';
+       <span class="pill neutral" data-tip="Consommation annuelle d'électricité (éclairage + appareils) et facteur de conversion en chaleur interne f_el.">E_F,el = ${c.Efel} kWh/m² (f_el = ${c.fel})</span>`
+    : `${rtPill}<span class="pill neutral" data-tip="Vous avez personnalisé manuellement les valeurs de gains internes ou d'occupation en Mode Avancé.">Valeurs manuelles actives pour cet étage.</span>`;
 }
 
 function applySiaCatToFloor(fl, catKey) {
   if (!fl) return;
   fl.siaCategory = catKey;
+  fl.roomType2024 = getDefaultRoomTypeForSiaCat(catKey);
   const sia = deriveSiaInternalDefaults(catKey, fl.area);
   if (sia) {
     fl.spaceType = sia.spaceType;
@@ -1414,7 +1657,7 @@ export function updateInspector() {
     <div class="inspector-stat" data-tip="Volume d'air intérieur total du bâtiment."><span>Volume total</span><strong>${totalVol.toFixed(0)} m³</strong></div>
     <div class="inspector-stat" data-tip="Surface totale des fenêtres toutes orientations confondues."><span>Surface vitrée</span><strong>${totalWin.toFixed(1)} m²</strong></div>
     <div class="inspector-stat" data-tip="Capacité thermique moyenne pondérée par la surface des étages (≥ 45 Wh/m²K recommandé)."><span>Inertie moyenne</span><strong>${avgC.toFixed(0)} Wh/m²K</strong></div>
-    <div class="inspector-stat" data-tip="Station et scénario météo utilisés pour le calcul horaire."><span>Climat</span><strong>${customWeather ? 'Importé' : escapeHtml(project.climate.station + ' ' + project.climate.scenario)}</strong></div>
+    <div class="inspector-stat" data-tip="Station et scénario météo utilisés pour le calcul horaire."><span>Climat</span><strong>${customWeather ? (customWeather.isManualDesignDay ? 'Journée type' : 'Météo réelle') : escapeHtml(project.climate.station + ' ' + project.climate.scenario)}</strong></div>
   `;
 
   const alerts = [];
@@ -1425,10 +1668,73 @@ export function updateInspector() {
   document.getElementById('inspectorAlerts').innerHTML = alerts.join('');
 }
 
+function applyStrictSiaMatchFromCoords() {
+  const { project } = appState;
+  const lat = Number(project.climate.lat) || 46.22;
+  const lon = Number(project.climate.lon) || 7.33;
+  const altM = project.climate.altM !== undefined ? Number(project.climate.altM) : null;
+  const match = findNearestOfficialSiaStation(lat, lon, altM);
+  project.climate.station = match.stationKey;
+  return match;
+}
+
 export function syncPvgisUI() {
   const { project, customWeather } = appState;
-  document.getElementById('climateStation').value = project.climate.station;
-  document.getElementById('climateScenario').value = project.climate.scenario;
+  populateStrictLocalitySelect();
+
+  const climateMode = project.climate.mode === 'strict_sia' ? 'strict_sia' : 'custom';
+  const isStrict = climateMode === 'strict_sia';
+
+  document.querySelectorAll('[data-climate-mode]').forEach(btn => {
+    btn.classList.toggle('active-blue', btn.dataset.climateMode === climateMode);
+  });
+
+  const modeHint = document.getElementById('climateModeHint');
+  if (modeHint) {
+    modeHint.textContent = isStrict
+      ? 'SIA 2028 strict : seules les stations officielles (ex. Valais : Sion, Montana, Grand-St-Bernard) sont autorisées ; la plus proche du lieu est sélectionnée automatiquement.'
+      : 'Mode libre : toutes les stations (dont hors SIA), météo réelle MétéoSuisse / Open-Meteo, journée type manuelle et import de fichiers.';
+  }
+
+  // En Mode Strict SIA : garantit une station officielle SIA 2028 et masque les sources externes/custom
+  const stSel = document.getElementById('climateStation');
+  const scSel = document.getElementById('climateScenario');
+  if (stSel) {
+    [...stSel.options].forEach(opt => {
+      const stInfo = SWISS_STATIONS[opt.value];
+      opt.disabled = isStrict && stInfo && !stInfo.officialSIA;
+    });
+  }
+
+  const strictBox = document.getElementById('climateStrictSiaBox');
+  const strictInfo = document.getElementById('strictStationMatchInfo');
+  if (strictBox) strictBox.classList.toggle('hidden', !isStrict);
+
+  if (isStrict) {
+    const locSel = document.getElementById('strictLocalitySelect');
+    const sLat = document.getElementById('strictLat');
+    const sLon = document.getElementById('strictLon');
+    const sAlt = document.getElementById('strictAlt');
+    const locId = project.climate.localityId || 'sion';
+    if (locSel) locSel.value = SWISS_LOCALITIES.some(l => l.id === locId) ? locId : 'custom_coords';
+    if (sLat) sLat.value = Number(project.climate.lat ?? 46.23).toFixed(3);
+    if (sLon) sLon.value = Number(project.climate.lon ?? 7.36).toFixed(3);
+    if (sAlt) sAlt.value = Math.round(Number(project.climate.altM ?? SWISS_STATIONS[project.climate.station]?.altM ?? 482));
+
+    const match = applyStrictSiaMatchFromCoords();
+    if (strictInfo) {
+      const altTxt = match.altDiffM !== null ? `, Δalt ${match.altDiffM} m` : '';
+      strictInfo.textContent = `Station officielle SIA 2028 attribuée : ${match.station.name} (${match.stationKey}, ${match.station.altM} m — ${match.distKm.toFixed(1)} km${altTxt})`;
+    }
+  }
+
+  const isAdv = appState.uiModes.global === 'advanced';
+  document.getElementById('climateLiveFetchBox')?.classList.toggle('hidden', isStrict);
+  document.getElementById('manualDayCard')?.classList.toggle('hidden', isStrict);
+  document.getElementById('climateAdvBox')?.classList.toggle('hidden', isStrict || !isAdv);
+
+  if (stSel) stSel.value = project.climate.station;
+  if (scSel) scSel.value = project.climate.scenario;
   document.getElementById('pvLat').value = project.climate.lat;
   document.getElementById('pvLon').value = project.climate.lon;
   document.getElementById('pvTzMode').value = project.climate.tzMode || 'cet_cest';
@@ -1437,15 +1743,44 @@ export function syncPvgisUI() {
   if (cUhi) cUhi.checked = uhi;
 
   const badge = document.getElementById('weatherStatusBadge');
-  if (customWeather) {
+  const cwBanner = document.getElementById('activeCustomWeatherBanner');
+  const cwInfo = document.getElementById('customWeatherInfoTxt');
+  const synSec = document.getElementById('climateSyntheticSection');
+
+  if (customWeather && !isStrict) {
+    const stats = summarizeWeatherData(customWeather);
     badge.textContent = `Climat actif : ${customWeather.sourceLabel}`;
     badge.className = 'pill ok';
+    if (cwBanner) cwBanner.classList.remove('hidden');
+    if (cwInfo) {
+      cwInfo.innerHTML =
+        `<strong>Données météo actives : ${escapeHtml(customWeather.sourceLabel)}</strong><br>` +
+        `<span style="font-size:12px;color:var(--text-muted);">${stats.hoursCount} h (${stats.daysCount} j) • θ_e : ${stats.minTe.toFixed(1)}..${stats.maxTe.toFixed(1)} °C • Irradiance max : ${stats.peakIgh.toFixed(0)} W/m² • ${stats.tropicalNights} nuits ≥ 20 °C</span>`;
+    }
+    if (synSec) synSec.classList.add('section-readonly');
+    if (stSel) stSel.disabled = true;
+    if (scSel) scSel.disabled = true;
+
+    if (customWeather.isManualDesignDay && customWeather.manualConfig) {
+      const mc = customWeather.manualConfig;
+      const tMinEl = document.getElementById('manualDayTMin');
+      const tMaxEl = document.getElementById('manualDayTMax');
+      const ighEl = document.getElementById('manualDayPeakIgh');
+      const dEl = document.getElementById('manualDayDate');
+      if (tMinEl) tMinEl.value = mc.tMin;
+      if (tMaxEl) tMaxEl.value = mc.tMax;
+      if (ighEl) ighEl.value = mc.peakIgh;
+      if (dEl) dEl.value = String(mc.dayOfYear);
+    }
   } else {
     const st = SWISS_STATIONS[project.climate.station] || SWISS_STATIONS.SIO;
-    badge.textContent = `Climat actif : ${st.name} (${project.climate.scenario}${uhi ? ' + Îlot chaleur' : ''})`;
-    badge.className = 'pill neutral';
+    badge.textContent = `Climat actif : ${st.name} (${project.climate.scenario}${uhi ? ' + Îlot chaleur' : ''}${isStrict ? ' • SIA 2028 strict' : ''})`;
+    badge.className = isStrict ? 'pill req-pill' : 'pill neutral';
+    if (cwBanner) cwBanner.classList.add('hidden');
+    if (synSec) synSec.classList.remove('section-readonly');
+    if (stSel) stSel.disabled = isStrict;
+    if (scSel) scSel.disabled = false;
   }
-  document.getElementById('btnResetWeatherQuick')?.classList.toggle('hidden', !customWeather);
 
   const pvType = document.getElementById('pvType').value;
   const base = 'https://re.jrc.ec.europa.eu/api/v5_3/';
@@ -1493,16 +1828,74 @@ function syncModeToggleAndWarning() {
   banner.classList.add('hidden');
 }
 
-export function renderVariantBar() {
+export function renderVariantBar(forceResultsMode = null) {
+  const bar = document.getElementById('variantBar');
   const wrap = document.getElementById('variantTabs');
-  if (!wrap) return;
+  const editActions = document.getElementById('variantEditActions');
+  const resActions = document.getElementById('variantResultsActions');
+  const cmpBtn = document.getElementById('btnToggleCompareMode');
+  if (!wrap || !bar) return;
+
+  const isRes = forceResultsMode === null ? isResultsCurrentlyVisible() : Boolean(forceResultsMode);
+  const multiVar = appState.variants.length > 1;
+
+  // En vue Résultats : masque entièrement la barre s'il n'y a qu'une seule variante
+  bar.classList.toggle('hidden', isRes && !multiVar);
+  if (editActions) editActions.classList.toggle('hidden', isRes);
+  if (resActions) resActions.classList.toggle('hidden', !isRes || !multiVar);
+
+  if (cmpBtn) {
+    const activeCmp = multiVar && Boolean(appState.compareMode);
+    cmpBtn.classList.toggle('btn-run', activeCmp);
+    cmpBtn.textContent = activeCmp ? 'Comparer les variantes ✓' : 'Comparer les variantes';
+  }
+
+  // S'assurer que compareVariantIds reste valide
+  appState.compareVariantIds = appState.compareVariantIds.filter(id =>
+    appState.variants.some(v => v.id === id)
+  );
+  if (appState.compareVariantIds.length === 0 && appState.variants.length > 0) {
+    appState.compareVariantIds = appState.variants.map(v => v.id);
+  }
+
+  const pal = getChartPalette();
   wrap.innerHTML = '';
-  appState.variants.forEach(v => {
-    const btn = document.createElement('button');
+  appState.variants.forEach((v, idx) => {
     const isActive = v.id === appState.activeVariantId;
-    btn.className = `variant-tab${isActive ? ' active' : ''}`;
-    btn.dataset.tip = `Variante « ${v.name} » (${v.inputMode === 'advanced' ? 'Mode Avancé' : 'Mode Simple'}). Cliquer pour basculer dessus.`;
-    btn.innerHTML = `<span class="variant-tab-name">${escapeHtml(v.name)}</span><span class="variant-mode-dot">${v.inputMode === 'advanced' ? 'Av.' : 'Simp.'}</span>`;
+    const isChecked = appState.compareVariantIds.includes(v.id);
+    const color = pal.series[idx % pal.series.length];
+
+    const pill = document.createElement('div');
+    pill.className = `variant-tab-wrap${isActive ? ' active' : ''}`;
+
+    if (isRes && multiVar) {
+      const chkLbl = document.createElement('label');
+      chkLbl.className = 'variant-tab-check';
+      chkLbl.dataset.tip = `Inclure ou exclure « ${v.name} » du comparateur de variantes.`;
+      chkLbl.innerHTML = `<input type="checkbox" ${isChecked ? 'checked' : ''} /><span class="variant-color-dot" style="background:${color};"></span>`;
+      const inp = chkLbl.querySelector('input');
+      inp.addEventListener('change', e => {
+        if (e.target.checked) {
+          if (!appState.compareVariantIds.includes(v.id)) appState.compareVariantIds.push(v.id);
+        } else {
+          if (appState.compareVariantIds.length <= 1) {
+            e.target.checked = true;
+            return;
+          }
+          appState.compareVariantIds = appState.compareVariantIds.filter(id => id !== v.id);
+        }
+        appState.compareMode = true;
+        saveWorkspaceToStorage();
+        renderVariantBar(true);
+        notifyCompareChanged();
+      });
+      pill.appendChild(chkLbl);
+    }
+
+    const btn = document.createElement('button');
+    btn.className = 'variant-tab';
+    btn.dataset.tip = `Variante « ${v.name} ». Cliquer pour basculer dessus.`;
+    btn.innerHTML = `<span class="variant-tab-name">${escapeHtml(v.name)}</span>`;
     btn.addEventListener('click', () => {
       if (v.id === appState.activeVariantId) return;
       switchVariant(v.id);
@@ -1510,9 +1903,10 @@ export function renderVariantBar() {
       notifyVariantSwitched();
     });
     btn.addEventListener('dblclick', () => {
-      if (v.id === appState.activeVariantId) openInlineVariantRename();
+      if (!isRes && v.id === appState.activeVariantId) openInlineVariantRename();
     });
-    wrap.appendChild(btn);
+    pill.appendChild(btn);
+    wrap.appendChild(pill);
   });
 
   const delBtn = document.getElementById('btnDeleteVariant');
@@ -1602,6 +1996,7 @@ export function applyGlobalLayout(onResultsRefresh, targetStep = null) {
   });
 
   syncFloorsEditorButtons();
+  syncPvgisUI();
   activateConfigStep(targetStep || appState.uiModes.activeStep || 'step-house');
 }
 
@@ -1620,7 +2015,6 @@ export function syncAllUI(onResultsRefresh) {
   document.getElementById('projName').value = project.name;
   syncHeaderRequirementBadge();
   syncMainCategorySelect();
-  document.getElementById('siaCurveMode').value = project.siaCurveMode;
   document.getElementById('stackCoupling').checked = project.stackCoupling;
   const fresnelEl = document.getElementById('projUseFresnel');
   if (fresnelEl) fresnelEl.checked = project.useFresnelIncidence !== false;
@@ -1628,6 +2022,8 @@ export function syncAllUI(onResultsRefresh) {
   if (foehnEl) foehnEl.checked = Boolean(project.foehnExposed);
   const albEl = document.getElementById('projAlbedo');
   if (albEl) albEl.value = project.albedo ?? 0.20;
+  const tcEl = document.getElementById('projTerrainCat');
+  if (tcEl) tcEl.value = project.terrainCat || 'III';
   const advHorEl = document.getElementById('advHorizon');
   if (advHorEl) advHorEl.value = project.horizonDeg || 0;
 
@@ -1635,6 +2031,10 @@ export function syncAllUI(onResultsRefresh) {
   if (gSel) delete gSel.dataset.forceCustom;
   const sSel = document.getElementById('simpStoreType');
   if (sSel) delete sSel.dataset.forceCustom;
+  const bSel = document.getElementById('simpBlindPreset');
+  if (bSel) delete bSel.dataset.forceCustom;
+  const vSel = document.getElementById('inVmcPreset');
+  if (vSel) delete vSel.dataset.forceCustom;
 
   renderVariantBar();
   renderFloorSelectors();
@@ -1672,10 +2072,38 @@ export function renderLibrary(onLoadProject) {
   });
 }
 
-export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectChanged, onVariantSwitched, onOpenResults }) {
+export function bindConfigEvents({
+  onRunSimulation,
+  onResultsRefresh,
+  onProjectChanged,
+  onVariantSwitched,
+  onOpenResults,
+  onCompareChanged
+}) {
   notifyProjectChanged = onProjectChanged || (() => {});
   notifyVariantSwitched = onVariantSwitched || (() => {});
   notifyOpenResults = onOpenResults || (() => {});
+  notifyCompareChanged = onCompareChanged || (() => {});
+
+  // Menus déroulants (Fichier .json & Actions variante)
+  setupDropdown('btnFileMenu', 'fileMenuDropdown');
+  setupDropdown('btnVariantMenu', 'variantMenuDropdown');
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.add('hidden'));
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.add('hidden'));
+    }
+  });
+
+  // Bouton Comparer les variantes (dans la barre du haut en vue Résultats)
+  document.getElementById('btnToggleCompareMode')?.addEventListener('click', () => {
+    if (appState.variants.length <= 1) return;
+    appState.compareMode = !appState.compareMode;
+    renderVariantBar(true);
+    notifyCompareChanged();
+  });
 
   // Bascule libre Simple ↔ Avancé (alerte non bloquante si réglages avancés présents)
   document.getElementById('btnGlobalSimple')?.addEventListener('click', () => {
@@ -1695,7 +2123,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     document.getElementById('simpleModeWarnBanner')?.classList.add('hidden');
   });
 
-  // Barre multi-variantes (style Lesosai)
+  // Barre multi-variantes (menu consolidé)
   document.getElementById('btnDuplicateVariant')?.addEventListener('click', () => {
     duplicateActiveVariant();
     syncAllUI();
@@ -1728,34 +2156,33 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     if (e.key === 'Escape') document.getElementById('variantRenameBox')?.classList.add('hidden');
   });
 
-  document.getElementById('btnDeleteVariant')?.addEventListener('click', () => {
+  document.getElementById('btnDeleteVariant')?.addEventListener('click', async () => {
+    if (appState.variants.length <= 1) return;
+    const cur = getActiveVariant();
+    const ok = await showConfirmModal({
+      title: 'Supprimer cette variante ?',
+      message: `Voulez-vous vraiment supprimer définitivement « ${cur?.name || 'cette variante'} » ?`,
+      confirmLabel: 'Supprimer',
+      danger: true
+    });
+    if (!ok) return;
     if (deleteVariant(appState.activeVariantId)) {
       syncAllUI();
       notifyVariantSwitched();
     }
   });
 
-  // Réinitialisation locale sécurisée (confirmation en 2 clics)
-  let resetArmedTimer = null;
-  const resetBtn = document.getElementById('btnResetWorkspace');
-  resetBtn?.addEventListener('click', () => {
-    if (resetBtn.dataset.armed !== '1') {
-      resetBtn.dataset.armed = '1';
-      resetBtn.textContent = 'Confirmer ?';
-      resetBtn.classList.add('ko');
-      clearTimeout(resetArmedTimer);
-      resetArmedTimer = setTimeout(() => {
-        delete resetBtn.dataset.armed;
-        resetBtn.textContent = 'Réinitialiser';
-        resetBtn.classList.remove('ko');
-      }, 4000);
-      return;
-    }
-    clearTimeout(resetArmedTimer);
-    delete resetBtn.dataset.armed;
-    resetBtn.textContent = 'Réinitialiser';
-    resetBtn.classList.remove('ko');
+  document.getElementById('btnResetWorkspace')?.addEventListener('click', async () => {
+    const ok = await showConfirmModal({
+      title: 'Réinitialiser tout l’espace de travail ?',
+      message:
+        'Toutes vos variantes et modifications locales sauvegardées seront supprimées pour repartir d’un local simple 1 étage / 1 fenêtre Sud.',
+      confirmLabel: 'Réinitialiser',
+      danger: true
+    });
+    if (!ok) return;
     resetWorkspaceStorage();
+    appState.compareMode = false;
     syncAllUI();
     notifyVariantSwitched();
   });
@@ -1808,7 +2235,19 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   const configRoot = document.getElementById('view-config');
   if (configRoot) {
     configRoot.addEventListener('change', e => {
-      if (e.target && ['activeOpeningFloor', 'siaTargetFloor', 'quickShadingPreset', 'pvType'].includes(e.target.id)) {
+      if (
+        e.target &&
+        [
+          'activeOpeningFloor',
+          'siaTargetFloor',
+          'quickShadingPreset',
+          'pvType',
+          'manualDayTMin',
+          'manualDayTMax',
+          'manualDayPeakIgh',
+          'manualDayDate'
+        ].includes(e.target.id)
+      ) {
         return;
       }
       notifyProjectChanged();
@@ -1828,8 +2267,28 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   });
   document.getElementById('projectType').addEventListener('change', e => {
     appState.project.projectType = e.target.value;
+    if (e.target.value === 'custom' && !appState.project.customReg) {
+      appState.project.customReg = { ...DEFAULT_CUSTOM_REG };
+    }
     syncHeaderRequirementBadge();
     notifyProjectChanged();
+  });
+
+  ['customRegLimitMode', 'customRegMaxTemp', 'customRegMaxHours', 'customRegCountMode'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      appState.project.customReg = normalizeCustomReg({
+        limitMode: document.getElementById('customRegLimitMode')?.value,
+        maxTempC: document.getElementById('customRegMaxTemp')?.value,
+        maxHours: document.getElementById('customRegMaxHours')?.value,
+        countMode: document.getElementById('customRegCountMode')?.value
+      });
+      syncHeaderRequirementBadge();
+      notifyProjectChanged();
+    });
+  });
+
+  document.getElementById('projTerrainCat')?.addEventListener('change', e => {
+    appState.project.terrainCat = e.target.value || 'III';
   });
   document.getElementById('projFoehn')?.addEventListener('change', e => {
     appState.project.foehnExposed = e.target.checked;
@@ -1838,9 +2297,6 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     appState.project.climate.urbanHeatIsland = e.target.checked;
     syncPvgisUI();
     updateInspector();
-  });
-  document.getElementById('siaCurveMode').addEventListener('change', e => {
-    appState.project.siaCurveMode = e.target.value;
   });
   document.getElementById('stackCoupling').addEventListener('change', e => {
     appState.project.stackCoupling = e.target.checked;
@@ -1925,6 +2381,10 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     'simpCustomGStore',
     'simpCustomGtotMode',
     'simpBlindPreset',
+    'simpBlindThreshI',
+    'simpBlindThreshT',
+    'simpBlindRule',
+    'simpBlindMode',
     'simpOverhang'
   ].forEach(id => {
     document.getElementById(id)?.addEventListener('change', applySimpleGlazingFromInputs);
@@ -1938,12 +2398,73 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     updateInspector();
   });
 
+  document.getElementById('simpNightStart')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    const v = Math.max(0, Math.min(23, Number(e.target.value) || 0));
+    targets.forEach(tfl => {
+      tfl.nightStart = v;
+    });
+    const advEl = document.getElementById('inNightStart');
+    if (advEl) advEl.value = v;
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateNightVentUI(activeFl);
+  });
+
+  document.getElementById('simpNightEnd')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    const v = Math.max(1, Math.min(24, Number(e.target.value) || 7));
+    targets.forEach(tfl => {
+      tfl.nightEnd = v;
+    });
+    const advEl = document.getElementById('inNightEnd');
+    if (advEl) advEl.value = v;
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateNightVentUI(activeFl);
+  });
+
+  document.getElementById('simpNightFree24h')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    const ns = e.target.checked ? 0 : 21;
+    const ne = e.target.checked ? 24 : 7;
+    targets.forEach(tfl => {
+      tfl.nightStart = ns;
+      tfl.nightEnd = ne;
+    });
+    const advS = document.getElementById('inNightStart');
+    const advE = document.getElementById('inNightEnd');
+    if (advS) advS.value = ns;
+    if (advE) advE.value = ne;
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateNightVentUI(activeFl);
+  });
+
+  document.getElementById('inDayWindowVent')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    const mode = e.target.checked ? 'window_occ' : 'none';
+    targets.forEach(tfl => {
+      tfl.dayVentMode = mode;
+    });
+  });
+
   document.getElementById('btnAddOpening').addEventListener('click', () => {
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || appState.project.floors[0];
+    let orient = 'S';
+    let box3dFace = undefined;
+    if (isBox3dActiveForFloor(activeFl)) {
+      const b3Orients = getWallOrientations(activeFl.box3d.frontOrient || 'S');
+      const extFace =
+        ['front', 'right', 'back', 'left', 'ceiling'].find(
+          fk => activeFl.box3d.walls?.[fk]?.contact !== 'adiabatic'
+        ) || 'front';
+      box3dFace = extFace;
+      orient = b3Orients[extFace] || 'S';
+    }
     appState.project.openings.push({
       id: 'op_' + Date.now(),
-      floorId: appState.activeFloorId,
+      floorId: activeFl.id,
+      box3dFace,
       name: `Fenêtre ${appState.project.openings.length + 1}`,
-      orient: 'S',
+      orient,
       width: 1.4,
       height: 1.4,
       qty: 1,
@@ -1967,6 +2488,9 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
       cd: 0.6,
       sillHeight: 0.9
     });
+    if (isBox3dActiveForFloor(activeFl)) {
+      applyBox3dToFloor(activeFl, appState.project, { preserveOpenings: true });
+    }
     renderOpenings();
     updateNightVentUI();
     updateInspector();
@@ -1981,8 +2505,6 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
       if (targetIds.has(op.floorId)) {
         op.gStore = sp.gStore;
         op.gtotMode = sp.gtotMode;
-        const opFl = appState.project.floors.find(f => f.id === op.floorId);
-        if (isBox3dActiveForFloor(opFl)) syncOpeningBackToBox3d(op, opFl, appState.project);
       }
     });
     renderOpenings();
@@ -1992,6 +2514,23 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   document.getElementById('siaCategorySelect').addEventListener('change', e =>
     applySiaCatToCurrentFloor(e.target.value)
   );
+  document.getElementById('siaRoomTypeSelect')?.addEventListener('change', e => {
+    const rtKey = e.target.value;
+    const rt = SIA2024_ROOM_TYPES[rtKey];
+    if (!rt) return;
+    const targets = getTargetFloorsForSia();
+    targets.forEach(tfl => {
+      tfl.roomType2024 = rtKey;
+      tfl.qHygSpec = rt.qHygSpec;
+      tfl.spaceType = rt.spaceType;
+    });
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    if (activeFl) {
+      updateMechVentUI(activeFl);
+      updateSiaCatChips(activeFl);
+    }
+    updateInspector();
+  });
   document.getElementById('inInternalProfileMode')?.addEventListener('change', e => {
     getTargetFloorsForSia().forEach(tfl => {
       tfl.internalProfileMode = e.target.value;
@@ -2033,6 +2572,12 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
         syncMainCategorySelect();
         updateSiaCatChips(activeFl);
       }
+      if (prop === 'qHygSpec') {
+        const q1 = document.getElementById('inQHyg');
+        const q2 = document.getElementById('inQHygNat');
+        if (q1) q1.value = activeFl.qHygSpec;
+        if (q2) q2.value = activeFl.qHygSpec;
+      }
       if (['nightVentMode', 'nightVentFixedVal', 'nightStart', 'nightEnd'].includes(prop)) {
         updateNightVentUI(activeFl);
       }
@@ -2049,14 +2594,68 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   bindSia('inOccDays', 'occDays', true);
   bindSia('inStandbyPct', 'standbyPct', true);
   bindSia('inQHyg', 'qHygSpec', true);
+  bindSia('inQHygNat', 'qHygSpec', true);
   bindSia('inAchInfil', 'achInfil');
-  bindSia('inEtaWrg', 'etaWRG');
   bindSia('inNightMode', 'nightVentMode');
   bindSia('inNightFixed', 'nightVentFixedVal');
   bindSia('inNightStart', 'nightStart');
   bindSia('inNightEnd', 'nightEnd');
   bindSia('inNightTargetTi', 'nightTargetTi');
   bindSia('inNightMinDT', 'nightMinDT');
+
+  // Ventilation mécanique (VMC) intuitive — Simple & Avancé
+  document.getElementById('inHasMechVent')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0) return;
+    const on = e.target.checked;
+    const vSel = document.getElementById('inVmcPreset');
+    if (vSel) delete vSel.dataset.forceCustom;
+    targets.forEach(tfl => {
+      tfl.hasMechVent = on;
+      if (!on) {
+        tfl.etaWRG = 0;
+      } else if (!tfl.etaWRG || tfl.etaWRG <= 0) {
+        tfl.etaWRG = 0.75; // Double flux standard par défaut à l'activation
+      }
+    });
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateMechVentUI(activeFl);
+    syncAutoSiaCurveMode();
+    updateInspector();
+  });
+
+  document.getElementById('inVmcPreset')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0) return;
+    const choice = e.target.value;
+    if (choice === 'custom') {
+      e.target.dataset.forceCustom = '1';
+      return;
+    }
+    delete e.target.dataset.forceCustom;
+    const map = { sf: 0, df_std: 0.75, df_hp: 0.85 };
+    const eta = map[choice] ?? 0.75;
+    targets.forEach(tfl => {
+      tfl.hasMechVent = true;
+      tfl.etaWRG = eta;
+    });
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateMechVentUI(activeFl);
+  });
+
+  document.getElementById('inEtaWrgPct')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0) return;
+    const pct = Math.max(0, Math.min(95, Number(e.target.value) || 0));
+    const vSel = document.getElementById('inVmcPreset');
+    if (vSel) delete vSel.dataset.forceCustom;
+    targets.forEach(tfl => {
+      tfl.hasMechVent = true;
+      tfl.etaWRG = Math.round(pct) / 100;
+    });
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateMechVentUI(activeFl);
+  });
 
   document.getElementById('inNightFreeCool24h')?.addEventListener('change', e => {
     const targets = getTargetFloorsForSia();
@@ -2093,12 +2692,54 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     });
   });
 
+  // Mode Strict SIA 2028 vs Mode Libre / Custom
+  document.querySelectorAll('[data-climate-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const nextMode = btn.dataset.climateMode === 'strict_sia' ? 'strict_sia' : 'custom';
+      appState.project.climate.mode = nextMode;
+      if (nextMode === 'strict_sia') {
+        appState.customWeather = null;
+        applyStrictSiaMatchFromCoords();
+      }
+      syncPvgisUI();
+      updateInspector();
+      notifyProjectChanged();
+    });
+  });
+
+  document.getElementById('strictLocalitySelect')?.addEventListener('change', e => {
+    const id = e.target.value;
+    appState.project.climate.localityId = id;
+    const loc = SWISS_LOCALITIES.find(l => l.id === id);
+    if (loc) {
+      appState.project.climate.lat = loc.lat;
+      appState.project.climate.lon = loc.lon;
+      appState.project.climate.altM = loc.altM;
+      applyStrictSiaMatchFromCoords();
+      syncPvgisUI();
+      updateInspector();
+    }
+  });
+
+  ['strictLat', 'strictLon', 'strictAlt'].forEach(id => {
+    document.getElementById(id)?.addEventListener('change', () => {
+      appState.project.climate.localityId = 'custom_coords';
+      appState.project.climate.lat = parseFloat(document.getElementById('strictLat')?.value) || 46.22;
+      appState.project.climate.lon = parseFloat(document.getElementById('strictLon')?.value) || 7.33;
+      appState.project.climate.altM = parseFloat(document.getElementById('strictAlt')?.value) || 500;
+      applyStrictSiaMatchFromCoords();
+      syncPvgisUI();
+      updateInspector();
+    });
+  });
+
   document.getElementById('climateStation').addEventListener('change', e => {
     appState.project.climate.station = e.target.value;
     const st = SWISS_STATIONS[e.target.value];
     if (st) {
       appState.project.climate.lat = st.lat;
       appState.project.climate.lon = st.lon;
+      appState.project.climate.altM = st.altM;
     }
     appState.customWeather = null;
     syncPvgisUI();
@@ -2174,7 +2815,26 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     notifyProjectChanged();
   };
   document.getElementById('btnResetWeather').addEventListener('click', resetToSyntheticWeather);
-  document.getElementById('btnResetWeatherQuick')?.addEventListener('click', resetToSyntheticWeather);
+  document.getElementById('btnClearCustomWeather')?.addEventListener('click', resetToSyntheticWeather);
+
+  // Journée type manuelle (test canicule au choix)
+  document.getElementById('btnApplyManualDay')?.addEventListener('click', () => {
+    const tMin = parseFloat(document.getElementById('manualDayTMin')?.value);
+    const tMax = parseFloat(document.getElementById('manualDayTMax')?.value);
+    const peakIgh = parseFloat(document.getElementById('manualDayPeakIgh')?.value);
+    const dayOfYear = parseInt(document.getElementById('manualDayDate')?.value, 10) || 201;
+    appState.customWeather = generateManualDesignDayWeather({
+      tMin: Number.isFinite(tMin) ? tMin : 18,
+      tMax: Number.isFinite(tMax) ? tMax : 34,
+      peakIgh: Number.isFinite(peakIgh) ? peakIgh : 850,
+      dayOfYear,
+      lat: appState.project.climate.lat || 46.22,
+      lon: appState.project.climate.lon || 7.33
+    });
+    syncPvgisUI();
+    updateInspector();
+    notifyProjectChanged();
+  });
 
   const runLiveWeatherFetch = async (provider, btnId, label) => {
     const badge = document.getElementById('weatherStatusBadge');
@@ -2213,14 +2873,20 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   document.getElementById('btnFetchOpenMeteo')?.addEventListener('click', () =>
     runLiveWeatherFetch('openmeteo', 'btnFetchOpenMeteo', 'Open-Meteo ERA5')
   );
-  document.getElementById('btnFetchPvgis')?.addEventListener('click', () =>
-    runLiveWeatherFetch('pvgis', 'btnFetchPvgis', 'PVGIS 5.3')
-  );
 
   const handleHouseFile = file => {
     const r = new FileReader();
     r.onload = ev => {
       try {
+        const low = String(file.name || '').toLowerCase();
+        if (low.endsWith('.json')) {
+          const info = importJsonToWorkspace(ev.target.result);
+          const msgEl = document.getElementById('houseImportMsg');
+          if (msgEl) msgEl.textContent = info.msg;
+          syncAllUI();
+          notifyVariantSwitched();
+          return;
+        }
         const p = parseHouseFile(ev.target.result, file.name, appState.project.climate);
         replaceActiveVariantProject(p.proj, {
           inputMode: 'advanced',
@@ -2231,7 +2897,8 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
         syncAllUI();
         onRunSimulation();
       } catch (err) {
-        document.getElementById('houseImportMsg').textContent = `Erreur : ${err.message}`;
+        const msgEl = document.getElementById('houseImportMsg');
+        if (msgEl) msgEl.textContent = `Erreur : ${err.message}`;
       }
     };
     r.readAsText(file);
@@ -2252,13 +2919,53 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     if (e.dataTransfer.files[0]) handleHouseFile(e.dataTransfer.files[0]);
   });
 
-  document.getElementById('btnExportHouse').addEventListener('click', () => {
-    const blob = new Blob([JSON.stringify(appState.project, null, 2)], { type: 'application/json' });
+  // Menu déroulant Fichier .json (Export variante / Export espace / Import JSON)
+  const downloadJson = (obj, filename) => {
+    const blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${appState.project.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'projet'}.json`;
+    a.download = filename;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  document.getElementById('btnExportSingleJson')?.addEventListener('click', () => {
+    const slug = appState.project.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'projet';
+    downloadJson(appState.project, `${slug}.json`);
+  });
+
+  document.getElementById('btnExportWorkspaceJson')?.addEventListener('click', () => {
+    const slug = appState.project.name.toLowerCase().replace(/[^a-z0-9]+/g, '_') || 'espace';
+    downloadJson(buildWorkspaceExportObject(), `${slug}_variantes.json`);
+  });
+
+  const fileImportHdr = document.getElementById('fileImportJsonHeader');
+  document.getElementById('btnImportJsonHeader')?.addEventListener('click', () => {
+    if (fileImportHdr) {
+      fileImportHdr.value = '';
+      fileImportHdr.click();
+    }
+  });
+  fileImportHdr?.addEventListener('change', e => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = ev => {
+      try {
+        const info = importJsonToWorkspace(ev.target.result);
+        flashSaveIndicator(info.kind === 'workspace' ? `${info.count} var. importées` : 'Projet importé');
+        syncAllUI();
+        notifyVariantSwitched();
+      } catch (err) {
+        showConfirmModal({
+          title: 'Erreur d’importation JSON',
+          message: err.message || 'Impossible de lire ce fichier JSON.',
+          confirmLabel: 'OK',
+          danger: false
+        });
+      }
+    };
+    r.readAsText(f);
   });
 }

@@ -172,6 +172,7 @@ export function generateSyntheticWeather(stationKey = 'SIO', scenarioKey = 'REF'
 export function applyClimateDelta(weatherObj, scenarioKey = '2050', urbanHeatIsland = false) {
   const sc = CLIMATE_SCENARIOS[scenarioKey] || CLIMATE_SCENARIOS['2050'];
   return {
+    ...weatherObj,
     sourceLabel: `${weatherObj.sourceLabel} + ${scenarioKey}${urbanHeatIsland ? ' + Îlot chaleur' : ''}`,
     data: weatherObj.data.map(hr => {
       const isSummer = hr.d >= 135 && hr.d <= 258;
@@ -184,6 +185,109 @@ export function applyClimateDelta(weatherObj, scenarioKey = '2050', urbanHeatIsl
           (urbanHeatIsland ? uhiHourlyDelta(hr.hod) : 0)
       };
     })
+  };
+}
+
+/**
+ * Génère une séquence périodique de 14 jours estivaux identiques (336 h) à partir d'une
+ * journée type manuelle choisie par l'utilisateur (θ_e min, θ_e max, irradiance globale pic).
+ * Permet de tester directement la tenue du bâtiment face à une journée de canicule ciblée
+ * en régime périodique établi (inertie thermique 5R1C pré-amorcée).
+ */
+export function generateManualDesignDayWeather({
+  tMin = 18,
+  tMax = 34,
+  peakIgh = 850,
+  dayOfYear = 201,
+  lat = 46.22,
+  lon = 7.33,
+  daysCount = 14
+} = {}) {
+  const lo = Math.min(Number(tMin) || 18, Number(tMax) || 34);
+  const hi = Math.max(Number(tMin) || 18, Number(tMax) || 34);
+  const peak = Math.max(0, Math.min(1200, Number(peakIgh) || 850));
+  const doyCenter = Math.max(125, Math.min(265, Math.round(Number(dayOfYear) || 201)));
+  const nDays = Math.max(7, Math.min(30, Math.round(Number(daysCount) || 14)));
+
+  // Forme diurne réaliste normalisée sur [0, 1] (min à 05h00, max à ~15h00)
+  const rawShapes = [];
+  for (let hod = 0; hod < 24; hod++) {
+    const phi = (2 * Math.PI * (hod - 5.0)) / 24;
+    rawShapes.push(-Math.cos(phi) - 0.14 * Math.sin(2 * phi));
+  }
+  const sMin = Math.min(...rawShapes);
+  const sMax = Math.max(...rawShapes);
+  const normShapes = rawShapes.map(v => (sMax > sMin ? (v - sMin) / (sMax - sMin) : 0.5));
+
+  // Pré-calcul du profil solaire sur le jour choisi afin que le pic d'irradiance atteigne exactement peakIgh
+  const refSun = [];
+  let maxCosZ = 0;
+  for (let hod = 0; hod < 24; hod++) {
+    const sun = solarPosition(doyCenter, hod + 0.5, lat, lon, 1);
+    refSun.push(sun);
+    if (sun.cosZ > maxCosZ) maxCosZ = sun.cosZ;
+  }
+
+  const startDay = Math.max(121, doyCenter - Math.floor(nDays / 2));
+  const hours = [];
+  for (let dayOffset = 0; dayOffset < nDays; dayOffset++) {
+    const d = startDay + dayOffset;
+    for (let hod = 0; hod < 24; hod++) {
+      const h = dayOffset * 24 + hod;
+      const Te = lo + (hi - lo) * normShapes[hod];
+      const sun = refSun[hod];
+      let Igh = 0;
+      let Ibn = 0;
+      let Idh = 0;
+      if (peak > 0 && sun.cosZ > 0.02 && maxCosZ > 0.05) {
+        const weight = Math.pow(sun.cosZ / maxCosZ, 1.15);
+        Igh = peak * weight;
+        const comp = splitGlobalToComponents(Igh, sun, doyCenter);
+        Ibn = comp.Ibn;
+        Idh = comp.Idh;
+      }
+      hours.push({ h, d, hod, Te, Igh, Ibn, Idh, sun });
+    }
+  }
+
+  return {
+    sourceLabel: `Journée type manuelle (${lo.toFixed(1)}..${hi.toFixed(1)} °C • ${peak.toFixed(0)} W/m²)`,
+    isManualDesignDay: true,
+    manualConfig: { tMin: lo, tMax: hi, peakIgh: peak, dayOfYear: doyCenter },
+    data: hours
+  };
+}
+
+/**
+ * Calcule un résumé statistique synthétique d'une série météo pour l'affichage utilisateur.
+ */
+export function summarizeWeatherData(weatherObj) {
+  const arr = weatherObj?.data || [];
+  if (arr.length === 0) {
+    return { hoursCount: 0, daysCount: 0, minTe: 0, maxTe: 0, peakIgh: 0, tropicalNights: 0 };
+  }
+  let minTe = Infinity;
+  let maxTe = -Infinity;
+  let peakIgh = 0;
+  const dayMin = new Map();
+  for (const hr of arr) {
+    if (hr.Te < minTe) minTe = hr.Te;
+    if (hr.Te > maxTe) maxTe = hr.Te;
+    if ((hr.Igh || 0) > peakIgh) peakIgh = hr.Igh || 0;
+    const prev = dayMin.get(hr.d);
+    if (prev === undefined || hr.Te < prev) dayMin.set(hr.d, hr.Te);
+  }
+  let tropicalNights = 0;
+  for (const v of dayMin.values()) {
+    if (v >= 20.0) tropicalNights++;
+  }
+  return {
+    hoursCount: arr.length,
+    daysCount: Math.max(1, Math.round(arr.length / 24)),
+    minTe,
+    maxTe,
+    peakIgh,
+    tropicalNights
   };
 }
 

@@ -1,6 +1,10 @@
 /**
  * @fileoverview Préréglages constructifs pour le Constructeur 3D "Paroi par paroi"
  * (inspiré des outils de thermique du bâtiment suisses type KoZiBox / SIA).
+ *
+ * Chaque paroi distingue :
+ *  - `kappa`         : capacité surfacique dynamique ISO 13786 pour le modèle horaire 5R1C [Wh/(m²·K)]
+ *  - `kappaMinergie` : capacité thermique spécifique SIA 180 / Bauteile Minergie [Wh/(m²·K)] (plafonnée à 75 Wh/m²K au total)
  */
 
 export const BOX3D_CONTACTS = {
@@ -12,19 +16,22 @@ export const BOX3D_CONTACTS = {
 };
 
 export const BOX3D_WALL_PRESETS = {
-  wall_sia_heavy:  { label: 'Mur béton isolé ext. U=0.17 (20cm béton, lourd)',          u: 0.17, kappa: 55 },
-  wall_min_heavy:  { label: 'Mur Minergie-P béton U=0.10 (20cm béton + 20cm PUR)',      u: 0.10, kappa: 55 },
-  wall_sia_med:    { label: 'Mur brique isolé U=0.20 (15cm brique + isol. ext.)',       u: 0.20, kappa: 35 },
-  wall_plaster_int:{ label: 'Cloison intérieure plâtre 5–10 cm (masse modérée)',        u: 1.80, kappa: 14 },
-  wall_wood_light: { label: 'Mur ossature bois U=0.18 (léger)',                         u: 0.18, kappa: 10 },
-  wall_old_heavy:  { label: 'Mur ancien non isolé U=1.10 (pierre / béton lourd)',       u: 1.10, kappa: 55 },
-  slab_heavy_ext:  { label: 'Dalle/Toiture béton nu isolée ext. U=0.18 (lourd)',        u: 0.18, kappa: 60 },
-  slab_heavy_int:  { label: 'Dalle béton nu apparente / chape minérale (lourd)',        u: 1.40, kappa: 58 },
-  slab_acoustic:   { label: 'Dalle béton + faux-plafond acoustique (masse réduite)',    u: 1.10, kappa: 12 },
-  floor_parquet:   { label: 'Chape + parquet / moquette (inertie sol réduite)',         u: 1.20, kappa: 22 },
-  roof_sia_light:  { label: 'Toiture isolée légère / combles bois U=0.20',              u: 0.20, kappa: 10 },
-  floor_ground:    { label: 'Plancher lourd sur sol U=0.20 (chape minérale)',           u: 0.20, kappa: 52 },
-  custom:          { label: 'Valeur U personnalisée (inertie moyenne)',                 u: 0.20, kappa: 30 }
+  wall_sia_heavy:   { label: 'Mur béton isolé ext. U=0.17 (20cm béton crépi, 24 Wh/m²K)', u: 0.17, kappa: 55, kappaMinergie: 24 },
+  wall_min_heavy:   { label: 'Mur Minergie-P béton U=0.10 (20cm béton + PUR, 24 Wh/m²K)', u: 0.10, kappa: 55, kappaMinergie: 24 },
+  wall_concrete_int:{ label: 'Mur intérieur béton 20cm crépi (22 Wh/m²K)',                u: 1.80, kappa: 48, kappaMinergie: 22 },
+  wall_sia_med:     { label: 'Mur brique isolé U=0.20 (15cm brique + isol. ext.)',         u: 0.20, kappa: 35, kappaMinergie: 19 },
+  wall_plaster_int: { label: 'Cloison intérieure légère plâtre (9 Wh/m²K)',               u: 1.80, kappa: 14, kappaMinergie: 9 },
+  wall_light_5:     { label: 'Cloison légère simple parement (5 Wh/m²K)',                 u: 2.00, kappa: 8,  kappaMinergie: 5 },
+  wall_wood_light:  { label: 'Mur ossature bois U=0.18 (léger, 5 Wh/m²K)',                u: 0.18, kappa: 10, kappaMinergie: 5 },
+  wall_old_heavy:   { label: 'Mur ancien non isolé U=1.10 (pierre / béton lourd)',        u: 1.10, kappa: 55, kappaMinergie: 24 },
+  slab_heavy_ext:   { label: 'Dalle/Toiture béton nu isolée ext. U=0.18 (28 Wh/m²K)',     u: 0.18, kappa: 60, kappaMinergie: 28 },
+  slab_heavy_int:   { label: 'Dalle massive béton nu apparente (28 Wh/m²K)',              u: 1.40, kappa: 58, kappaMinergie: 28 },
+  floor_tile:       { label: 'Carrelage sur chape (17 Wh/m²K)',                           u: 1.40, kappa: 45, kappaMinergie: 17 },
+  floor_parquet:    { label: 'Parquet sur chape (13 Wh/m²K)',                             u: 1.20, kappa: 22, kappaMinergie: 13 },
+  slab_acoustic:    { label: 'Dalle béton + faux-plafond acoustique (5 Wh/m²K)',          u: 1.10, kappa: 12, kappaMinergie: 5 },
+  roof_sia_light:   { label: 'Toiture isolée légère / combles bois U=0.20 (5 Wh/m²K)',    u: 0.20, kappa: 10, kappaMinergie: 5 },
+  floor_ground:     { label: 'Plancher sur sol U=0.20 (chape / carrelage, 17 Wh/m²K)',    u: 0.20, kappa: 52, kappaMinergie: 17 },
+  custom:           { label: 'Valeur U personnalisée (inertie moyenne)',                  u: 0.20, kappa: 30, kappaMinergie: 15 }
 };
 
 export const BOX3D_WINDOW_PRESETS = {

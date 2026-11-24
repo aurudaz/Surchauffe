@@ -378,3 +378,23 @@ export function createHouseLibrary() {
     }
   ];
 }
+
+/**
+ * Projet de départ épuré par défaut : 1 local / 1 étage simple (50 m², h = 2.6 m)
+ * avec une seule fenêtre Sud standard, prêt à être personnalisé rapidement.
+ */
+export function createDefaultStarterProject() {
+  const fl = makeFloor('fl_main', 'Local principal', 0.0, 50, 2.6, 'standalone', 'I', 45, 'sia_new', 5.0, false);
+  return {
+    name: 'Local simple — 1 étage',
+    projectType: 'new',
+    siaCurveMode: 'fig3',
+    stackCoupling: false,
+    albedo: 0.20,
+    climate: { station: 'SIO', scenario: 'REF', lat: 46.22, lon: 7.33, tzMode: 'cet_cest', urbanHeatIsland: false },
+    floors: [fl],
+    openings: [
+      makeOpening('op_main_S', 'fl_main', 'Fenêtre Sud', 'S', 3.0, 1.8, 1, 0.75, 0.55, 0.10, 0.0, 'imposte', 0.9, true)
+    ]
+  };
+}

@@ -6,7 +6,11 @@
  */
 
 import { COMFORT_DEFAULTS } from '../standards/comfort-references.js';
-import { createHouseLibrary, ensureFloorDefaults } from './house-library.js';
+import {
+  createDefaultStarterProject,
+  createHouseLibrary,
+  ensureFloorDefaults
+} from './house-library.js';
 
 export const HOUSE_LIBRARY = createHouseLibrary();
 export const STORAGE_KEY = 'sia_thermic_studio_workspace_v2';
@@ -15,8 +19,17 @@ function cloneDeep(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
-function makeDefaultVariant(id = 'var_1', name = 'Variante 1 — Base', inputMode = 'simple', floorsEditor = 'table', templateIdx = 0) {
-  const proj = HOUSE_LIBRARY[templateIdx]?.build() || HOUSE_LIBRARY[0].build();
+function makeDefaultVariant(
+  id = 'var_1',
+  name = 'Variante 1 — Base',
+  inputMode = 'simple',
+  floorsEditor = 'table',
+  templateIdx = null
+) {
+  const proj =
+    templateIdx !== null && HOUSE_LIBRARY[templateIdx]
+      ? HOUSE_LIBRARY[templateIdx].build()
+      : createDefaultStarterProject();
   return {
     id,
     name,
@@ -49,6 +62,9 @@ export const appState = {
   customWeather: null,
   lastResults: null,
   resultsStale: true,
+  resultsTab: 'report',
+  applyAllFloorsOpenings: false,
+  applyAllFloorsSia: false,
   theme: 'dark',
   uiModes: {
     global: initialVariant.inputMode,
@@ -135,7 +151,7 @@ export function duplicateActiveVariant(customName = null) {
   return copy;
 }
 
-export function createNewVariant({ inputMode = 'simple', floorsEditor = 'table', templateIdx = 0, name = null } = {}) {
+export function createNewVariant({ inputMode = 'simple', floorsEditor = 'table', templateIdx = null, name = null } = {}) {
   syncActiveVariantSnapshot();
   const nextNum = appState.variants.length + 1;
   const newId = `var_${Date.now()}_${nextNum}`;
@@ -183,24 +199,60 @@ export function deleteVariant(variantId) {
 }
 
 /**
- * Passage strict à sens unique Simple → Avancé pour la variante active.
- * Empêche un retour accidentel vers Simple qui écraserait les détails 3D ou fenêtre par fenêtre.
+ * Change librement le mode de saisie (Simple ↔ Avancé) de la variante active.
  */
-export function upgradeActiveVariantToAdvanced(floorsEditor = null) {
+export function setActiveVariantInputMode(mode, floorsEditor = null) {
   const v = getActiveVariant();
   if (!v) return;
-  v.inputMode = 'advanced';
+  const cleanMode = mode === 'advanced' ? 'advanced' : 'simple';
+  v.inputMode = cleanMode;
   if (floorsEditor === 'box3d' || floorsEditor === 'table') {
     v.floorsEditor = floorsEditor;
   }
-  appState.uiModes.global = 'advanced';
+  appState.uiModes.global = cleanMode;
   appState.uiModes.floorsEditor = v.floorsEditor;
-  appState.uiModes.house = 'advanced';
-  appState.uiModes.openings = 'advanced';
-  appState.uiModes.sia = 'advanced';
-  appState.uiModes.climate = 'advanced';
-  appState.uiModes.floors = v.floorsEditor === 'box3d' ? 'box3d' : 'advanced';
+  appState.uiModes.house = cleanMode;
+  appState.uiModes.openings = cleanMode;
+  appState.uiModes.sia = cleanMode;
+  appState.uiModes.climate = cleanMode;
+  appState.uiModes.floors =
+    cleanMode === 'advanced' ? (v.floorsEditor === 'box3d' ? 'box3d' : 'advanced') : 'simple';
   saveWorkspaceToStorage();
+}
+
+export function upgradeActiveVariantToAdvanced(floorsEditor = null) {
+  setActiveVariantInputMode('advanced', floorsEditor);
+}
+
+/**
+ * Détecte si la variante active comporte des réglages détaillés (3D, fenêtres hétérogènes,
+ * ventilation par ouvrants physiques ou horaires manuels) méritant une alerte non bloquante en Mode Simple.
+ */
+export function detectAdvancedDetailsInActiveVariant() {
+  const { project, uiModes } = appState;
+  const reasons = [];
+  if (uiModes.floorsEditor === 'box3d' || project.floors.some(f => f.box3d)) {
+    reasons.push('Constructeur 3D paroi par paroi');
+  }
+  const hasMultiSameOrient = project.floors.some(fl => {
+    const ops = project.openings.filter(o => o.floorId === fl.id);
+    const seen = new Set();
+    for (const o of ops) {
+      if (seen.has(o.orient) || ['SE', 'SO', 'NE', 'NO'].includes(o.orient) || (o.leftFinDepth || 0) > 0) {
+        return true;
+      }
+      seen.add(o.orient);
+    }
+    return false;
+  });
+  if (hasMultiSameOrient) reasons.push('fenêtres détaillées par orientation');
+  if (project.floors.some(f => f.nightVentMode === 'physical')) {
+    reasons.push('ouvrants nocturnes détaillés');
+  }
+  if (project.floors.some(f => f.siaCategory === 'custom')) {
+    reasons.push('charges internes personnalisées');
+  }
+  return reasons;
 }
 
 export function replaceActiveVariantProject(proj, { inputMode = null, floorsEditor = null, customWeather = null } = {}) {

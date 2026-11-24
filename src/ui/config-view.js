@@ -36,6 +36,7 @@ import {
   appState,
   createNewVariant,
   deleteVariant,
+  detectAdvancedDetailsInActiveVariant,
   duplicateActiveVariant,
   escapeHtml,
   getActiveVariant,
@@ -43,9 +44,9 @@ import {
   replaceActiveVariantProject,
   resetWorkspaceStorage,
   saveWorkspaceToStorage,
+  setActiveVariantInputMode,
   switchVariant,
-  syncActiveVariantSnapshot,
-  upgradeActiveVariantToAdvanced
+  syncActiveVariantSnapshot
 } from '../state/project-store.js';
 import { BuildingViewer3D } from './viewer-3d.js';
 
@@ -53,6 +54,7 @@ const CONFIG_STEPS = ['step-house', 'step-floors', 'step-openings', 'step-sia', 
 
 let viewerInspector = null;
 let viewerMain3D = null;
+let simpleWarnDismissedForVariantId = null;
 let notifyProjectChanged = () => {};
 let notifyVariantSwitched = () => {};
 let notifyOpenResults = () => {};
@@ -139,23 +141,64 @@ function syncMainCategorySelect() {
   sel.value = allSame ? firstCat : 'custom';
 }
 
+function getTargetFloorsForOpenings() {
+  const { project } = appState;
+  if (appState.applyAllFloorsOpenings && project.floors.length > 1) {
+    return project.floors;
+  }
+  const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  return fl ? [fl] : [];
+}
+
+function getTargetFloorsForSia() {
+  const { project } = appState;
+  if (appState.applyAllFloorsSia && project.floors.length > 1) {
+    return project.floors;
+  }
+  const fl = project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  return fl ? [fl] : [];
+}
+
 export function renderFloorSelectors() {
   const { project } = appState;
   if (!project.floors.some(f => f.id === appState.activeFloorId)) {
     appState.activeFloorId = project.floors[0].id;
   }
   const multiFloor = project.floors.length > 1;
-  const opts = project.floors
-    .map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`)
-    .join('');
-  ['activeOpeningFloor', 'siaTargetFloor'].forEach(id => {
-    const sel = document.getElementById(id);
-    if (!sel) return;
-    sel.innerHTML = opts;
-    sel.value = appState.activeFloorId;
-  });
+  if (!multiFloor) {
+    appState.applyAllFloorsOpenings = false;
+    appState.applyAllFloorsSia = false;
+  }
+  const allOpt = multiFloor
+    ? '<option value="ALL">— Tous les étages (appliquer partout) —</option>'
+    : '';
+  const opts =
+    allOpt +
+    project.floors
+      .map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.name)}</option>`)
+      .join('');
+
+  const opSel = document.getElementById('activeOpeningFloor');
+  if (opSel) {
+    opSel.innerHTML = opts;
+    opSel.value = appState.applyAllFloorsOpenings && multiFloor ? 'ALL' : appState.activeFloorId;
+  }
+  const siaSel = document.getElementById('siaTargetFloor');
+  if (siaSel) {
+    siaSel.innerHTML = opts;
+    siaSel.value = appState.applyAllFloorsSia && multiFloor ? 'ALL' : appState.activeFloorId;
+  }
+
   document.getElementById('openingsFloorBar')?.classList.toggle('hidden', !multiFloor);
   document.getElementById('siaFloorBar')?.classList.toggle('hidden', !multiFloor);
+  document.getElementById('openingsAllFloorsBadge')?.classList.toggle(
+    'hidden',
+    !(multiFloor && appState.applyAllFloorsOpenings)
+  );
+  document.getElementById('siaAllFloorsBadge')?.classList.toggle(
+    'hidden',
+    !(multiFloor && appState.applyAllFloorsSia)
+  );
 }
 
 function updateRailCounts() {
@@ -363,7 +406,6 @@ export function applySimpleGlazingFromInputs() {
   const fl = project.floors.find(f => f.id === appState.activeFloorId);
   if (!fl) return;
 
-  const facA = getFacadeGrossForFloor(fl);
   const pcts = {
     S: Math.max(0, Math.min(95, parseFloat(document.getElementById('simpPctS').value) || 0)),
     O: Math.max(0, Math.min(95, parseFloat(document.getElementById('simpPctO').value) || 0)),
@@ -413,7 +455,9 @@ export function applySimpleGlazingFromInputs() {
   );
   const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
 
-  project.openings = project.openings.filter(o => o.floorId !== fl.id);
+  const targetFloors = getTargetFloorsForOpenings();
+  const targetIds = new Set(targetFloors.map(f => f.id));
+  project.openings = project.openings.filter(o => !targetIds.has(o.floorId));
   const labels = {
     S: 'Vitrage Sud',
     O: 'Vitrage Ouest',
@@ -422,38 +466,41 @@ export function applySimpleGlazingFromInputs() {
     R: 'Fenêtre de toit'
   };
 
-  Object.entries(pcts).forEach(([orient, pct]) => {
-    if (pct <= 0) return;
-    const area = orient === 'R' ? (pct / 100) * fl.area : (pct / 100) * facA;
-    const h = orient === 'R' ? 1.18 : Math.min(2.2, fl.height * 0.72);
-    const w = Math.round((area / h) * 100) / 100;
-    project.openings.push({
-      id: `op_${fl.id}_${orient}`,
-      floorId: fl.id,
-      name: labels[orient],
-      orient,
-      width: w,
-      height: Math.round(h * 100) / 100,
-      qty: 1,
-      uWin,
-      gVit,
-      gStore,
-      gtotMode,
-      overhangDepth: orient === 'R' ? 0 : overhang,
-      frameFactor: 0.78,
-      shadingFactor: 1.0,
-      blindMode,
-      blindThreshI,
-      blindThreshT,
-      blindRule,
-      windSafe: true,
-      operable: true,
-      openWidth: Math.min(w, 1.2),
-      openHeight: Math.min(h, 1.4),
-      openType: fl.nightSimpleCross ? 'cross_rect' : 'rect',
-      alphaDeg: 20,
-      cd: 0.6,
-      sillHeight: 0.9
+  targetFloors.forEach(tfl => {
+    const tFacA = getFacadeGrossForFloor(tfl);
+    Object.entries(pcts).forEach(([orient, pct]) => {
+      if (pct <= 0) return;
+      const area = orient === 'R' ? (pct / 100) * tfl.area : (pct / 100) * tFacA;
+      const h = orient === 'R' ? 1.18 : Math.min(2.2, tfl.height * 0.72);
+      const w = Math.round((area / h) * 100) / 100;
+      project.openings.push({
+        id: `op_${tfl.id}_${orient}`,
+        floorId: tfl.id,
+        name: labels[orient],
+        orient,
+        width: w,
+        height: Math.round(h * 100) / 100,
+        qty: 1,
+        uWin,
+        gVit,
+        gStore,
+        gtotMode,
+        overhangDepth: orient === 'R' ? 0 : overhang,
+        frameFactor: 0.78,
+        shadingFactor: 1.0,
+        blindMode,
+        blindThreshI,
+        blindThreshT,
+        blindRule,
+        windSafe: true,
+        operable: true,
+        openWidth: Math.min(w, 1.2),
+        openHeight: Math.min(h, 1.4),
+        openType: tfl.nightSimpleCross ? 'cross_rect' : 'rect',
+        alphaDeg: 20,
+        cd: 0.6,
+        sillHeight: 0.9
+      });
     });
   });
 
@@ -471,7 +518,8 @@ export function renderOpenings() {
   const advHor = document.getElementById('advHorizon');
   if (advHor) advHor.value = project.horizonDeg ?? 0;
 
-  const box3dDriven = isBox3dActiveForFloor(fl);
+  const allMode = appState.applyAllFloorsOpenings && project.floors.length > 1;
+  const box3dDriven = !allMode && isBox3dActiveForFloor(fl);
   document.getElementById('box3dOpeningsBanner')?.classList.toggle('hidden', !box3dDriven);
   document.getElementById('btnAddOpening')?.classList.toggle('hidden', box3dDriven);
 
@@ -482,12 +530,12 @@ export function renderOpenings() {
   }
 
   const multiFloor = project.floors.length > 1;
-  const list = project.openings.filter(o => o.floorId === fl.id);
+  const list = allMode ? project.openings : project.openings.filter(o => o.floorId === fl.id);
   const thead = document.getElementById('openingsTableHead');
   const tbody = document.getElementById('openingsTableBody');
   const orients = Object.keys(ORIENTATIONS);
 
-  // 1. TABLEAU FENÊTRES, VITRAGES & OMBRAGES (compact, synchronisé avec le 3D si actif)
+  // 1. TABLEAU FENÊTRES, VITRAGES & OMBRAGES (compact, sans ouvrants nuit — ceux-ci sont à l'étape 4)
   if (thead) {
     thead.innerHTML = `<tr>
       ${multiFloor && !box3dDriven ? '<th data-tip="Étage auquel appartient la fenêtre.">Étage</th>' : ''}
@@ -501,13 +549,14 @@ export function renderOpenings() {
       <th data-tip="Profondeur de la casquette / balcon au-dessus de la fenêtre [m].">Casq. [m]</th>
       <th data-tip="Profondeur des écrans latéraux (joues verticales gauche/droite) [m].">Écr. lat [m]</th>
       <th data-tip="Angle d'obstruction de l'horizon en face de cette fenêtre [°].">Hor. [°]</th>
-      <th data-tip="Cocher si cette fenêtre s'ouvre la nuit (cf. bloc 3 ci-dessous).">Nuit</th>
       ${box3dDriven ? '' : '<th></th>'}
     </tr>`;
   }
 
   tbody.innerHTML = '';
   list.forEach(op => {
+    const opFl = project.floors.find(f => f.id === op.floorId);
+    const opIs3d = isBox3dActiveForFloor(opFl);
     const tr = document.createElement('tr');
     tr.innerHTML = `
       ${
@@ -519,7 +568,7 @@ export function renderOpenings() {
       }
       <td><input type="text" value="${escapeHtml(op.name)}" data-op="${escapeHtml(op.id)}" data-k="name" style="min-width:110px;" /></td>
       <td>${
-        box3dDriven
+        opIs3d
           ? `<span class="pill neutral" data-tip="Orientation liée à la paroi 3D (modifiable dans le Constructeur 3D).">${op.orient}</span>`
           : `<select data-op="${escapeHtml(op.id)}" data-k="orient" style="width:62px;">${orients
               .map(o => `<option value="${o}" ${o === op.orient ? 'selected' : ''}>${o}</option>`)
@@ -533,8 +582,7 @@ export function renderOpenings() {
       <td><input type="number" step="0.1" min="0" value="${op.overhangDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="overhangDepth" style="width:58px;" /></td>
       <td><input type="number" step="0.1" min="0" value="${op.leftFinDepth || 0}" data-op="${escapeHtml(op.id)}" data-k="sideFinDepth" style="width:58px;" /></td>
       <td><input type="number" step="5" min="0" max="60" value="${op.horizonDeg ?? project.horizonDeg ?? 0}" data-op="${escapeHtml(op.id)}" data-k="horizonDeg" style="width:54px;" /></td>
-      <td style="text-align:center;"><input type="checkbox" ${op.operable ? 'checked' : ''} data-op="${escapeHtml(op.id)}" data-k="operable" /></td>
-      ${box3dDriven ? '' : `<td><button class="btn btn-danger" data-del-op="${escapeHtml(op.id)}" data-tip="Supprimer cette fenêtre.">✕</button></td>`}
+      ${box3dDriven ? '' : `<td>${opIs3d ? '' : `<button class="btn btn-danger" data-del-op="${escapeHtml(op.id)}" data-tip="Supprimer cette fenêtre.">✕</button>`}</td>`}
     `;
     tbody.appendChild(tr);
   });
@@ -557,8 +605,11 @@ export function renderOpenings() {
           <tbody>${list
             .map(op => {
               const gtotEff = op.gtotMode === 'direct' ? op.gStore : op.gVit * op.gStore;
+              const flPrefix = allMode
+                ? `<span style="color:var(--text-muted);font-size:11px;">${escapeHtml(project.floors.find(f => f.id === op.floorId)?.name || '')} • </span>`
+                : '';
               return `<tr>
-                <td><strong>${escapeHtml(op.name)}</strong> <span style="color:var(--text-muted);">(${op.orient}, ×${op.qty})</span></td>
+                <td>${flPrefix}<strong>${escapeHtml(op.name)}</strong> <span style="color:var(--text-muted);">(${op.orient}, ×${op.qty})</span></td>
                 <td><input type="number" step="0.01" min="0.02" max="1" value="${op.gStore}" data-op="${escapeHtml(op.id)}" data-k="gStore" style="width:64px;" /></td>
                 <td><select data-op="${escapeHtml(op.id)}" data-k="gtotMode" style="width:74px;">
                   <option value="product" ${op.gtotMode === 'product' ? 'selected' : ''}>g×g</option>
@@ -585,79 +636,25 @@ export function renderOpenings() {
       : '<span class="pill warn">Aucune fenêtre définie sur cet étage.</span>';
   }
 
-  // 3. TABLEAU SÉPARÉ : OUVRANTS POUR AÉRATION NOCTURNE
-  const nightBox = document.getElementById('openingNightDetails');
-  const operables = list.filter(o => o.operable);
-  nightBox.innerHTML = operables.length
-    ? `<div class="table-wrap"><table>
-      <thead><tr>
-        <th data-tip="Nom et quantité de la fenêtre ouverte la nuit.">Ouverture</th>
-        <th data-tip="Mécanisme d'ouverture : battante ou imposte (soufflet), sur une seule façade ou traversante.">Type</th>
-        <th data-tip="Largeur libre du vantail qui s'ouvre [m].">Larg. ouvrante [m]</th>
-        <th data-tip="Hauteur libre du vantail qui s'ouvre [m].">Haut. ouvrante [m]</th>
-        <th data-tip="Angle d'inclinaison α [°] (EN 16798-7 pour imposte / soufflet).">Angle α [°]</th>
-        <th data-tip="Hauteur de l'allège [m].">Allège [m]</th>
-      </tr></thead>
-      <tbody>${operables
-        .map(
-          op => `<tr>
-        <td><strong>${escapeHtml(op.name)}</strong> <span style="color:var(--text-muted);">(×${op.qty})</span></td>
-        <td><select data-op="${escapeHtml(op.id)}" data-k="openType">
-          <option value="rect" ${op.openType === 'rect' ? 'selected' : ''}>Battante rect.</option>
-          <option value="imposte" ${op.openType === 'imposte' ? 'selected' : ''}>Imposte / soufflet</option>
-          <option value="cross_rect" ${op.openType === 'cross_rect' ? 'selected' : ''}>Traversante rect.</option>
-          <option value="cross_imposte" ${op.openType === 'cross_imposte' ? 'selected' : ''}>Traversante imposte</option>
-        </select></td>
-        <td><input type="number" step="0.1" min="0.1" value="${op.openWidth}" data-op="${escapeHtml(op.id)}" data-k="openWidth" style="width:70px;" /></td>
-        <td><input type="number" step="0.1" min="0.1" value="${op.openHeight}" data-op="${escapeHtml(op.id)}" data-k="openHeight" style="width:70px;" /></td>
-        <td><input type="number" step="1" min="1" max="180" value="${op.alphaDeg}" data-op="${escapeHtml(op.id)}" data-k="alphaDeg" style="width:68px;" /></td>
-        <td><input type="number" step="0.1" min="0" value="${op.sillHeight}" data-op="${escapeHtml(op.id)}" data-k="sillHeight" style="width:68px;" /></td>
-      </tr>`
-        )
-        .join('')}</tbody>
-    </table></div>`
-    : '<span class="pill warn">Aucune fenêtre cochée « Nuit » dans le tableau ci-dessus.</span>';
-
-  document.querySelectorAll('[data-op]').forEach(el => {
+  document.querySelectorAll('#step-openings [data-op]').forEach(el => {
     el.addEventListener('change', e => {
       const op = project.openings.find(o => o.id === e.target.dataset.op);
       const k = e.target.dataset.k;
       if (!op) return;
-      if (k === 'operable') {
-        op[k] = e.target.checked;
-        const flOp = project.floors.find(f => f.id === op.floorId);
-        if (flOp && e.target.checked && (flOp.nightVentMode === 'none' || flOp.nightVentMode === 'simple_pct')) {
-          flOp.nightVentMode = 'physical';
-          loadSiaFloorInputs();
-        }
-        renderOpenings();
-      } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'blindRule', 'openType'].includes(k)) {
+      if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'blindRule'].includes(k)) {
         op[k] = e.target.value;
-        if (k === 'openType') {
-          const flOp = project.floors.find(f => f.id === op.floorId);
-          if (flOp && (flOp.nightVentMode === 'none' || flOp.nightVentMode === 'simple_pct')) {
-            flOp.nightVentMode = 'physical';
-            loadSiaFloorInputs();
-          }
-        }
-        if (['name', 'orient', 'gtotMode', 'openType', 'floorId'].includes(k)) renderOpenings();
+        if (['name', 'orient', 'gtotMode', 'floorId'].includes(k)) renderOpenings();
       } else if (k === 'sideFinDepth') {
         const v = Math.max(0, Number(e.target.value) || 0);
         op.leftFinDepth = v;
         op.rightFinDepth = v;
       } else {
         op[k] = Number(e.target.value);
-        if (['openWidth', 'openHeight', 'alphaDeg', 'sillHeight'].includes(k)) {
-          const flOp = project.floors.find(f => f.id === op.floorId);
-          if (flOp && (flOp.nightVentMode === 'none' || flOp.nightVentMode === 'simple_pct')) {
-            flOp.nightVentMode = 'physical';
-            loadSiaFloorInputs();
-          }
-        }
         if (['qty', 'gVit', 'gStore'].includes(k)) renderOpenings();
       }
-      if (box3dDriven) {
-        syncOpeningBackToBox3d(op, fl, project);
+      const opFl = project.floors.find(f => f.id === op.floorId);
+      if (isBox3dActiveForFloor(opFl)) {
+        syncOpeningBackToBox3d(op, opFl, project);
       }
       updateNightVentUI();
       updateInspector();
@@ -670,6 +667,7 @@ export function renderOpenings() {
     btn.addEventListener('click', () => {
       project.openings = project.openings.filter(o => o.id !== btn.dataset.delOp);
       renderOpenings();
+      updateNightVentUI();
       updateInspector();
       refresh3DViewers();
       notifyProjectChanged();
@@ -1145,45 +1143,11 @@ export function renderFloors() {
   refresh3DViewers();
 }
 
-export function updateNightVentUI(targetFl = null) {
+function updateNightVentLiveBadge(fl) {
   const { project } = appState;
-  const fl = targetFl || project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
-  if (!fl) return;
-
-  const mode = fl.nightVentMode || 'simple_pct';
-  const isFixed = mode === 'fixed_m3hm2' || mode === 'fixed_ach';
-  const isSimple = mode === 'simple_pct';
-  const isPhys = mode === 'physical';
-  const isNone = mode === 'none';
-
-  document.getElementById('nightFixedBox')?.classList.toggle('hidden', !isFixed);
-  document.getElementById('nightSimpleFullBox')?.classList.toggle('hidden', !isSimple);
-  document.getElementById('nightPhysicalHintBox')?.classList.toggle('hidden', !isPhys);
-  document.getElementById('nightRegulBox')?.classList.toggle('hidden', isNone);
-
-  const lblFixed = document.getElementById('lblNightFixed');
-  if (lblFixed) {
-    lblFixed.textContent = mode === 'fixed_ach' ? 'Taux imposé [vol/h]' : 'Débit imposé [m³/(h·m²)]';
-  }
-
-  const basisEl = document.getElementById('inNightSimpleBasis');
-  const simpPctEl = document.getElementById('inNightSimplePct');
-  const simpEffEl = document.getElementById('inNightSimpleEff');
-  const simpCrossEl = document.getElementById('inNightSimpleCross');
-  if (basisEl) basisEl.value = fl.nightSimpleBasis === 'window_pct' ? 'window_pct' : 'floor_pct';
-  if (simpPctEl) simpPctEl.value = fl.nightSimplePct ?? 5.0;
-  if (simpEffEl) simpEffEl.value = Number(fl.nightSimpleEff ?? 0.6).toFixed(2);
-  if (simpCrossEl) simpCrossEl.checked = Boolean(fl.nightSimpleCross);
-
   const ops = project.openings.filter(o => o.floorId === fl.id);
-  const operableCount = ops.filter(o => o.operable).reduce((s, o) => s + (o.qty || 1), 0);
-  const physHint = document.getElementById('nightPhysicalHintTxt');
-  if (physHint) {
-    physHint.innerHTML =
-      operableCount > 0
-        ? `<span class="pill ok">${operableCount} ouvrant(s) actif(s) la nuit à l'étape 3</span>`
-        : `<span class="pill ko">Aucun ouvrant coché « Nuit » à l'étape 3</span>`;
-  }
+  const mode = fl.nightVentMode || 'simple_pct';
+  const isNone = mode === 'none';
 
   const fp = buildFloorThermalParams(fl, ops);
   const span = project.stackCoupling ? computeBuildingStackSpan(project) : fl.height;
@@ -1221,6 +1185,130 @@ export function updateNightVentUI(targetFl = null) {
       simpSel.value = detected;
     }
   }
+}
+
+function renderNightPhysicalOpeningsTable(fl) {
+  const { project } = appState;
+  const nightBox = document.getElementById('openingNightDetails');
+  if (!nightBox) return;
+
+  const allMode = appState.applyAllFloorsSia && project.floors.length > 1;
+  const list = allMode ? project.openings : project.openings.filter(o => o.floorId === fl.id);
+
+  if (list.length === 0) {
+    nightBox.innerHTML =
+      '<span class="pill warn">Aucune fenêtre définie à l’étape 3 pour cet étage.</span>';
+    return;
+  }
+
+  const operableCount = list.filter(o => o.operable).reduce((s, o) => s + (o.qty || 1), 0);
+  const statusPill =
+    operableCount > 0
+      ? `<span class="pill ok" style="margin-bottom:8px;">${operableCount} ouvrant(s) actif(s) la nuit</span>`
+      : `<span class="pill ko" style="margin-bottom:8px;">Aucun ouvrant coché « Actif nuit » — le débit nocturne sera de 0 m³/h</span>`;
+
+  nightBox.innerHTML = `
+    ${statusPill}
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th data-tip="Cochez pour activer cette fenêtre pour le rafraîchissement nocturne.">Actif nuit</th>
+        <th data-tip="Fenêtre et orientation configurées à l'étape 3.">Fenêtre</th>
+        <th data-tip="Type d'ouverture aéraulique (EN 16798-7) : imposte/oscillo-battant, battante plein ouvert ou traversante.">Type d'ouvrant</th>
+        <th data-tip="Largeur libre de passage d'air de l'ouvrant [m].">L_ouv [m]</th>
+        <th data-tip="Hauteur libre de passage d'air de l'ouvrant [m].">H_ouv [m]</th>
+        <th data-tip="Angle d'ouverture du vantail [°] (utilisé pour imposte / oscillo-battant, typ. 15–30°).">Angle α [°]</th>
+        <th data-tip="Hauteur d'allège depuis le sol de l'étage [m] (utilisée pour le tirage thermique multi-étages).">Allège [m]</th>
+      </tr></thead>
+      <tbody>${list
+        .map(op => {
+          const flPrefix = allMode
+            ? `<span style="color:var(--text-muted);font-size:11px;">${escapeHtml(project.floors.find(f => f.id === op.floorId)?.name || '')} • </span>`
+            : '';
+          const dis = op.operable ? '' : 'disabled';
+          const rowStyle = op.operable ? '' : 'opacity:0.55;';
+          const curType = ['imposte', 'rect', 'cross_rect', 'cross_imposte'].includes(op.openType)
+            ? op.openType
+            : 'imposte';
+          return `<tr style="${rowStyle}">
+            <td style="text-align:center;"><input type="checkbox" ${op.operable ? 'checked' : ''} data-night-op="${escapeHtml(op.id)}" data-k="operable" /></td>
+            <td>${flPrefix}<strong>${escapeHtml(op.name)}</strong> <span style="color:var(--text-muted);">(${op.orient}, ×${op.qty})</span></td>
+            <td><select data-night-op="${escapeHtml(op.id)}" data-k="openType" style="min-width:155px;" ${dis}>
+              <option value="imposte" ${curType === 'imposte' ? 'selected' : ''}>Imposte / oscillo-battant</option>
+              <option value="rect" ${curType === 'rect' ? 'selected' : ''}>Battante plein ouvert</option>
+              <option value="cross_rect" ${curType === 'cross_rect' ? 'selected' : ''}>Traversante plein ouvert</option>
+              <option value="cross_imposte" ${curType === 'cross_imposte' ? 'selected' : ''}>Traversante imposte</option>
+            </select></td>
+            <td><input type="number" step="0.1" min="0.1" value="${op.openWidth ?? op.width}" data-night-op="${escapeHtml(op.id)}" data-k="openWidth" style="width:66px;" ${dis} /></td>
+            <td><input type="number" step="0.1" min="0.1" value="${op.openHeight ?? op.height}" data-night-op="${escapeHtml(op.id)}" data-k="openHeight" style="width:66px;" ${dis} /></td>
+            <td><input type="number" step="5" min="5" max="90" value="${op.alphaDeg ?? 20}" data-night-op="${escapeHtml(op.id)}" data-k="alphaDeg" style="width:62px;" ${dis} /></td>
+            <td><input type="number" step="0.1" min="0" value="${op.sillHeight ?? 0.9}" data-night-op="${escapeHtml(op.id)}" data-k="sillHeight" style="width:62px;" ${dis} /></td>
+          </tr>`;
+        })
+        .join('')}</tbody>
+    </table></div>
+  `;
+
+  nightBox.querySelectorAll('[data-night-op]').forEach(el => {
+    el.addEventListener('change', e => {
+      const op = project.openings.find(o => o.id === e.target.dataset.nightOp);
+      const k = e.target.dataset.k;
+      if (!op) return;
+      if (k === 'operable') {
+        op.operable = e.target.checked;
+      } else if (k === 'openType') {
+        op.openType = e.target.value;
+      } else {
+        op[k] = Number(e.target.value);
+      }
+      const opFl = project.floors.find(f => f.id === op.floorId);
+      if (isBox3dActiveForFloor(opFl)) {
+        syncOpeningBackToBox3d(op, opFl, project);
+      }
+      if (k === 'operable') {
+        renderNightPhysicalOpeningsTable(fl);
+      }
+      updateNightVentLiveBadge(fl);
+      updateInspector();
+      notifyProjectChanged();
+    });
+  });
+}
+
+export function updateNightVentUI(targetFl = null) {
+  const { project } = appState;
+  const fl = targetFl || project.floors.find(f => f.id === appState.activeFloorId) || project.floors[0];
+  if (!fl) return;
+
+  const mode = fl.nightVentMode || 'simple_pct';
+  const isFixed = mode === 'fixed_m3hm2' || mode === 'fixed_ach';
+  const isSimple = mode === 'simple_pct';
+  const isPhys = mode === 'physical';
+  const isNone = mode === 'none';
+
+  document.getElementById('nightFixedBox')?.classList.toggle('hidden', !isFixed);
+  document.getElementById('nightSimpleFullBox')?.classList.toggle('hidden', !isSimple);
+  document.getElementById('nightPhysicalDetailsBox')?.classList.toggle('hidden', !isPhys);
+  document.getElementById('nightRegulBox')?.classList.toggle('hidden', isNone);
+
+  const lblFixed = document.getElementById('lblNightFixed');
+  if (lblFixed) {
+    lblFixed.textContent = mode === 'fixed_ach' ? 'Taux imposé [vol/h]' : 'Débit imposé [m³/(h·m²)]';
+  }
+
+  const basisEl = document.getElementById('inNightSimpleBasis');
+  const simpPctEl = document.getElementById('inNightSimplePct');
+  const simpEffEl = document.getElementById('inNightSimpleEff');
+  const simpCrossEl = document.getElementById('inNightSimpleCross');
+  if (basisEl) basisEl.value = fl.nightSimpleBasis === 'window_pct' ? 'window_pct' : 'floor_pct';
+  if (simpPctEl) simpPctEl.value = fl.nightSimplePct ?? 5.0;
+  if (simpEffEl) simpEffEl.value = Number(fl.nightSimpleEff ?? 0.6).toFixed(2);
+  if (simpCrossEl) simpCrossEl.checked = Boolean(fl.nightSimpleCross);
+
+  if (isPhys) {
+    renderNightPhysicalOpeningsTable(fl);
+  }
+
+  updateNightVentLiveBadge(fl);
 
   const fcEl = document.getElementById('inNightFreeCool24h');
   if (fcEl) {
@@ -1295,9 +1383,9 @@ function applySiaCatToFloor(fl, catKey) {
 }
 
 export function applySiaCatToCurrentFloor(catKey) {
-  const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-  if (!fl) return;
-  applySiaCatToFloor(fl, catKey);
+  const targets = getTargetFloorsForSia();
+  if (targets.length === 0) return;
+  targets.forEach(fl => applySiaCatToFloor(fl, catKey));
   syncMainCategorySelect();
   loadSiaFloorInputs();
   updateInspector();
@@ -1380,24 +1468,29 @@ function syncFloorsEditorButtons() {
   });
 }
 
-function syncStrictModeCard() {
+function syncModeToggleAndWarning() {
   const isAdv = appState.uiModes.global === 'advanced';
-  const badge = document.getElementById('modeStatusBadge');
-  const hint = document.getElementById('modeStatusHint');
-  const btnUp = document.getElementById('btnUpgradeToAdv');
-  const btnNewS = document.getElementById('btnNewSimpleVariantFromLock');
+  document.getElementById('btnGlobalSimple')?.classList.toggle('active-blue', !isAdv);
+  document.getElementById('btnGlobalAdv')?.classList.toggle('active-blue', isAdv);
 
-  if (badge) {
-    badge.textContent = isAdv ? '🔒 Mode Avancé' : 'Mode Simple';
-    badge.className = `pill ${isAdv ? 'req-pill' : 'ok'}`;
+  const banner = document.getElementById('simpleModeWarnBanner');
+  const txt = document.getElementById('simpleModeWarnTxt');
+  if (!banner) return;
+
+  if (!isAdv && simpleWarnDismissedForVariantId !== appState.activeVariantId) {
+    const reasons = detectAdvancedDetailsInActiveVariant();
+    if (reasons.length > 0) {
+      if (txt) {
+        txt.innerHTML =
+          `<strong>Attention — Mode Simple actif sur une variante avancée :</strong> ` +
+          `${escapeHtml(reasons.join(' • '))}. ` +
+          `Vos réglages détaillés restent actifs pour le calcul, mais modifier un champ simplifié (ex. vitrages ou ventilation) les remplacera.`;
+      }
+      banner.classList.remove('hidden');
+      return;
+    }
   }
-  if (hint) {
-    hint.textContent = isAdv
-      ? 'Verrouillé en Avancé sur cette variante pour préserver vos réglages détaillés (3D, fenêtres).'
-      : 'Saisie rapide en 5 étapes. Passez en Avancé pour débloquer le 3D et les réglages experts.';
-  }
-  if (btnUp) btnUp.classList.toggle('hidden', isAdv);
-  if (btnNewS) btnNewS.classList.toggle('hidden', !isAdv);
+  banner.classList.add('hidden');
 }
 
 export function renderVariantBar() {
@@ -1490,7 +1583,7 @@ export function applyGlobalLayout(onResultsRefresh, targetStep = null) {
       : 'advanced'
     : 'simple';
 
-  syncStrictModeCard();
+  syncModeToggleAndWarning();
 
   document.querySelectorAll('.adv-only').forEach(el => el.classList.toggle('hidden', !isAdv));
   document.querySelectorAll('.simple-only').forEach(el => el.classList.toggle('hidden', isAdv));
@@ -1513,9 +1606,11 @@ export function applyGlobalLayout(onResultsRefresh, targetStep = null) {
 }
 
 export function setGlobalMode(mode, onResultsRefresh, targetStep = null) {
-  if (mode === 'advanced') {
-    upgradeActiveVariantToAdvanced();
+  const next = mode === 'advanced' ? 'advanced' : 'simple';
+  if (next === 'simple') {
+    simpleWarnDismissedForVariantId = null;
   }
+  setActiveVariantInputMode(next);
   applyGlobalLayout(onResultsRefresh, targetStep);
   renderVariantBar();
 }
@@ -1582,18 +1677,22 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   notifyVariantSwitched = onVariantSwitched || (() => {});
   notifyOpenResults = onOpenResults || (() => {});
 
-  // Passage strict à sens unique Simple → Avancé
-  document.getElementById('btnUpgradeToAdv')?.addEventListener('click', () => {
-    upgradeActiveVariantToAdvanced();
-    applyGlobalLayout(onResultsRefresh);
-    renderVariantBar();
+  // Bascule libre Simple ↔ Avancé (alerte non bloquante si réglages avancés présents)
+  document.getElementById('btnGlobalSimple')?.addEventListener('click', () => {
+    setGlobalMode('simple', onResultsRefresh);
     notifyProjectChanged();
   });
-
-  document.getElementById('btnNewSimpleVariantFromLock')?.addEventListener('click', () => {
-    createNewVariant({ inputMode: 'simple' });
-    syncAllUI();
-    notifyVariantSwitched();
+  document.getElementById('btnGlobalAdv')?.addEventListener('click', () => {
+    setGlobalMode('advanced', onResultsRefresh);
+    notifyProjectChanged();
+  });
+  document.getElementById('btnWarnBackToAdv')?.addEventListener('click', () => {
+    setGlobalMode('advanced', onResultsRefresh);
+    notifyProjectChanged();
+  });
+  document.getElementById('btnWarnDismiss')?.addEventListener('click', () => {
+    simpleWarnDismissedForVariantId = appState.activeVariantId;
+    document.getElementById('simpleModeWarnBanner')?.classList.add('hidden');
   });
 
   // Barre multi-variantes (style Lesosai)
@@ -1693,7 +1792,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   });
 
   document.getElementById('btnOpenBox3dFromSimple')?.addEventListener('click', () => {
-    upgradeActiveVariantToAdvanced('box3d');
+    setActiveVariantInputMode('advanced', 'box3d');
     applyGlobalLayout(onResultsRefresh, 'step-floors');
     renderVariantBar();
     notifyProjectChanged();
@@ -1746,6 +1845,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   document.getElementById('stackCoupling').addEventListener('change', e => {
     appState.project.stackCoupling = e.target.checked;
     renderOpenings();
+    updateNightVentUI();
   });
   document.getElementById('projUseFresnel')?.addEventListener('change', e => {
     appState.project.useFresnelIncidence = e.target.checked;
@@ -1780,19 +1880,36 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     notifyProjectChanged();
   });
 
-  ['activeOpeningFloor', 'siaTargetFloor'].forEach(id => {
-    document.getElementById(id).addEventListener('change', e => {
+  document.getElementById('activeOpeningFloor')?.addEventListener('change', e => {
+    if (e.target.value === 'ALL') {
+      appState.applyAllFloorsOpenings = true;
+    } else {
+      appState.applyAllFloorsOpenings = false;
       appState.activeFloorId = e.target.value;
-      const gSel = document.getElementById('simpGlazingType');
-      if (gSel) delete gSel.dataset.forceCustom;
-      const sSel = document.getElementById('simpStoreType');
-      if (sSel) delete sSel.dataset.forceCustom;
-      renderFloorSelectors();
-      renderFloors();
-      renderOpenings();
-      loadSiaFloorInputs();
-      refresh3DViewers();
-    });
+    }
+    const gSel = document.getElementById('simpGlazingType');
+    if (gSel) delete gSel.dataset.forceCustom;
+    const sSel = document.getElementById('simpStoreType');
+    if (sSel) delete sSel.dataset.forceCustom;
+    renderFloorSelectors();
+    renderFloors();
+    renderOpenings();
+    loadSiaFloorInputs();
+    refresh3DViewers();
+  });
+
+  document.getElementById('siaTargetFloor')?.addEventListener('change', e => {
+    if (e.target.value === 'ALL') {
+      appState.applyAllFloorsSia = true;
+    } else {
+      appState.applyAllFloorsSia = false;
+      appState.activeFloorId = e.target.value;
+    }
+    renderFloorSelectors();
+    renderFloors();
+    renderOpenings();
+    loadSiaFloorInputs();
+    refresh3DViewers();
   });
 
   [
@@ -1814,9 +1931,9 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   });
 
   document.getElementById('simpNightPreset')?.addEventListener('change', e => {
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    if (!fl || e.target.value === 'custom') return;
-    applySimpleNightPreset(fl, e.target.value);
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0 || e.target.value === 'custom') return;
+    targets.forEach(tfl => applySimpleNightPreset(tfl, e.target.value));
     loadSiaFloorInputs();
     updateInspector();
   });
@@ -1851,6 +1968,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
       sillHeight: 0.9
     });
     renderOpenings();
+    updateNightVentUI();
     updateInspector();
     notifyProjectChanged();
   });
@@ -1858,13 +1976,13 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   document.getElementById('btnApplyQuickShading').addEventListener('click', () => {
     const sp = STORE_PRESETS[document.getElementById('quickShadingPreset').value];
     if (!sp) return;
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    const box3dDriven = isBox3dActiveForFloor(fl);
+    const targetIds = new Set(getTargetFloorsForOpenings().map(f => f.id));
     appState.project.openings.forEach(op => {
-      if (op.floorId === appState.activeFloorId) {
+      if (targetIds.has(op.floorId)) {
         op.gStore = sp.gStore;
         op.gtotMode = sp.gtotMode;
-        if (box3dDriven) syncOpeningBackToBox3d(op, fl, appState.project);
+        const opFl = appState.project.floors.find(f => f.id === op.floorId);
+        if (isBox3dActiveForFloor(opFl)) syncOpeningBackToBox3d(op, opFl, appState.project);
       }
     });
     renderOpenings();
@@ -1875,38 +1993,48 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     applySiaCatToCurrentFloor(e.target.value)
   );
   document.getElementById('inInternalProfileMode')?.addEventListener('change', e => {
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    if (!fl) return;
-    fl.internalProfileMode = e.target.value;
+    getTargetFloorsForSia().forEach(tfl => {
+      tfl.internalProfileMode = e.target.value;
+    });
   });
   document.getElementById('siaGainFactor').addEventListener('input', e => {
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    if (!fl) return;
-    fl.gainFactorPct = Number(e.target.value);
-    document.getElementById('siaGainFactorLbl').textContent = `${fl.gainFactorPct} %`;
+    const val = Number(e.target.value);
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0) return;
+    targets.forEach(tfl => {
+      tfl.gainFactorPct = val;
+    });
+    document.getElementById('siaGainFactorLbl').textContent = `${val} %`;
     notifyProjectChanged();
   });
 
   const bindSia = (id, prop, customFlag = false, scaleDiv = 1) => {
     document.getElementById(id)?.addEventListener('change', e => {
-      const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-      if (!fl) return;
-      fl[prop] = prop === 'nightVentMode' ? e.target.value : Number(e.target.value) / scaleDiv;
-      if (prop === 'nightVentMode' && e.target.value === 'simple_pct') {
-        if (!fl.nightSimpleBasis || fl.nightSimpleBasis === 'none') {
-          fl.nightSimpleBasis = 'floor_pct';
+      const targets = getTargetFloorsForSia();
+      if (targets.length === 0) return;
+      const val = prop === 'nightVentMode' ? e.target.value : Number(e.target.value) / scaleDiv;
+      targets.forEach(tfl => {
+        tfl[prop] = val;
+        if (prop === 'nightVentMode' && e.target.value === 'simple_pct') {
+          if (!tfl.nightSimpleBasis || tfl.nightSimpleBasis === 'none') {
+            tfl.nightSimpleBasis = 'floor_pct';
+          }
+          if ((tfl.nightSimplePct ?? 0) <= 0) {
+            tfl.nightSimplePct = 5.0;
+          }
         }
-        if ((fl.nightSimplePct ?? 0) <= 0) {
-          fl.nightSimplePct = 5.0;
+        if (customFlag) {
+          tfl.siaCategory = 'custom';
         }
-      }
+      });
+      const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
       if (customFlag) {
-        fl.siaCategory = 'custom';
         document.getElementById('siaCategorySelect').value = 'custom';
-        updateSiaCatChips(fl);
+        syncMainCategorySelect();
+        updateSiaCatChips(activeFl);
       }
       if (['nightVentMode', 'nightVentFixedVal', 'nightStart', 'nightEnd'].includes(prop)) {
-        updateNightVentUI(fl);
+        updateNightVentUI(activeFl);
       }
       updateInspector();
     });
@@ -1931,29 +2059,36 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
   bindSia('inNightMinDT', 'nightMinDT');
 
   document.getElementById('inNightFreeCool24h')?.addEventListener('change', e => {
-    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-    if (!fl) return;
-    if (e.target.checked) {
-      fl.nightStart = 0;
-      fl.nightEnd = 24;
-    } else {
-      fl.nightStart = 21;
-      fl.nightEnd = 7;
-    }
-    document.getElementById('inNightStart').value = fl.nightStart;
-    document.getElementById('inNightEnd').value = fl.nightEnd;
-    updateNightVentUI(fl);
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0) return;
+    const ns = e.target.checked ? 0 : 21;
+    const ne = e.target.checked ? 24 : 7;
+    targets.forEach(tfl => {
+      tfl.nightStart = ns;
+      tfl.nightEnd = ne;
+    });
+    document.getElementById('inNightStart').value = ns;
+    document.getElementById('inNightEnd').value = ne;
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateNightVentUI(activeFl);
   });
 
   ['inNightSimpleBasis', 'inNightSimplePct', 'inNightSimpleEff', 'inNightSimpleCross'].forEach(id => {
     document.getElementById(id)?.addEventListener('change', () => {
-      const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
-      if (!fl) return;
-      fl.nightSimpleBasis = document.getElementById('inNightSimpleBasis')?.value || 'floor_pct';
-      fl.nightSimplePct = Math.max(0, Math.min(100, parseFloat(document.getElementById('inNightSimplePct')?.value) || 0));
-      fl.nightSimpleEff = parseFloat(document.getElementById('inNightSimpleEff')?.value) || 0.6;
-      fl.nightSimpleCross = Boolean(document.getElementById('inNightSimpleCross')?.checked);
-      updateNightVentUI(fl);
+      const targets = getTargetFloorsForSia();
+      if (targets.length === 0) return;
+      const basis = document.getElementById('inNightSimpleBasis')?.value || 'floor_pct';
+      const pct = Math.max(0, Math.min(100, parseFloat(document.getElementById('inNightSimplePct')?.value) || 0));
+      const eff = parseFloat(document.getElementById('inNightSimpleEff')?.value) || 0.6;
+      const cross = Boolean(document.getElementById('inNightSimpleCross')?.checked);
+      targets.forEach(tfl => {
+        tfl.nightSimpleBasis = basis;
+        tfl.nightSimplePct = pct;
+        tfl.nightSimpleEff = eff;
+        tfl.nightSimpleCross = cross;
+      });
+      const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+      updateNightVentUI(activeFl);
       updateInspector();
     });
   });

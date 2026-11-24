@@ -40,14 +40,16 @@ import {
 import { runFullSimulation } from '../src/methodology/08-scenario-comparator.js';
 import { getSIA180Limits } from '../src/standards/sia180.js';
 import { getMinergieRecommendedWindClass } from '../src/standards/minergie.js';
-import { createHouseLibrary } from '../src/state/house-library.js';
+import { createDefaultStarterProject, createHouseLibrary } from '../src/state/house-library.js';
 import {
   appState,
   createNewVariant,
   deleteVariant,
+  detectAdvancedDetailsInActiveVariant,
   duplicateActiveVariant,
   renameVariant,
   resetWorkspaceStorage,
+  setActiveVariantInputMode,
   switchVariant,
   upgradeActiveVariantToAdvanced
 } from '../src/state/project-store.js';
@@ -470,7 +472,13 @@ test('Besoins énergétiques de froid actif : calcul, seuils excessifs & proposi
   assert.equal(resCool.worstFloor.activeCooling.level, 'none');
 });
 
-test('UX Avancée : sync 3D ↔ Fenêtres, multi-variantes Lesosai, mode strict & dates calendaires', () => {
+test('UX Avancée : projet défaut 1 étage/1 fenêtre Sud, sync 3D ↔ Fenêtres, multi-variantes & bascule libre Simple ↔ Avancé', () => {
+  // 0. Projet par défaut : 1 seul étage + 1 fenêtre Sud simple
+  const starter = createDefaultStarterProject();
+  assert.equal(starter.floors.length, 1, 'Le projet par défaut doit comporter exactement 1 étage');
+  assert.equal(starter.openings.length, 1, 'Le projet par défaut doit comporter exactement 1 fenêtre');
+  assert.equal(starter.openings[0].orient, 'S', 'La fenêtre par défaut doit être orientée Sud');
+
   // 1. Sync bidirectionnelle 3D ↔ Vitrages sans perte d'écrans latéraux / ouvrants nuit
   const lib = createHouseLibrary();
   const boxProj = lib.find(x => x.id === 'tb_lea_bsol').build();
@@ -488,10 +496,13 @@ test('UX Avancée : sync 3D ↔ Fenêtres, multi-variantes Lesosai, mode strict 
   assert.equal(opAfter.leftFinDepth, 0.6, 'Écrans latéraux doivent être préservés après recalcul 3D');
   assert.equal(opAfter.openType, 'cross_rect', 'Type ouvrant nuit doit être préservé après recalcul 3D');
 
-  // 2. Multi-variantes & verrouillage strict Simple → Avancé
+  // 2. Multi-variantes & bascule libre Simple ↔ Avancé avec détection non bloquante des réglages avancés
   resetWorkspaceStorage();
   assert.equal(appState.variants.length, 1);
   assert.equal(appState.uiModes.global, 'simple');
+  assert.equal(appState.project.floors.length, 1);
+  assert.equal(appState.project.openings.length, 1);
+  assert.equal(detectAdvancedDetailsInActiveVariant().length, 0);
 
   const v2 = duplicateActiveVariant('Variante 2 — Stores perf.');
   assert.equal(appState.variants.length, 2);
@@ -500,10 +511,18 @@ test('UX Avancée : sync 3D ↔ Fenêtres, multi-variantes Lesosai, mode strict 
   assert.equal(appState.uiModes.global, 'advanced');
   assert.equal(appState.uiModes.floorsEditor, 'box3d');
 
+  // Retour libre vers Simple sans blocage + détection de l'alerte non bloquante
+  appState.project.floors[0].nightVentMode = 'physical';
+  setActiveVariantInputMode('simple');
+  assert.equal(appState.uiModes.global, 'simple');
+  const advReasons = detectAdvancedDetailsInActiveVariant();
+  assert.ok(advReasons.length >= 1, 'Doit signaler les réglages avancés lors du retour en Mode Simple');
+  setActiveVariantInputMode('advanced', 'box3d');
+
   // Revenir à Variante 1 doit restaurer son mode Simple intact
   switchVariant(appState.variants[0].id);
   assert.equal(appState.uiModes.global, 'simple');
-  // Revenir à Variante 2 doit rester verrouillé en Avancé + box3d
+  // Revenir à Variante 2 doit restaurer son mode Avancé + box3d
   switchVariant(v2.id);
   assert.equal(appState.uiModes.global, 'advanced');
   assert.equal(appState.uiModes.floorsEditor, 'box3d');
@@ -514,6 +533,8 @@ test('UX Avancée : sync 3D ↔ Fenêtres, multi-variantes Lesosai, mode strict 
   const v3 = createNewVariant({ inputMode: 'simple', name: 'Variante 3 — Simple' });
   assert.equal(appState.variants.length, 3);
   assert.equal(appState.uiModes.global, 'simple');
+  assert.equal(appState.project.floors.length, 1);
+  assert.equal(appState.project.openings.length, 1);
 
   assert.equal(deleteVariant(v3.id), true);
   assert.equal(appState.variants.length, 2);

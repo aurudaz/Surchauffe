@@ -4,36 +4,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SIA Thermic Studio — Simulation de surchauffe &amp; Confort thermique</title>
-  <link rel="stylesheet" href="./css/tokens.css?v=20261124-3" />
-  <link rel="stylesheet" href="./css/layout.css?v=20261124-3" />
-  <link rel="stylesheet" href="./css/components.css?v=20261124-3" />
+  <link rel="stylesheet" href="./css/tokens.css?v=20261124-4" />
+  <link rel="stylesheet" href="./css/layout.css?v=20261124-4" />
+  <link rel="stylesheet" href="./css/components.css?v=20261124-4" />
   <script type="importmap">
     {
       "imports": {
-        "./src/app.js": "./src/app.js?v=20261124-3",
-        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261124-3",
-        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261124-3",
-        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261124-3",
-        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261124-3",
-        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261124-3",
-        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261124-3",
-        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261124-3",
-        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261124-3",
-        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261124-3",
-        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261124-3",
-        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261124-3",
-        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261124-3",
-        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261124-3",
-        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261124-3",
-        "./src/standards/sia2024-profiles.js": "./src/standards/sia2024-profiles.js?v=20261124-3",
-        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261124-3",
-        "./src/state/house-library.js": "./src/state/house-library.js?v=20261124-3",
-        "./src/state/project-store.js": "./src/state/project-store.js?v=20261124-3",
-        "./src/ui/charts.js": "./src/ui/charts.js?v=20261124-3",
-        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261124-3",
-        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261124-3",
-        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261124-3",
-        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261124-3"
+        "./src/app.js": "./src/app.js?v=20261124-4",
+        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261124-4",
+        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261124-4",
+        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261124-4",
+        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261124-4",
+        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261124-4",
+        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261124-4",
+        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261124-4",
+        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261124-4",
+        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261124-4",
+        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261124-4",
+        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261124-4",
+        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261124-4",
+        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261124-4",
+        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261124-4",
+        "./src/standards/sia2024-profiles.js": "./src/standards/sia2024-profiles.js?v=20261124-4",
+        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261124-4",
+        "./src/state/house-library.js": "./src/state/house-library.js?v=20261124-4",
+        "./src/state/project-store.js": "./src/state/project-store.js?v=20261124-4",
+        "./src/ui/charts.js": "./src/ui/charts.js?v=20261124-4",
+        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261124-4",
+        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261124-4",
+        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261124-4",
+        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261124-4"
       }
     }
   </script>
@@ -88,28 +88,33 @@
 <div class="workspace" id="view-config">
   <aside class="left-rail">
     <div class="rail-mode-wrap">
-      <span class="rail-mode-label">Mode de la variante</span>
-      <div class="mode-status-card">
-        <div class="mode-status-row">
-          <span class="pill ok" id="modeStatusBadge" data-tip="Le passage en Mode Avancé est à sens unique par variante pour empêcher tout écrasement accidentel des détails 3D ou fenêtre par fenêtre.">Mode Simple</span>
-        </div>
-        <div class="mode-status-hint" id="modeStatusHint">Saisie rapide en 5 étapes. Passez en Avancé pour débloquer le 3D et les réglages experts.</div>
-        <button class="btn btn-sm" id="btnUpgradeToAdv" data-tip="Débloque tous les paramètres experts et le Constructeur 3D pour cette variante (passage définitif sur cette variante ; dupliquez avant si besoin)." style="justify-content:center;width:100%;">Passer en Mode Avancé →</button>
-        <button class="btn btn-sm hidden" id="btnNewSimpleVariantFromLock" data-tip="Cette variante est verrouillée en Mode Avancé pour protéger vos réglages détaillés. Créez une nouvelle variante Simple si besoin." style="justify-content:center;width:100%;">+ Nouvelle variante Simple</button>
+      <span class="rail-mode-label">Niveau de saisie</span>
+      <div class="seg-pill rail-mode-pill">
+        <button class="seg-btn active-blue" id="btnGlobalSimple" data-tip="Saisie rapide en 5 étapes (sans bloquer le retour depuis Avancé ; une alerte prévient si des réglages détaillés existent).">Simple</button>
+        <button class="seg-btn" id="btnGlobalAdv" data-tip="Débloque le Constructeur 3D, les tableaux détaillés, les ouvrants nocturnes, les profils SIA 2024 et les imports BIM/météo.">Avancé</button>
       </div>
     </div>
 
     <div id="railSteps" class="rail-group">
       <button class="rail-item active" data-step="step-house" data-tip="Nom du projet, affectation principale (pré-remplit les charges), exigence officielle SIA / Minergie et modèles prêts à l'emploi."><span>1. Projet &amp; Exigences</span></button>
       <button class="rail-item" data-step="step-floors" data-tip="Volume, surface, hauteur, isolation, inertie thermique et Constructeur 3D paroi par paroi."><span>2. Étages &amp; Enveloppe</span><span class="rail-count" id="railFloorCount">1</span></button>
-      <button class="rail-item" data-step="step-openings" data-tip="Fenêtres et vitrages (g, U) séparés des protections solaires (stores et seuils) et des ouvrants nocturnes."><span>3. Vitrages &amp; Stores</span><span class="rail-count" id="railOpeningCount">1</span></button>
-      <button class="rail-item" data-step="step-sia" data-tip="Affectation par étage, charges internes et stratégie d'aération nocturne."><span>4. Usage &amp; Ventilation</span></button>
+      <button class="rail-item" data-step="step-openings" data-tip="Fenêtres et vitrages (g, U) séparés des protections solaires (stores et seuils)."><span>3. Vitrages &amp; Stores</span><span class="rail-count" id="railOpeningCount">1</span></button>
+      <button class="rail-item" data-step="step-sia" data-tip="Affectation par étage, charges internes, stratégie d'aération nocturne et ouvrants détaillés."><span>4. Usage &amp; Ventilation</span></button>
       <button class="rail-item" data-step="step-climate" data-tip="Station climatique suisse, projection future, météo réelle MétéoSuisse / Open-Meteo / PVGIS et import SIA 2028 / EPW."><span>5. Climat &amp; Météo</span></button>
     </div>
   </aside>
 
   <main class="center-pane">
     <div class="center-inner">
+
+      <!-- Alerte non bloquante si la variante contient des réglages avancés en Mode Simple -->
+      <div class="cool-alert warn hidden" id="simpleModeWarnBanner" style="margin-bottom:0;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
+        <div id="simpleModeWarnTxt" style="flex:1;min-width:220px;"></div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <button class="btn btn-sm" id="btnWarnBackToAdv">Revenir en Avancé</button>
+          <button class="btn btn-sm" id="btnWarnDismiss" data-tip="Masquer cet avertissement.">✕</button>
+        </div>
+      </div>
 
       <!-- ==================== ÉTAPE 1 : PROJET & EXIGENCES ==================== -->
       <section class="step-section" id="step-house">
@@ -119,7 +124,7 @@
           <div class="g2">
             <div class="field" data-tip="Nom libre affiché dans l'en-tête du rapport et lors de l'export PDF ou JSON.">
               <label>Nom du projet</label>
-              <input type="text" id="projName" value="Villa individuelle R+1" />
+              <input type="text" id="projName" value="Local simple — 1 étage" />
             </div>
             <div class="field" data-tip="Affectation principale selon SIA 380/1 : pré-remplit automatiquement l'occupation, l'éclairage, les appareils et l'air neuf hygiénique de tous les étages (ajustables individuellement à l'étape 4).">
               <label>Affectation principale (SIA 380/1)</label>
@@ -249,8 +254,11 @@
 
         <div class="card hidden" id="openingsFloorBar" style="padding:12px 18px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <span style="font-size:12.5px;font-weight:600;color:var(--text-muted);">Étage configuré :</span>
-            <select id="activeOpeningFloor" data-tip="Choisir l'étage dont vous souhaitez modifier les vitrages et stores." style="max-width:260px;"></select>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:12.5px;font-weight:600;color:var(--text-muted);">Étage configuré :</span>
+              <span class="pill req-pill hidden" id="openingsAllFloorsBadge">Appliqué à tous les étages</span>
+            </div>
+            <select id="activeOpeningFloor" data-tip="Choisir un étage précis ou « Tous les étages » pour appliquer vos réglages partout d'un seul coup." style="max-width:290px;"></select>
           </div>
         </div>
 
@@ -390,14 +398,6 @@
             <p class="subtitle">Paramètres de protection solaire séparés des dimensions de fenêtres pour une lecture claire sans défilement horizontal.</p>
             <div id="openingBlindsDetails"></div>
           </div>
-
-          <div class="card">
-            <h3 class="card-title">
-              <span>3. Ouvrants pour aération nocturne</span>
-            </h3>
-            <p class="subtitle">Dimensions libres et type d'ouverture des fenêtres cochées « Nuit » (utilisés si la méthode « Ouvrants détaillés » est active à l'étape 4).</p>
-            <div id="openingNightDetails"></div>
-          </div>
         </div>
       </section>
 
@@ -405,8 +405,11 @@
       <section class="step-section hidden" id="step-sia">
         <div class="card hidden" id="siaFloorBar" style="padding:12px 18px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
-            <span style="font-size:12.5px;font-weight:600;color:var(--text-muted);">Étage configuré :</span>
-            <select id="siaTargetFloor" data-tip="Sélectionner l'étage pour lequel configurer l'usage et la ventilation." style="max-width:260px;"></select>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:12.5px;font-weight:600;color:var(--text-muted);">Étage configuré :</span>
+              <span class="pill req-pill hidden" id="siaAllFloorsBadge">Appliqué à tous les étages</span>
+            </div>
+            <select id="siaTargetFloor" data-tip="Sélectionner un étage précis ou « Tous les étages » pour appliquer l'usage et la ventilation partout d'un seul coup." style="max-width:290px;"></select>
           </div>
         </div>
 
@@ -502,7 +505,7 @@
                   <label>Méthode ventilation nuit</label>
                   <select id="inNightMode">
                     <option value="simple_pct">Pourcentage ouvrant (% surface)</option>
-                    <option value="physical">Ouvrants détaillés (étape 3)</option>
+                    <option value="physical">Ouvrants détaillés (fenêtre par fenêtre)</option>
                     <option value="fixed_m3hm2">Débit imposé [m³/(h·m²)]</option>
                     <option value="fixed_ach">Taux imposé [vol/h]</option>
                     <option value="none">Aucun (fenêtres fermées)</option>
@@ -512,10 +515,12 @@
                   <label id="lblNightFixed">Débit imposé [m³/(h·m²)]</label>
                   <input type="number" id="inNightFixed" step="0.5" min="0" />
                 </div>
-                <div class="field hidden" id="nightPhysicalHintBox" data-tip="Nombre de fenêtres cochées « Nuit » à l'étape 3.">
-                  <label>Ouvrants détaillés (étape 3)</label>
-                  <div style="font-size:12px;color:var(--text-muted);padding:7px 0;" id="nightPhysicalHintTxt"></div>
-                </div>
+              </div>
+
+              <!-- Ouvrants détaillés : affiché UNIQUEMENT lorsque « Ouvrants détaillés » est actif -->
+              <div id="nightPhysicalDetailsBox" class="hidden" style="margin-top:14px;">
+                <div class="section-eyebrow">Ouvrants actifs pour le rafraîchissement nocturne (EN 16798-7)</div>
+                <div id="openingNightDetails"></div>
               </div>
 
               <div id="nightSimpleFullBox" class="hidden" style="margin-top:12px;">
@@ -712,6 +717,10 @@
         <div style="font-size:12.5px;color:var(--text-muted);margin-top:2px;" id="resSubMeta"></div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+        <div class="seg-pill hidden" id="resViewTabsBar">
+          <button class="seg-btn active-blue" id="btnResTabReport" data-tip="Afficher le rapport complet de la variante sélectionnée.">Rapport de la variante</button>
+          <button class="seg-btn" id="btnResTabCompare" data-tip="Ouvrir le comparateur multi-variantes (tableau Δ et courbes superposées).">Comparer les variantes <span class="pill neutral" id="resCompareCountBadge" style="padding:0 6px;font-size:10.5px;">2</span></button>
+        </div>
         <select id="resFloorSelect" class="hidden" data-tip="Choisir l'étage à inspecter (par défaut : l'étage le plus exposé à la surchauffe)." style="width:225px;"></select>
         <button class="btn btn-sm" id="btnDuplicateFromResults" data-tip="Dupliquer cette variante pour tester une modification (stores, inertie, ventilation) et comparer avant/après.">+ Dupliquer en variante</button>
         <button class="btn btn-sm" id="btnExportCSV" data-tip="Exporter les 8760 heures simulées (températures, puissances et froid actif) au format CSV (Excel).">Exporter .csv</button>
@@ -719,24 +728,28 @@
       </div>
     </div>
 
-    <!-- ==================== COMPARATEUR MULTI-VARIANTES (STYLE LESOSAI, AFFICHÉ SI ≥ 2 VARIANTES) ==================== -->
-    <div class="card hidden" id="variantsCompareCard">
-      <h3 class="card-title">
-        <span data-tip="Comparez librement vos variantes de projet côte à côte (heures de surchauffe, température max, besoin de froid actif et courbes superposées), comme dans Lesosai.">Comparateur de variantes du projet</span>
-        <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-          <select id="variantPlotWindow" data-tip="Choisir la période affichée pour la superposition des températures entre variantes." style="width:185px;padding:4px 8px;font-size:12px;">
-            <option value="hottest14" selected>14 jours autour du pic</option>
-            <option value="summer">Été complet (juin–août)</option>
-            <option value="year">Année complète (8760 h)</option>
-          </select>
-        </span>
-      </h3>
-      <p class="subtitle">Cochez les variantes à comparer (les écarts Δ sont calculés par rapport à la première variante cochée).</p>
-      <div class="variant-compare-checks" id="variantCompareChecks"></div>
-      <div class="table-wrap" id="variantCompareTableWrap" style="margin-bottom:14px;"></div>
-      <div class="chart-box" style="height:245px;"><canvas id="chartVariantsCompare"></canvas></div>
+    <!-- ==================== ONGLET COMPARATEUR MULTI-VARIANTES (OUVERT SUR DEMANDE) ==================== -->
+    <div id="resTabComparePane" class="hidden" style="display:flex;flex-direction:column;gap:20px;">
+      <div class="card" id="variantsCompareCard">
+        <h3 class="card-title">
+          <span data-tip="Comparez librement vos variantes de projet côte à côte (heures de surchauffe, température max, besoin de froid actif et courbes superposées), comme dans Lesosai.">Comparateur de variantes du projet</span>
+          <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select id="variantPlotWindow" data-tip="Choisir la période affichée pour la superposition des températures entre variantes." style="width:185px;padding:4px 8px;font-size:12px;">
+              <option value="hottest14" selected>14 jours autour du pic</option>
+              <option value="summer">Été complet (juin–août)</option>
+              <option value="year">Année complète (8760 h)</option>
+            </select>
+          </span>
+        </h3>
+        <p class="subtitle">Cochez les variantes à comparer (les écarts Δ sont calculés par rapport à la première variante cochée).</p>
+        <div class="variant-compare-checks" id="variantCompareChecks"></div>
+        <div class="table-wrap" id="variantCompareTableWrap" style="margin-bottom:14px;"></div>
+        <div class="chart-box" style="height:265px;"><canvas id="chartVariantsCompare"></canvas></div>
+      </div>
     </div>
 
+    <!-- ==================== ONGLET RAPPORT DE LA VARIANTE ACTIVE (PAR DÉFAUT) ==================== -->
+    <div id="resTabReportPane" style="display:flex;flex-direction:column;gap:20px;">
     <!-- ==================== RAPPORT ESSENTIEL (TOUJOURS AFFICHÉ PAR DÉFAUT) ==================== -->
     <div id="resultsSimpleView" style="display:flex;flex-direction:column;gap:20px;">
       <div id="simpleReportTop" style="display:flex;flex-direction:column;gap:18px;"></div>
@@ -898,11 +911,15 @@
       </details>
 
     </div>
+
+    <!-- Besoins énergétiques de froid actif (affichés en fin de rapport si un froid actif est nécessaire) -->
+    <div id="activeCoolingEndWrap"></div>
+    </div>
   </div>
 </div>
 
 <div class="chart-tooltip" id="chartTooltip"></div>
 
-<script type="module" src="./src/app.js?v=20261124-3"></script>
+<script type="module" src="./src/app.js?v=20261124-4"></script>
 </body>
 </html>

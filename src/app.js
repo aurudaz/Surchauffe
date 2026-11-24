@@ -173,6 +173,7 @@ function setMode(mode) {
   document.getElementById('btnModeConfig').classList.toggle('active', !isRes);
   document.getElementById('btnModeResults').classList.toggle('active', isRes);
   if (isRes) {
+    appState.resultsTab = 'report';
     if (appState.resultsStale || !appState.lastResults) {
       runSimulation();
     }
@@ -191,6 +192,7 @@ function handleProjectChanged() {
 function handleVariantSwitched() {
   renderVariantBar();
   if (isResultsVisible()) {
+    appState.resultsTab = 'report';
     runSimulation();
     refreshResults();
   } else {

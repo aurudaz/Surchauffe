@@ -339,26 +339,10 @@ function renderSimpleReport(res, activeFR, project) {
               <td class="num">≥ 10.0 m³/(h·m²)</td>
               <td>${badge(nightPass, 'Efficace', activeFR.nomNightSpec > 0 ? 'Modérée' : 'Absente', activeFR.nomNightSpec > 0)}</td>
             </tr>
-            <tr data-tip="Énergie et puissance frigorifiques qui seraient requises si un système de froid actif maintenait 0 h de surchauffe (seuil SIA 180 / 382/1 : ≤ 12 W/m²).">
-              <td>Besoin de froid actif (pour 0 h surchauffe)</td>
-              <td class="num"><strong>${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an)</strong> (${activeFR.maxCoolWm2.toFixed(1)} W/m²)</td>
-              <td class="num">≤ 12 W/m² • ≤ ${activeFR.activeCooling ? activeFR.activeCooling.thresholds.energyExcessiveKWhm2 : 20} kWh/m²</td>
-              <td>${
-                !activeFR.activeCooling || !activeFR.activeCooling.needed
-                  ? '<span class="pill ok">Passif (0 kWh)</span>'
-                  : activeFR.activeCooling.level === 'excessive'
-                    ? '<span class="pill ko">Trop important</span>'
-                    : activeFR.activeCooling.level === 'high'
-                      ? '<span class="pill warn">Important (EN-102)</span>'
-                      : '<span class="pill ok">Faible</span>'
-              }</td>
-            </tr>
           </tbody>
         </table>
       </div>
     </div>
-
-    ${renderActiveCoolingCard(res, activeFR, project)}
 
     <div class="card">
       <h3 class="card-title">
@@ -409,6 +393,11 @@ function renderSimpleReport(res, activeFR, project) {
       <div class="reco-list">${activeFR.recos.map(r => `<div class="reco-item">${r}</div>`).join('')}</div>
     </div>
   `;
+
+  const coolEndWrap = document.getElementById('activeCoolingEndWrap');
+  if (coolEndWrap) {
+    coolEndWrap.innerHTML = renderActiveCoolingCard(res, activeFR, project);
+  }
 }
 
 function renderDetailedGainsSection(activeFR) {
@@ -864,9 +853,12 @@ function renderVariantsComparator() {
   tableWrap.querySelectorAll('[data-jump-var]').forEach(btn => {
     btn.addEventListener('click', () => {
       const vid = btn.dataset.jumpVar;
+      appState.resultsTab = 'report';
       if (vid !== appState.activeVariantId) {
         switchVariant(vid);
         notifyResultsVariantChange();
+      } else {
+        applyResultsTabUI();
       }
     });
   });
@@ -875,6 +867,36 @@ function renderVariantsComparator() {
   requestAnimationFrame(() => {
     variantsChartMeta = drawVariantsComparisonChart(selectedEntries, winMode);
   });
+}
+
+function applyResultsTabUI() {
+  const hasMulti = appState.variants.length > 1;
+  if (!hasMulti && appState.resultsTab === 'compare') {
+    appState.resultsTab = 'report';
+  }
+  const isCompare = hasMulti && appState.resultsTab === 'compare';
+
+  document.getElementById('resViewTabsBar')?.classList.toggle('hidden', !hasMulti);
+  const cntBadge = document.getElementById('resCompareCountBadge');
+  if (cntBadge) cntBadge.textContent = String(appState.variants.length);
+
+  document.getElementById('btnResTabReport')?.classList.toggle('active-blue', !isCompare);
+  document.getElementById('btnResTabCompare')?.classList.toggle('active-blue', isCompare);
+
+  document.getElementById('resTabReportPane')?.classList.toggle('hidden', isCompare);
+  document.getElementById('resTabComparePane')?.classList.toggle('hidden', !isCompare);
+
+  const multiFloor = (appState.lastResults?.floorResults?.length || 0) > 1;
+  document.getElementById('resFloorSelect')?.classList.toggle('hidden', isCompare || !multiFloor);
+
+  if (isCompare) {
+    renderVariantsComparator();
+  } else {
+    requestAnimationFrame(() => {
+      redrawSimpleChart();
+      redrawOpenDrawerCharts();
+    });
+  }
 }
 
 function redrawOpenDrawerCharts() {
@@ -1148,18 +1170,24 @@ export function renderResultsView(onEnsureSimulation) {
   document.getElementById('sub-methodology').innerHTML = renderMethodologyPanel(activeFR, project);
 
   renderComfortSection(activeFR);
-  renderVariantsComparator();
   syncToggleAllDrawersBtn();
-
-  requestAnimationFrame(() => {
-    redrawSimpleChart();
-    redrawOpenDrawerCharts();
-  });
+  applyResultsTabUI();
 }
 
 export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVariantChanged, onDuplicateToConfig }) {
   notifyResultsVariantChange = onVariantChanged || (() => {});
   notifyResultsDuplicateToConfig = onDuplicateToConfig || (() => {});
+
+  document.getElementById('btnResTabReport')?.addEventListener('click', () => {
+    appState.resultsTab = 'report';
+    applyResultsTabUI();
+  });
+
+  document.getElementById('btnResTabCompare')?.addEventListener('click', () => {
+    if (appState.variants.length <= 1) return;
+    appState.resultsTab = 'compare';
+    applyResultsTabUI();
+  });
 
   document.getElementById('btnDuplicateFromResults')?.addEventListener('click', () => {
     duplicateActiveVariant();

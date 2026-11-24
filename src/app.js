@@ -1,18 +1,30 @@
 /**
  * @fileoverview Point d'entrée principal de SIA Thermic Studio.
- * Initialise la bibliothèque de bâtiments, les infobulles au survol, les gestionnaires d'événements et la première simulation.
+ * Initialise la persistance locale, les variantes, les infobulles au survol,
+ * la mise à jour automatique du badge Résultats et les événements principaux.
  */
 
+import { applyClimateDelta, generateSyntheticWeather } from './methodology/02-weather-model.js';
+import { executeEngine } from './methodology/05-thermal-5r1c-engine.js';
+import { enrichWithSIA180 } from './methodology/06-sia180-compliance.js';
 import { runFullSimulation } from './methodology/08-scenario-comparator.js';
-import { appState } from './state/project-store.js';
+import {
+  appState,
+  loadWorkspaceFromStorage,
+  saveWorkspaceToStorage
+} from './state/project-store.js';
 import {
   bindConfigEvents,
+  flashSaveIndicator,
   refresh3DViewers,
   renderLibrary,
+  renderVariantBar,
   syncAllUI,
   updateInspector
 } from './ui/config-view.js';
 import { bindResultsEvents, renderResultsView } from './ui/results-view.js';
+
+let liveSimTimer = null;
 
 function initHoverTooltips() {
   const tipEl = document.getElementById('chartTooltip');
@@ -32,7 +44,12 @@ function initHoverTooltips() {
   document.addEventListener('pointerover', e => {
     const t = e.target;
     if (!t || typeof t.closest !== 'function') return;
-    if (t.tagName === 'CANVAS' && (t.id === 'chartTime' || t.id === 'chartSimpleHeatwave')) return;
+    if (
+      t.tagName === 'CANVAS' &&
+      (t.id === 'chartTime' || t.id === 'chartSimpleHeatwave' || t.id === 'chartVariantsCompare')
+    ) {
+      return;
+    }
 
     const host = t.closest('[data-tip], [title]');
     if (!host) {
@@ -71,6 +88,7 @@ function initHoverTooltips() {
     activeTipNode = null;
     tipEl.style.display = 'none';
   });
+
   document.addEventListener('pointerdown', () => {
     activeTipNode = null;
     tipEl.style.display = 'none';
@@ -84,15 +102,58 @@ function initHoverTooltips() {
   });
 }
 
+function updateNavBadge(hrs, limHours) {
+  const badge = document.getElementById('navBadgeHours');
+  if (!badge) return;
+  badge.textContent = `${hrs} h/an`;
+  badge.className = `pill ${hrs <= limHours ? 'ok' : 'ko'}`;
+}
+
+/**
+ * Passe rapide (1 seul calcul 5R1C sans séries ni scénarios) pour garder le badge
+ * "Résultats" toujours synchronisé en temps réel pendant la configuration (~50 ms).
+ */
+function runFastBadgeSimulation() {
+  const { project, customWeather } = appState;
+  const uhi = Boolean(project.climate?.urbanHeatIsland);
+  const weatherObj = customWeather
+    ? uhi
+      ? applyClimateDelta(customWeather, 'REF', true)
+      : customWeather
+    : generateSyntheticWeather(project.climate.station, project.climate.scenario, uhi);
+  const raw = executeEngine(project, weatherObj.data, false, false);
+  const quick = enrichWithSIA180(raw, project.projectType);
+  const isMinergie = project.projectType === 'minergie';
+  const hrs = isMinergie ? quick.worstFloor.overMinergie265 : quick.worstFloor.overSIA;
+  updateNavBadge(hrs, quick.limHours);
+}
+
+function scheduleLiveBadgeUpdate(delayMs = 280) {
+  appState.resultsStale = true;
+  const badge = document.getElementById('navBadgeHours');
+  if (badge && delayMs > 0) {
+    badge.textContent = '…';
+    badge.className = 'pill warn';
+  }
+  clearTimeout(liveSimTimer);
+  liveSimTimer = setTimeout(() => {
+    try {
+      runFastBadgeSimulation();
+    } catch {
+      // ignore erreur transitoire pendant saisie incomplète
+    }
+  }, delayMs);
+}
+
 function runSimulation() {
+  clearTimeout(liveSimTimer);
   const res = runFullSimulation(appState.project, appState.customWeather, appState.comfortParams);
   appState.lastResults = res;
+  appState.resultsStale = false;
 
-  const badge = document.getElementById('navBadgeHours');
   const isMinergie = appState.project.projectType === 'minergie';
   const hrs = isMinergie ? res.worstFloor.overMinergie265 : res.worstFloor.overSIA;
-  badge.textContent = `${hrs} h/an`;
-  badge.className = `pill ${hrs <= res.limHours ? 'ok' : 'ko'}`;
+  updateNavBadge(hrs, res.limHours);
   updateInspector();
   return res;
 }
@@ -101,30 +162,52 @@ function refreshResults() {
   renderResultsView(runSimulation);
 }
 
+function isResultsVisible() {
+  return !document.getElementById('view-results').classList.contains('hidden');
+}
+
 function setMode(mode) {
   const isRes = mode === 'results';
   document.getElementById('view-config').classList.toggle('hidden', isRes);
   document.getElementById('view-results').classList.toggle('hidden', !isRes);
   document.getElementById('btnModeConfig').classList.toggle('active', !isRes);
   document.getElementById('btnModeResults').classList.toggle('active', isRes);
-  document.getElementById('btnRunTop')?.classList.toggle('hidden', isRes);
   if (isRes) {
-    runSimulation();
+    if (appState.resultsStale || !appState.lastResults) {
+      runSimulation();
+    }
     refreshResults();
   } else {
     requestAnimationFrame(refresh3DViewers);
   }
 }
 
+function handleProjectChanged() {
+  const ok = saveWorkspaceToStorage();
+  flashSaveIndicator(ok ? 'Sauvegardé' : 'Local plein');
+  scheduleLiveBadgeUpdate(280);
+}
+
+function handleVariantSwitched() {
+  renderVariantBar();
+  if (isResultsVisible()) {
+    runSimulation();
+    refreshResults();
+  } else {
+    scheduleLiveBadgeUpdate(30);
+  }
+}
+
 document.getElementById('btnModeConfig').addEventListener('click', () => setMode('config'));
 document.getElementById('btnModeResults').addEventListener('click', () => setMode('results'));
-document.getElementById('btnRunTop').addEventListener('click', () => setMode('results'));
 document.getElementById('btnRunInspector').addEventListener('click', () => setMode('results'));
 
 document.getElementById('btnThemeToggle').addEventListener('click', () => {
-  document.documentElement.dataset.theme =
-    document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-  if (!document.getElementById('view-results').classList.contains('hidden')) {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  appState.theme = next;
+  saveWorkspaceToStorage();
+  if (isResultsVisible()) {
     refreshResults();
   } else {
     refresh3DViewers();
@@ -132,25 +215,45 @@ document.getElementById('btnThemeToggle').addEventListener('click', () => {
 });
 
 window.addEventListener('resize', () => {
-  if (!document.getElementById('view-results').classList.contains('hidden')) {
+  if (isResultsVisible()) {
     refreshResults();
   } else {
     refresh3DViewers();
   }
 });
 
+// Restauration automatique de l'espace de travail local (variantes + thème)
+loadWorkspaceFromStorage();
+document.documentElement.dataset.theme = appState.theme || 'dark';
+
 initHoverTooltips();
 
 bindConfigEvents({
   onRunSimulation: runSimulation,
-  onResultsRefresh: refreshResults
+  onResultsRefresh: refreshResults,
+  onProjectChanged: handleProjectChanged,
+  onVariantSwitched: handleVariantSwitched,
+  onOpenResults: () => setMode('results')
 });
 
 bindResultsEvents({
   onEnsureSimulation: runSimulation,
-  onRenderResults: refreshResults
+  onRenderResults: refreshResults,
+  onVariantChanged: () => {
+    syncAllUI(refreshResults);
+    runSimulation();
+    refreshResults();
+  },
+  onDuplicateToConfig: () => {
+    syncAllUI(refreshResults);
+    setMode('config');
+    scheduleLiveBadgeUpdate(30);
+  }
 });
 
-renderLibrary(runSimulation);
+renderLibrary(() => {
+  saveWorkspaceToStorage();
+  scheduleLiveBadgeUpdate(20);
+});
 syncAllUI(refreshResults);
-runSimulation();
+runFastBadgeSimulation();

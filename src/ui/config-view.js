@@ -883,6 +883,7 @@ function renderBox3dBuilder(wrap) {
     updateInspector();
     if (rerender) renderFloors();
     else refresh3DViewers();
+    notifyProjectChanged();
   };
 
   card.querySelector('#b3FloorSel').addEventListener('change', e => {
@@ -1776,6 +1777,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     project.floors.push(clone);
     appState.activeFloorId = clone.id;
     syncAllUI();
+    notifyProjectChanged();
   });
 
   ['activeOpeningFloor', 'siaTargetFloor'].forEach(id => {
@@ -1850,18 +1852,23 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     });
     renderOpenings();
     updateInspector();
+    notifyProjectChanged();
   });
 
   document.getElementById('btnApplyQuickShading').addEventListener('click', () => {
     const sp = STORE_PRESETS[document.getElementById('quickShadingPreset').value];
     if (!sp) return;
+    const fl = appState.project.floors.find(f => f.id === appState.activeFloorId);
+    const box3dDriven = isBox3dActiveForFloor(fl);
     appState.project.openings.forEach(op => {
       if (op.floorId === appState.activeFloorId) {
         op.gStore = sp.gStore;
         op.gtotMode = sp.gtotMode;
+        if (box3dDriven) syncOpeningBackToBox3d(op, fl, appState.project);
       }
     });
     renderOpenings();
+    notifyProjectChanged();
   });
 
   document.getElementById('siaCategorySelect').addEventListener('change', e =>
@@ -1877,6 +1884,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     if (!fl) return;
     fl.gainFactorPct = Number(e.target.value);
     document.getElementById('siaGainFactorLbl').textContent = `${fl.gainFactorPct} %`;
+    notifyProjectChanged();
   });
 
   const bindSia = (id, prop, customFlag = false, scaleDiv = 1) => {
@@ -1984,6 +1992,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
       appState.customWeather = parseAnyWeatherText(text, name, appState.project.climate);
       syncPvgisUI();
       updateInspector();
+      notifyProjectChanged();
     } catch (err) {
       badge.textContent = `Erreur : ${err.message}`;
       badge.className = 'pill ko';
@@ -2027,6 +2036,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     if (wIn) wIn.value = '';
     syncPvgisUI();
     updateInspector();
+    notifyProjectChanged();
   };
   document.getElementById('btnResetWeather').addEventListener('click', resetToSyntheticWeather);
   document.getElementById('btnResetWeatherQuick')?.addEventListener('click', resetToSyntheticWeather);
@@ -2049,6 +2059,7 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
       appState.customWeather = weatherObj;
       syncPvgisUI();
       updateInspector();
+      notifyProjectChanged();
       if (onRunSimulation) onRunSimulation();
     } catch (err) {
       badge.textContent = `Erreur ${label} : ${err.message}`;
@@ -2076,8 +2087,11 @@ export function bindConfigEvents({ onRunSimulation, onResultsRefresh, onProjectC
     r.onload = ev => {
       try {
         const p = parseHouseFile(ev.target.result, file.name, appState.project.climate);
-        appState.project = p.proj;
-        appState.activeFloorId = appState.project.floors[0].id;
+        replaceActiveVariantProject(p.proj, {
+          inputMode: 'advanced',
+          floorsEditor: 'table',
+          customWeather: appState.customWeather
+        });
         document.getElementById('houseImportMsg').textContent = p.msg;
         syncAllUI();
         onRunSimulation();

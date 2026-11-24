@@ -204,21 +204,22 @@ export class BuildingViewer3D {
       }
     };
 
-    // Grille de sol & boussole cardinale (N/E/S/O)
+    // Grille de sol & boussole cardinale (N/E/S/O) — lisible sur le fond ardoise sombre du canvas 3D
+    const gridStroke = isLight ? 'rgba(255, 255, 255, 0.09)' : 'rgba(255,255,255,0.06)';
     const maxSide = Math.max(4, ...dims.map(d => Math.max(d.dx, d.dy)));
     const gHalf = Math.ceil(maxSide * 0.7);
     const stepG = Math.max(1, Math.round(gHalf / 3));
     for (let g = -gHalf; g <= gHalf; g += stepG) {
-      drawLine3D([g, -gHalf, minZ], [g, gHalf, minZ], 'rgba(255,255,255,0.06)', 1);
-      drawLine3D([-gHalf, g, minZ], [gHalf, g, minZ], 'rgba(255,255,255,0.06)', 1);
+      drawLine3D([g, -gHalf, minZ], [g, gHalf, minZ], gridStroke, 1);
+      drawLine3D([-gHalf, g, minZ], [gHalf, g, minZ], gridStroke, 1);
     }
 
     const compassR = gHalf + Math.max(0.9, maxSide * 0.14);
     const dirs = [
       ['N', 0, compassR, '#81c995'],
       ['S', 0, -compassR, '#fdd663'],
-      ['E', compassR, 0, '#9aa0a6'],
-      ['O', -compassR, 0, '#9aa0a6']
+      ['E', compassR, 0, '#b0b8c4'],
+      ['O', -compassR, 0, '#b0b8c4']
     ];
     ctx.font = 'bold 11px Inter, sans-serif';
     ctx.textAlign = 'center';

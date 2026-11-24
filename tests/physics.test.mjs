@@ -20,7 +20,8 @@ import {
   computeAutoEnvelopeFromFloor,
   computeHourlyInternalGains,
   computeHourlyInternalGainsBreakdown,
-  computeHourlySolarGains
+  computeHourlySolarGains,
+  syncOpeningBackToBox3d
 } from '../src/methodology/03-envelope-and-gains.js';
 import {
   calcOpeningFlowM3s,
@@ -40,6 +41,17 @@ import { runFullSimulation } from '../src/methodology/08-scenario-comparator.js'
 import { getSIA180Limits } from '../src/standards/sia180.js';
 import { getMinergieRecommendedWindClass } from '../src/standards/minergie.js';
 import { createHouseLibrary } from '../src/state/house-library.js';
+import {
+  appState,
+  createNewVariant,
+  deleteVariant,
+  duplicateActiveVariant,
+  renameVariant,
+  resetWorkspaceStorage,
+  switchVariant,
+  upgradeActiveVariantToAdvanced
+} from '../src/state/project-store.js';
+import { formatDayOfYearFR } from '../src/ui/charts.js';
 import { parseHouseFile } from '../src/parsers/house-importers.js';
 
 test('01-solar-geometry : midi solaire été & ombrage casquette', () => {
@@ -456,4 +468,59 @@ test('Besoins énergétiques de froid actif : calcul, seuils excessifs & proposi
   const resCool = runFullSimulation(coolHouse);
   assert.equal(resCool.worstFloor.activeCooling.needed, false, 'À Zermatt avec protections, le froid actif ne doit pas être nécessaire');
   assert.equal(resCool.worstFloor.activeCooling.level, 'none');
+});
+
+test('UX Avancée : sync 3D ↔ Fenêtres, multi-variantes Lesosai, mode strict & dates calendaires', () => {
+  // 1. Sync bidirectionnelle 3D ↔ Vitrages sans perte d'écrans latéraux / ouvrants nuit
+  const lib = createHouseLibrary();
+  const boxProj = lib.find(x => x.id === 'tb_lea_bsol').build();
+  const fl = boxProj.floors[0];
+  const op = boxProj.openings[0];
+  op.gStore = 0.08;
+  op.leftFinDepth = 0.6;
+  op.rightFinDepth = 0.6;
+  op.openType = 'cross_rect';
+  const synced = syncOpeningBackToBox3d(op, fl, boxProj);
+  assert.equal(synced, true, 'syncOpeningBackToBox3d doit synchroniser vers la paroi 3D correspondante');
+  applyBox3dToFloor(fl, boxProj);
+  const opAfter = boxProj.openings[0];
+  assert.equal(opAfter.gStore, 0.08, 'gStore doit être préservé après recalcul 3D');
+  assert.equal(opAfter.leftFinDepth, 0.6, 'Écrans latéraux doivent être préservés après recalcul 3D');
+  assert.equal(opAfter.openType, 'cross_rect', 'Type ouvrant nuit doit être préservé après recalcul 3D');
+
+  // 2. Multi-variantes & verrouillage strict Simple → Avancé
+  resetWorkspaceStorage();
+  assert.equal(appState.variants.length, 1);
+  assert.equal(appState.uiModes.global, 'simple');
+
+  const v2 = duplicateActiveVariant('Variante 2 — Stores perf.');
+  assert.equal(appState.variants.length, 2);
+  assert.equal(appState.activeVariantId, v2.id);
+  upgradeActiveVariantToAdvanced('box3d');
+  assert.equal(appState.uiModes.global, 'advanced');
+  assert.equal(appState.uiModes.floorsEditor, 'box3d');
+
+  // Revenir à Variante 1 doit restaurer son mode Simple intact
+  switchVariant(appState.variants[0].id);
+  assert.equal(appState.uiModes.global, 'simple');
+  // Revenir à Variante 2 doit rester verrouillé en Avancé + box3d
+  switchVariant(v2.id);
+  assert.equal(appState.uiModes.global, 'advanced');
+  assert.equal(appState.uiModes.floorsEditor, 'box3d');
+
+  renameVariant(v2.id, 'Variante 2 — Renommée');
+  assert.equal(appState.variants.find(x => x.id === v2.id).name, 'Variante 2 — Renommée');
+
+  const v3 = createNewVariant({ inputMode: 'simple', name: 'Variante 3 — Simple' });
+  assert.equal(appState.variants.length, 3);
+  assert.equal(appState.uiModes.global, 'simple');
+
+  assert.equal(deleteVariant(v3.id), true);
+  assert.equal(appState.variants.length, 2);
+  resetWorkspaceStorage();
+
+  // 3. Dates calendaires françaises
+  assert.equal(formatDayOfYearFR(0), '1 jan.');
+  assert.equal(formatDayOfYearFR(181), '1 juil.');
+  assert.equal(formatDayOfYearFR(222), '11 août');
 });

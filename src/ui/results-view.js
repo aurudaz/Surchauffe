@@ -9,22 +9,39 @@
  *      4. Confort thermique multi-normes (SIA / SECO, OMS, EN 16798-1, ISO 7730 PMV/PPD)
  */
 
+import { applyClimateDelta, generateSyntheticWeather } from '../methodology/02-weather-model.js';
+import { executeEngine } from '../methodology/05-thermal-5r1c-engine.js';
+import { enrichWithSIA180 } from '../methodology/06-sia180-compliance.js';
 import { evaluateThermalComfort } from '../methodology/07-thermal-comfort.js';
 import { getSIA180Profile } from '../standards/sia180.js';
-import { appState, escapeHtml } from '../state/project-store.js';
+import {
+  appState,
+  duplicateActiveVariant,
+  escapeHtml,
+  saveWorkspaceToStorage,
+  switchVariant,
+  syncActiveVariantSnapshot
+} from '../state/project-store.js';
 import {
   drawAdaptiveComparisonChart,
   drawBalanceChart,
   drawOrientChart,
   drawSIAChart,
   drawSimpleHeatwaveChart,
-  drawTimeChart
+  drawTimeChart,
+  drawVariantsComparisonChart,
+  formatDayOfYearFR,
+  getChartPalette
 } from './charts.js';
 import { renderMethodologyPanel } from './methodology-view.js';
 
 let timeChartMeta = null;
 let simpleChartMeta = null;
+let variantsChartMeta = null;
 let lastRenderCtx = null;
+const variantSimCache = new Map();
+let notifyResultsVariantChange = () => {};
+let notifyResultsDuplicateToConfig = () => {};
 
 function badge(ok, yesLabel = 'Conforme', noLabel = 'Non conforme', warnMode = false, tip = '') {
   const tipAttr = tip ? ` data-tip="${escapeHtml(tip)}"` : '';
@@ -690,6 +707,176 @@ function renderComfortSection(activeFR) {
   rebindComfort('inComfortRh', 'rh', 'lblComfortRh', v => v.toFixed(0));
 }
 
+function simulateVariantFast(v) {
+  if (v.id === appState.activeVariantId && appState.lastResults) {
+    return appState.lastResults;
+  }
+  const sig = JSON.stringify({
+    p: v.project,
+    w: v.customWeather ? v.customWeather.sourceLabel : null
+  });
+  const cached = variantSimCache.get(v.id);
+  if (cached && cached.sig === sig) {
+    return cached.res;
+  }
+  const uhi = Boolean(v.project.climate?.urbanHeatIsland);
+  const weatherObj = v.customWeather
+    ? uhi
+      ? applyClimateDelta(v.customWeather, 'REF', true)
+      : v.customWeather
+    : generateSyntheticWeather(v.project.climate.station, v.project.climate.scenario, uhi);
+  const raw = executeEngine(v.project, weatherObj.data, true, true);
+  const res = enrichWithSIA180(raw, v.project.projectType, v.project);
+  variantSimCache.set(v.id, { sig, res });
+  return res;
+}
+
+function fmtDeltaTag(diff, unit, lowerIsBetter = true, digits = 0) {
+  if (Math.abs(diff) < (digits === 0 ? 0.5 : 0.05)) {
+    return `<span class="delta-tag delta-flat">=</span>`;
+  }
+  const good = lowerIsBetter ? diff < 0 : diff > 0;
+  const sign = diff > 0 ? '+' : '';
+  return `<span class="delta-tag ${good ? 'delta-good' : 'delta-bad'}">${sign}${diff.toFixed(digits)}${unit}</span>`;
+}
+
+function renderVariantsComparator() {
+  const card = document.getElementById('variantsCompareCard');
+  if (!card) return;
+  syncActiveVariantSnapshot();
+
+  if (appState.variants.length <= 1) {
+    card.classList.add('hidden');
+    variantsChartMeta = null;
+    return;
+  }
+
+  card.classList.remove('hidden');
+  const pal = getChartPalette();
+
+  // S'assurer qu'au moins une variante est cochée
+  appState.compareVariantIds = appState.compareVariantIds.filter(id =>
+    appState.variants.some(v => v.id === id)
+  );
+  if (appState.compareVariantIds.length === 0) {
+    appState.compareVariantIds = appState.variants.map(v => v.id);
+  }
+
+  const checksWrap = document.getElementById('variantCompareChecks');
+  checksWrap.innerHTML = '';
+  const selectedEntries = [];
+
+  appState.variants.forEach((v, idx) => {
+    const color = pal.series[idx % pal.series.length];
+    const isChecked = appState.compareVariantIds.includes(v.id);
+    const lbl = document.createElement('label');
+    lbl.className = `variant-check-chip${isChecked ? ' checked' : ''}`;
+    lbl.dataset.tip = `Inclure ou exclure « ${v.name} » du tableau et du graphique comparatifs.`;
+    lbl.innerHTML = `
+      <input type="checkbox" ${isChecked ? 'checked' : ''} data-cmp-var="${escapeHtml(v.id)}" />
+      <span class="variant-color-dot" style="background:${color};"></span>
+      <span>${escapeHtml(v.name)}</span>
+      <span class="pill neutral" style="padding:0 6px;font-size:10px;">${v.inputMode === 'advanced' ? 'Av.' : 'Simp.'}</span>
+    `;
+    lbl.querySelector('input').addEventListener('change', e => {
+      if (e.target.checked) {
+        if (!appState.compareVariantIds.includes(v.id)) appState.compareVariantIds.push(v.id);
+      } else {
+        if (appState.compareVariantIds.length <= 1) {
+          e.target.checked = true;
+          return;
+        }
+        appState.compareVariantIds = appState.compareVariantIds.filter(id => id !== v.id);
+      }
+      saveWorkspaceToStorage();
+      renderVariantsComparator();
+    });
+    checksWrap.appendChild(lbl);
+
+    if (isChecked) {
+      const vRes = simulateVariantFast(v);
+      selectedEntries.push({
+        id: v.id,
+        name: v.name,
+        inputMode: v.inputMode,
+        project: v.project,
+        color,
+        res: vRes,
+        wf: vRes.worstFloor
+      });
+    }
+  });
+
+  const ref = selectedEntries[0];
+  const isMinergieRef = ref?.project?.projectType === 'minergie';
+  const refHours = ref ? (isMinergieRef ? ref.wf.overMinergie265 : ref.wf.overSIA) : 0;
+  const refMaxT = ref ? ref.wf.summerMaxTop : 0;
+  const refScore = ref ? ref.wf.score : 0;
+  const refCool = ref ? ref.wf.coolKWhm2 : 0;
+
+  const tableWrap = document.getElementById('variantCompareTableWrap');
+  tableWrap.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Variante</th>
+          <th class="num" data-tip="Heures de dépassement selon l'exigence de chaque variante (et écart Δ vs la 1ère variante cochée).">Surchauffe</th>
+          <th class="num" data-tip="Heures d'occupation au-dessus de 26.5 °C [h/an].">&gt; 26.5 °C</th>
+          <th class="num" data-tip="Température intérieure maximale en été [°C].">Pic été</th>
+          <th class="num" data-tip="Facteur solaire moyen g_total / inertie [Wh/m²K] / ventilation nuit [m³/(h·m²)].">g_tot / Inertie / Nuit</th>
+          <th class="num" data-tip="Besoin annuel utile de froid actif et puissance de pointe pour 0 h de surchauffe.">Froid actif</th>
+          <th class="num" data-tip="Score global de résilience sur 100.">Score</th>
+          <th>Statut</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${selectedEntries
+          .map((e, i) => {
+            const isM = e.project.projectType === 'minergie';
+            const hrs = isM ? e.wf.overMinergie265 : e.wf.overSIA;
+            const lim = isM ? 100 : e.res.limHours;
+            const ok = hrs <= lim;
+            const isRef = i === 0;
+            const isAct = e.id === appState.activeVariantId;
+            return `<tr style="${isAct ? 'background:rgba(168,199,250,0.08);' : ''}">
+              <td>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <span class="variant-color-dot" style="background:${e.color};"></span>
+                  <button class="btn btn-sm" data-jump-var="${escapeHtml(e.id)}" style="padding:2px 8px;font-size:11.5px;border-color:${isAct ? 'var(--primary)' : 'var(--border)'};" data-tip="Afficher le rapport détaillé de cette variante.">
+                    ${escapeHtml(e.name)}${isRef ? ' (Réf.)' : ''}
+                  </button>
+                </div>
+              </td>
+              <td class="num"><strong>${hrs} h/an</strong>${isRef ? '' : fmtDeltaTag(hrs - refHours, ' h', true, 0)}</td>
+              <td class="num">${e.wf.overMinergie265} h</td>
+              <td class="num"><strong>${e.wf.summerMaxTop.toFixed(1)} °C</strong>${isRef ? '' : fmtDeltaTag(e.wf.summerMaxTop - refMaxT, '°', true, 1)}</td>
+              <td class="num" style="font-size:11.5px;">${e.wf.avgGtot.toFixed(2)} • ${e.wf.floor.cSpec.toFixed(0)} • ${e.wf.nomNightSpec.toFixed(1)}</td>
+              <td class="num">${e.wf.coolKWhm2.toFixed(1)} kWh/m² <span style="color:var(--text-muted);">(${e.wf.maxCoolWm2.toFixed(0)} W/m²)</span>${isRef ? '' : fmtDeltaTag(e.wf.coolKWhm2 - refCool, '', true, 1)}</td>
+              <td class="num"><strong>${e.wf.score}/100</strong>${isRef ? '' : fmtDeltaTag(e.wf.score - refScore, '', false, 0)}</td>
+              <td>${badge(ok, 'Conforme', 'Dépassé')}</td>
+            </tr>`;
+          })
+          .join('')}
+      </tbody>
+    </table>
+  `;
+
+  tableWrap.querySelectorAll('[data-jump-var]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const vid = btn.dataset.jumpVar;
+      if (vid !== appState.activeVariantId) {
+        switchVariant(vid);
+        notifyResultsVariantChange();
+      }
+    });
+  });
+
+  const winMode = document.getElementById('variantPlotWindow')?.value || 'hottest14';
+  requestAnimationFrame(() => {
+    variantsChartMeta = drawVariantsComparisonChart(selectedEntries, winMode);
+  });
+}
+
 function redrawOpenDrawerCharts() {
   if (!lastRenderCtx) return;
   const { res, activeFR, project } = lastRenderCtx;
@@ -813,7 +1000,7 @@ export function renderResultsView(onEnsureSimulation) {
     <div class="kpi-box" data-tip="Plage annuelle et estivale de température opérative intérieure θ_op (30 % air + 70 % surfaces), jour/heure du pic et degrés-heures cumulés.">
       <div class="kpi-label">Température opérative (Min / Max)</div>
       <div class="kpi-val" style="color:${activeFR.maxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.minTop.toFixed(1)} / ${activeFR.maxTop.toFixed(1)} °C</div>
-      <div class="kpi-sub">Été : <strong>${activeFR.summerMinTop.toFixed(1)}..${activeFR.summerMaxTop.toFixed(1)} °C</strong> • Pic J${Math.floor(activeFR.maxTopHour / 24) + 1} à ${activeFR.maxTopHour % 24}h (${activeFR.dhSIA.toFixed(1)} Kh)</div>
+      <div class="kpi-sub">Été : <strong>${activeFR.summerMinTop.toFixed(1)}..${activeFR.summerMaxTop.toFixed(1)} °C</strong> • Pic ${formatDayOfYearFR(Math.floor(activeFR.maxTopHour / 24))} à ${activeFR.maxTopHour % 24}h (${activeFR.dhSIA.toFixed(1)} Kh)</div>
     </div>
     <div class="kpi-box" data-tip="Indice synthétique sur 100 combinant heures de dépassement, température maximale, efficacité des stores (g_tot), masse thermique et ventilation nocturne.">
       <div class="kpi-label">Score de résilience estivale</div>
@@ -961,6 +1148,7 @@ export function renderResultsView(onEnsureSimulation) {
   document.getElementById('sub-methodology').innerHTML = renderMethodologyPanel(activeFR, project);
 
   renderComfortSection(activeFR);
+  renderVariantsComparator();
   syncToggleAllDrawersBtn();
 
   requestAnimationFrame(() => {
@@ -969,7 +1157,18 @@ export function renderResultsView(onEnsureSimulation) {
   });
 }
 
-export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
+export function bindResultsEvents({ onEnsureSimulation, onRenderResults, onVariantChanged, onDuplicateToConfig }) {
+  notifyResultsVariantChange = onVariantChanged || (() => {});
+  notifyResultsDuplicateToConfig = onDuplicateToConfig || (() => {});
+
+  document.getElementById('btnDuplicateFromResults')?.addEventListener('click', () => {
+    duplicateActiveVariant();
+    notifyResultsDuplicateToConfig();
+  });
+
+  document.getElementById('variantPlotWindow')?.addEventListener('change', () => {
+    renderVariantsComparator();
+  });
   document.querySelectorAll('.sub-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.sub-tab').forEach(b => b.classList.remove('active'));
@@ -1034,7 +1233,7 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
   bindHoverTooltip(
     'chartTime',
     () => timeChartMeta,
-    pt => `<strong>Jour ${pt.d + 1} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
+    pt => `<strong>${formatDayOfYearFR(pt.d)} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
       θ_op : <strong>${pt.Top.toFixed(1)} °C</strong> (air ${pt.Tair.toFixed(1)} °C | rad ${pt.Ts.toFixed(1)} °C)<br>
       θ_ext : ${pt.Te.toFixed(1)} °C | Limite SIA : ${pt.limUpper.toFixed(1)} °C<br>
       Gains : sol ${pt.qSol.toFixed(0)} W | int ${pt.qInt.toFixed(0)} W (gens ${(pt.qPeople || 0).toFixed(0)} / lampes ${(pt.qLight || 0).toFixed(0)} / app. ${(pt.qEquip || 0).toFixed(0)})`
@@ -1045,12 +1244,42 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
     () => simpleChartMeta,
     (pt, meta) => {
       const lim = meta.useAdaptiveLimit ? pt.limUpper : meta.thresholdC;
-      return `<strong>Jour ${pt.d + 1} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
+      return `<strong>${formatDayOfYearFR(pt.d)} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
       Temp. intérieure : <strong>${pt.Top.toFixed(1)} °C</strong><br>
       Temp. extérieure : ${pt.Te.toFixed(1)} °C<br>
       Seuil confort : ${lim.toFixed(1)} °C`;
     }
   );
+
+  // Infobulle dédiée au graphique superposé multi-variantes
+  const cmpCanvas = document.getElementById('chartVariantsCompare');
+  if (cmpCanvas) {
+    cmpCanvas.addEventListener('mousemove', e => {
+      if (!variantsChartMeta) return;
+      const { c, i0, i1, pad, pw, entries } = variantsChartMeta;
+      const rect = c.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      if (mx < pad.l || mx > pad.l + pw) {
+        tooltipEl.style.display = 'none';
+        return;
+      }
+      const idx = Math.min(i1, Math.max(i0, Math.round(i0 + ((mx - pad.l) / pw) * (i1 - i0))));
+      const refPt = entries[0].wf.series[idx];
+      const rows = entries
+        .map(
+          en =>
+            `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${en.color};margin-right:5px;"></span>${escapeHtml(en.name)} : <strong>${en.wf.series[idx].Top.toFixed(1)} °C</strong>`
+        )
+        .join('<br>');
+      tooltipEl.innerHTML = `<strong>${formatDayOfYearFR(refPt.d)} — ${String(refPt.hod).padStart(2, '0')}h00</strong><br>${rows}<br><span style="color:var(--text-muted);">Limite SIA : ${refPt.limUpper.toFixed(1)} °C</span>`;
+      tooltipEl.style.display = 'block';
+      tooltipEl.style.left = Math.min(window.innerWidth - 260, e.clientX + 14) + 'px';
+      tooltipEl.style.top = e.clientY - 12 + 'px';
+    });
+    cmpCanvas.addEventListener('mouseleave', () => {
+      tooltipEl.style.display = 'none';
+    });
+  }
 
   document.getElementById('resFloorSelect').addEventListener('change', onRenderResults);
   document.getElementById('simplePlotWindow')?.addEventListener('change', () => {

@@ -118,11 +118,16 @@ function initHoverTooltips() {
   });
 }
 
-function updateNavBadge(hrs, limHours) {
+function updateNavBadge(hrs, limHours, isManualDay = false) {
   const badge = document.getElementById('navBadgeHours');
   if (!badge) return;
-  badge.textContent = `${hrs} h/an`;
-  badge.className = `pill ${hrs <= limHours ? 'ok' : 'ko'}`;
+  if (isManualDay) {
+    badge.textContent = `${hrs} h/j`;
+    badge.className = `pill ${hrs === 0 ? 'ok' : 'ko'}`;
+  } else {
+    badge.textContent = `${hrs} h/an`;
+    badge.className = `pill ${hrs <= limHours ? 'ok' : 'ko'}`;
+  }
 }
 
 /**
@@ -140,8 +145,15 @@ function runFastBadgeSimulation() {
   const raw = executeEngine(project, weatherObj.data, false, false);
   const quick = enrichWithSIA180(raw, project.projectType, project);
   const isMinergie = project.projectType === 'minergie';
-  const hrs = isMinergie ? quick.worstFloor.overMinergie265 : quick.worstFloor.overSIA;
-  updateNavBadge(hrs, quick.limHours);
+  const isManualDay = Boolean(weatherObj.isManualDesignDay);
+  const hrs = isManualDay
+    ? isMinergie
+      ? quick.worstFloor.day24?.overMinergie265 ?? 0
+      : quick.worstFloor.day24?.overSIA ?? 0
+    : isMinergie
+      ? quick.worstFloor.overMinergie265
+      : quick.worstFloor.overSIA;
+  updateNavBadge(hrs, quick.limHours, isManualDay);
 }
 
 function scheduleLiveBadgeUpdate(delayMs = 280) {
@@ -168,8 +180,15 @@ function runSimulation() {
   appState.resultsStale = false;
 
   const isMinergie = appState.project.projectType === 'minergie';
-  const hrs = isMinergie ? res.worstFloor.overMinergie265 : res.worstFloor.overSIA;
-  updateNavBadge(hrs, res.limHours);
+  const isManualDay = Boolean(res.isManualDesignDay);
+  const hrs = isManualDay
+    ? isMinergie
+      ? res.worstFloor.day24?.overMinergie265 ?? 0
+      : res.worstFloor.day24?.overSIA ?? 0
+    : isMinergie
+      ? res.worstFloor.overMinergie265
+      : res.worstFloor.overSIA;
+  updateNavBadge(hrs, res.limHours, isManualDay);
   updateInspector();
   return res;
 }

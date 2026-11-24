@@ -512,6 +512,36 @@ export function renderSimpleOpeningsForFloor(fl) {
   if (cBR) cBR.value = firstOp?.blindRule || 'irr_and_temp';
   if (cBM) cBM.value = firstOp?.blindMode === 'manual_day' ? 'manual_day' : 'auto';
 
+  // Deuxième ligne dédiée à la plage horaire des stores en Mode Simple (si Manuel)
+  const isManualSimple =
+    blindSel?.value === 'manual_day' ||
+    (blindSel?.value === 'custom' && cBM?.value === 'manual_day');
+  const manBox = document.getElementById('simpManualBlindHoursBox');
+  if (manBox) manBox.classList.toggle('hidden', !isManualSimple);
+  const isOcc24 = fl.occStart === 0 && fl.occEnd === 24;
+  const useOcc = !isOcc24 && firstOp?.blindManualUseOcc === true;
+  const sBS = document.getElementById('simpBlindStart');
+  const sBE = document.getElementById('simpBlindEnd');
+  const sBOcc = document.getElementById('simpBlindManualUseOcc');
+  const sBOccLbl = document.getElementById('simpBlindManualOccLbl');
+  if (sBS) {
+    sBS.value = firstOp?.blindStart ?? 10;
+    sBS.disabled = useOcc;
+  }
+  if (sBE) {
+    sBE.value = firstOp?.blindEnd ?? 18;
+    sBE.disabled = useOcc;
+  }
+  if (sBOcc) {
+    sBOcc.checked = useOcc;
+    sBOcc.disabled = isOcc24;
+  }
+  if (sBOccLbl) {
+    sBOccLbl.textContent = isOcc24
+      ? 'Occupation 24h/24 (plage horaire active)'
+      : `Suivre les horaires d'occupation (${fl.occStart}h–${fl.occEnd}h)`;
+  }
+
   if (firstOp) {
     document.getElementById('simpOverhang').value = firstOp.overhangDepth || 0;
   }
@@ -591,6 +621,9 @@ export function applySimpleGlazingFromInputs() {
     ));
   }
   const overhang = Math.max(0, parseFloat(document.getElementById('simpOverhang').value) || 0);
+  const blindStart = Math.max(0, Math.min(23, parseInt(document.getElementById('simpBlindStart')?.value, 10) || 10));
+  const blindEnd = Math.max(1, Math.min(24, parseInt(document.getElementById('simpBlindEnd')?.value, 10) || 18));
+  const blindManualUseOcc = Boolean(document.getElementById('simpBlindManualUseOcc')?.checked);
 
   const targetFloors = getTargetFloorsForOpenings();
   const targetIds = new Set(targetFloors.map(f => f.id));
@@ -629,6 +662,9 @@ export function applySimpleGlazingFromInputs() {
         blindThreshI,
         blindThreshT,
         blindRule,
+        blindManualUseOcc,
+        blindStart,
+        blindEnd,
         windSafe: true,
         operable: true,
         openWidth: Math.min(w, 1.2),
@@ -746,7 +782,7 @@ export function renderOpenings() {
     tbody.appendChild(tr);
   });
 
-  // 2. TABLEAU SÉPARÉ : PROTECTIONS SOLAIRES & COMMANDE DES STORES
+  // 2. TABLEAU SÉPARÉ : PROTECTIONS SOLAIRES & COMMANDE DES STORES (2e ligne dédiée si Manuel)
   const blindsBox = document.getElementById('openingBlindsDetails');
   if (blindsBox) {
     blindsBox.innerHTML = list.length
@@ -755,11 +791,10 @@ export function renderOpenings() {
             <th data-tip="Fenêtre concernée et orientation.">Fenêtre</th>
             <th data-tip="Facteur de réduction du store g_store [-] (ou g_total si le mode g_tot est choisi).">g_store</th>
             <th data-tip="g×g : g_total = g_vit × g_store. g_tot : valeur directe combinée.">Mode</th>
-            <th data-tip="Mode de fermeture du store : Auto (24h/24), Manuel (plage horaire ou occupation), Fermé ou Aucun / Ouvert.">Commande</th>
+            <th data-tip="Mode de fermeture du store : Auto (24h/24), Manuel (plage horaire sur la ligne dédiée), Fermé ou Aucun / Ouvert.">Commande</th>
             <th data-tip="Condition logique de baisse : I ET T (SIA), I OU T (bSol), I seul, Plage horaire seule ou Aucune (store inactif).">Règle</th>
             <th data-tip="Seuil d'ensoleillement sur la façade [W/m²] (SIA 380/2 : 200 W/m²).">Seuil I [W/m²]</th>
             <th data-tip="Seuil de température intérieure [°C] (typ. 22 °C).">Seuil T [°C]</th>
-            <th data-tip="Pour une commande Manuelle : cochez « Occ. » pour suivre l'occupation (hors occupation 24h/24) ou définissez directement la plage horaire de baisse [De h à h].">Plage manuelle</th>
             <th class="num" data-tip="Facteur solaire effectif résultant lorsque le store est baissé.">g_tot eff.</th>
           </tr></thead>
           <tbody>${list
@@ -784,56 +819,61 @@ export function renderOpenings() {
                 curRule === 'none' ||
                 curRule === 'schedule_only';
               const noTemp = noThresh || curRule === 'irr_only';
-              const useOcc = !isOcc24h && op.blindManualUseOcc !== false;
+              // Par défaut en Manuel : plage horaire libre (indépendante de l'occupation)
+              const useOcc = !isOcc24h && op.blindManualUseOcc === true;
               const bStart = Number.isFinite(Number(op.blindStart)) ? Number(op.blindStart) : 10;
               const bEnd = Number.isFinite(Number(op.blindEnd)) ? Number(op.blindEnd) : 18;
 
-              let manualCell = '<span style="color:var(--text-muted);font-size:11.5px;">—</span>';
-              if (isManual) {
-                const occTip = isOcc24h
-                  ? 'Occupation 24h/24 sur cet étage : définissez explicitement la plage horaire de baisse des stores.'
-                  : 'Baisser les stores durant les heures d’occupation de l’étage (décochez pour fixer une plage horaire dédiée).';
-                manualCell = `<div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;">
-                  <label style="display:inline-flex;align-items:center;gap:3px;font-size:11.5px;cursor:pointer;" data-tip="${escapeHtml(occTip)}">
-                    <input type="checkbox" ${useOcc ? 'checked' : ''} ${isOcc24h ? 'disabled' : ''} data-op="${escapeHtml(op.id)}" data-k="blindManualUseOcc" />
-                    <span>Occ.</span>
-                  </label>
-                  ${
-                    !useOcc
-                      ? `<input type="number" min="0" max="23" value="${bStart}" data-op="${escapeHtml(op.id)}" data-k="blindStart" style="width:46px;padding:3px 4px;font-size:11.5px;" data-tip="Heure de baisse manuelle des stores [0..23 h]." />` +
-                        `<span style="font-size:11px;color:var(--text-muted);">–</span>` +
-                        `<input type="number" min="1" max="24" value="${bEnd}" data-op="${escapeHtml(op.id)}" data-k="blindEnd" style="width:46px;padding:3px 4px;font-size:11.5px;" data-tip="Heure de relevage manuel des stores [1..24 h]." />` +
-                        `<span style="font-size:11px;color:var(--text-muted);">h</span>`
-                      : `<span style="font-size:11px;color:var(--text-muted);">(${opFl.occStart}h–${opFl.occEnd}h)</span>`
-                  }
-                </div>`;
-              }
+              const occTip = isOcc24h
+                ? 'Occupation 24h/24 sur cet étage : utilisez la plage horaire manuelle.'
+                : `Cocher pour lier les stores aux heures d’occupation (${opFl.occStart}h–${opFl.occEnd}h) au lieu de la plage manuelle.`;
+
+              const manualSubRow = isManual
+                ? `<tr class="blind-manual-subrow">
+                    <td colspan="8">
+                      <div class="blind-manual-bar">
+                        <span class="blind-manual-label">↳ Plage horaire manuelle (${escapeHtml(op.name)}) :</span>
+                        <span class="blind-manual-hours" style="${useOcc ? 'opacity:0.45;' : ''}">
+                          <span>De</span>
+                          <input type="number" min="0" max="23" value="${bStart}" ${useOcc ? 'disabled' : ''} data-op="${escapeHtml(op.id)}" data-k="blindStart" data-tip="Heure de baisse manuelle des stores [0..23 h]." />
+                          <span>h à</span>
+                          <input type="number" min="1" max="24" value="${bEnd}" ${useOcc ? 'disabled' : ''} data-op="${escapeHtml(op.id)}" data-k="blindEnd" data-tip="Heure de relevage manuel des stores [1..24 h]." />
+                          <span>h</span>
+                        </span>
+                        <span class="blind-manual-sep"></span>
+                        <label class="blind-manual-occ" data-tip="${escapeHtml(occTip)}">
+                          <input type="checkbox" ${useOcc ? 'checked' : ''} ${isOcc24h ? 'disabled' : ''} data-op="${escapeHtml(op.id)}" data-k="blindManualUseOcc" />
+                          <span>${isOcc24h ? 'Occupation 24h/24 (plage horaire active)' : `Suivre l’occupation (${opFl.occStart}h–${opFl.occEnd}h)`}</span>
+                        </label>
+                      </div>
+                    </td>
+                  </tr>`
+                : '';
 
               return `<tr>
                 <td>${flPrefix}<strong>${escapeHtml(op.name)}</strong> <span style="color:var(--text-muted);">(${op.orient}, ×${op.qty})</span></td>
-                <td><input type="number" step="0.01" min="0.02" max="1" value="${op.gStore}" data-op="${escapeHtml(op.id)}" data-k="gStore" style="width:62px;" /></td>
-                <td><select data-op="${escapeHtml(op.id)}" data-k="gtotMode" style="width:70px;">
+                <td><input type="number" step="0.01" min="0.02" max="1" value="${op.gStore}" data-op="${escapeHtml(op.id)}" data-k="gStore" style="width:64px;" /></td>
+                <td><select data-op="${escapeHtml(op.id)}" data-k="gtotMode" style="width:74px;">
                   <option value="product" ${op.gtotMode === 'product' ? 'selected' : ''}>g×g</option>
                   <option value="direct" ${op.gtotMode === 'direct' ? 'selected' : ''}>g_tot</option>
                 </select></td>
-                <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:94px;">
+                <td><select data-op="${escapeHtml(op.id)}" data-k="blindMode" style="width:105px;">
                   <option value="auto" ${curMode === 'auto' ? 'selected' : ''}>Auto</option>
                   <option value="manual_day" ${curMode === 'manual_day' ? 'selected' : ''}>Manuel</option>
                   <option value="always_down" ${curMode === 'always_down' ? 'selected' : ''}>Fermé</option>
                   <option value="always_up" ${curMode === 'always_up' ? 'selected' : ''}>Aucun / Ouvert</option>
                 </select></td>
-                <td><select data-op="${escapeHtml(op.id)}" data-k="blindRule" style="width:92px;" ${curMode === 'always_up' || curMode === 'always_down' ? 'disabled' : ''}>
+                <td><select data-op="${escapeHtml(op.id)}" data-k="blindRule" style="width:98px;" ${curMode === 'always_up' || curMode === 'always_down' ? 'disabled' : ''}>
                   <option value="irr_and_temp" ${curRule === 'irr_and_temp' ? 'selected' : ''}>I ET T</option>
                   <option value="irr_or_temp" ${curRule === 'irr_or_temp' ? 'selected' : ''}>I OU T</option>
                   <option value="irr_only" ${curRule === 'irr_only' ? 'selected' : ''}>I seul</option>
                   <option value="schedule_only" ${curRule === 'schedule_only' ? 'selected' : ''}>Plage seule</option>
                   <option value="none" ${curRule === 'none' ? 'selected' : ''}>Aucune</option>
                 </select></td>
-                <td><input type="number" step="25" min="50" max="600" value="${op.blindThreshI ?? 200}" data-op="${escapeHtml(op.id)}" data-k="blindThreshI" style="width:62px;" ${noThresh ? 'disabled' : ''} /></td>
-                <td><input type="number" step="0.5" min="16" max="30" value="${op.blindThreshT ?? 22.0}" data-op="${escapeHtml(op.id)}" data-k="blindThreshT" style="width:58px;" ${noTemp ? 'disabled' : ''} /></td>
-                <td>${manualCell}</td>
+                <td><input type="number" step="25" min="50" max="600" value="${op.blindThreshI ?? 200}" data-op="${escapeHtml(op.id)}" data-k="blindThreshI" style="width:68px;" ${noThresh ? 'disabled' : ''} /></td>
+                <td><input type="number" step="0.5" min="16" max="30" value="${op.blindThreshT ?? 22.0}" data-op="${escapeHtml(op.id)}" data-k="blindThreshT" style="width:62px;" ${noTemp ? 'disabled' : ''} /></td>
                 <td class="num"><span class="pill ${gtotEff <= 0.15 ? 'ok' : gtotEff <= 0.3 ? 'warn' : 'ko'}">${gtotEff.toFixed(2)}</span></td>
-              </tr>`;
+              </tr>${manualSubRow}`;
             })
             .join('')}</tbody>
         </table></div>`
@@ -863,8 +903,7 @@ export function renderOpenings() {
       } else if (['floorId', 'name', 'orient', 'gtotMode', 'blindMode', 'blindRule'].includes(k)) {
         op[k] = e.target.value;
         if (k === 'blindMode' && e.target.value === 'manual_day') {
-          const is24 = opFl && opFl.occStart === 0 && opFl.occEnd === 24;
-          if (is24) op.blindManualUseOcc = false;
+          if (op.blindManualUseOcc === undefined) op.blindManualUseOcc = false;
           if (op.blindStart === undefined) op.blindStart = 10;
           if (op.blindEnd === undefined) op.blindEnd = 18;
         }
@@ -1753,9 +1792,12 @@ export function syncPvgisUI() {
     badge.className = 'pill ok';
     if (cwBanner) cwBanner.classList.remove('hidden');
     if (cwInfo) {
+      const spanTxt = customWeather.isManualDesignDay
+        ? `Journée type (24 h — régime établi) • θ_e : ${stats.minTe.toFixed(1)}..${stats.maxTe.toFixed(1)} °C • Irradiance max : ${stats.peakIgh.toFixed(0)} W/m² • Nuit tropicale (≥ 20 °C) : ${stats.minTe >= 20 ? 'Oui' : 'Non'}`
+        : `${stats.hoursCount} h (${stats.daysCount} j) • θ_e : ${stats.minTe.toFixed(1)}..${stats.maxTe.toFixed(1)} °C • Irradiance max : ${stats.peakIgh.toFixed(0)} W/m² • ${stats.tropicalNights} nuits ≥ 20 °C`;
       cwInfo.innerHTML =
         `<strong>Données météo actives : ${escapeHtml(customWeather.sourceLabel)}</strong><br>` +
-        `<span style="font-size:12px;color:var(--text-muted);">${stats.hoursCount} h (${stats.daysCount} j) • θ_e : ${stats.minTe.toFixed(1)}..${stats.maxTe.toFixed(1)} °C • Irradiance max : ${stats.peakIgh.toFixed(0)} W/m² • ${stats.tropicalNights} nuits ≥ 20 °C</span>`;
+        `<span style="font-size:12px;color:var(--text-muted);">${spanTxt}</span>`;
     }
     if (synSec) synSec.classList.add('section-readonly');
     if (stSel) stSel.disabled = true;
@@ -2385,6 +2427,9 @@ export function bindConfigEvents({
     'simpBlindThreshT',
     'simpBlindRule',
     'simpBlindMode',
+    'simpBlindStart',
+    'simpBlindEnd',
+    'simpBlindManualUseOcc',
     'simpOverhang'
   ].forEach(id => {
     document.getElementById(id)?.addEventListener('change', applySimpleGlazingFromInputs);

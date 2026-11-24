@@ -211,7 +211,22 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       solIrrBelow200KWh: 0,
       solIrrAbove200KWh: 0,
       solByOrient: { N: 0, NE: 0, E: 0, SE: 0, S: 0, SO: 0, O: 0, NO: 0, R: 0 },
-      solOrientStats: {}
+      solOrientStats: {},
+      day24: {
+        minTop: 999,
+        minTopHod: 0,
+        maxTop: -999,
+        maxTopHod: 0,
+        overSIA: 0,
+        overMinergie265: 0,
+        over26: 0,
+        dhSIA: 0,
+        nightOver26H: 0,
+        coolKWh: 0,
+        maxCoolW: 0,
+        coolHours: 0,
+        hoursCount: 0
+      }
     }));
 
     // Pré-amorçage circulaire sur les dernières 48 heures pour θ_rm,48h sans transitoire
@@ -483,6 +498,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       if (record) {
         // Saison réglementaire Minergie : du 16 avril (j=105) au 15 octobre (j=287) inclus
         const isMinergieSeason = hr.d >= 105 && hr.d <= 287;
+        const isLastDay24 = i >= Math.max(0, hoursArr.length - 24);
         for (let k = 0; k < F; k++) {
           const Top = acc[k].op / subSteps;
           const Tair = acc[k].air / subSteps;
@@ -520,6 +536,33 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           }
           if (Top > 26.0) st.over26++;
 
+          const qCool = acc[k].cool / subSteps;
+          if (qCool > 1.0) st.coolHours++;
+
+          // Statistiques convergées sur la dernière journée complète (24 h — utile pour la journée type)
+          if (isLastDay24) {
+            const d24 = st.day24;
+            d24.hoursCount++;
+            if (Top < d24.minTop) {
+              d24.minTop = Top;
+              d24.minTopHod = hr.hod;
+            }
+            if (Top > d24.maxTop) {
+              d24.maxTop = Top;
+              d24.maxTopHod = hr.hod;
+            }
+            if (isOver) {
+              d24.overSIA++;
+              d24.dhSIA += Top - lim.upper;
+            }
+            if (acc[k].isOcc && Top > 26.5) d24.overMinergie265++;
+            if (Top > 26.0) d24.over26++;
+            if ((hr.hod >= 22 || hr.hod < 7) && Top > 26.0) d24.nightOver26H++;
+            if (qCool > 1.0) d24.coolHours++;
+            if (qCool > d24.maxCoolW) d24.maxCoolW = qCool;
+            d24.coolKWh += qCool / 1000;
+          }
+
           const qSol = acc[k].sol / subSteps;
           const qSolUnshaded = acc[k].solUnshaded / subSteps;
           const qSolSaved = Math.max(0, qSolUnshaded - qSol);
@@ -533,8 +576,6 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           const qSlab = acc[k].slab / subSteps;
           const qVD = acc[k].veDay / subSteps;
           const qVN = acc[k].veNight / subSteps;
-          const qCool = acc[k].cool / subSteps;
-          if (qCool > 1.0) st.coolHours++;
 
           st.annInt.peopleKWh += qPeople / 1000;
           st.annInt.lightKWh += qLight / 1000;
@@ -728,7 +769,14 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       nomNightM3h,
       nomNightSpec,
       avgGtot,
-      buildingStackSpan
+      buildingStackSpan,
+      day24: {
+        ...st.day24,
+        minTop: st.day24.minTop < 900 ? st.day24.minTop : st.minTop,
+        maxTop: st.day24.maxTop > -900 ? st.day24.maxTop : st.maxTop,
+        coolKWhm2: st.day24.coolKWh / area,
+        maxCoolWm2: st.day24.maxCoolW / area
+      }
     };
   });
 

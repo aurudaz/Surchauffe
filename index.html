@@ -4,36 +4,36 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SIA Thermic Studio — Simulation de surchauffe &amp; Confort thermique</title>
-  <link rel="stylesheet" href="./css/tokens.css?v=20261124-6" />
-  <link rel="stylesheet" href="./css/layout.css?v=20261124-6" />
-  <link rel="stylesheet" href="./css/components.css?v=20261124-6" />
+  <link rel="stylesheet" href="./css/tokens.css?v=20261124-7" />
+  <link rel="stylesheet" href="./css/layout.css?v=20261124-7" />
+  <link rel="stylesheet" href="./css/components.css?v=20261124-7" />
   <script type="importmap">
     {
       "imports": {
-        "./src/app.js": "./src/app.js?v=20261124-6",
-        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261124-6",
-        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261124-6",
-        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261124-6",
-        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261124-6",
-        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261124-6",
-        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261124-6",
-        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261124-6",
-        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261124-6",
-        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261124-6",
-        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261124-6",
-        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261124-6",
-        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261124-6",
-        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261124-6",
-        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261124-6",
-        "./src/standards/sia2024-profiles.js": "./src/standards/sia2024-profiles.js?v=20261124-6",
-        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261124-6",
-        "./src/state/house-library.js": "./src/state/house-library.js?v=20261124-6",
-        "./src/state/project-store.js": "./src/state/project-store.js?v=20261124-6",
-        "./src/ui/charts.js": "./src/ui/charts.js?v=20261124-6",
-        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261124-6",
-        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261124-6",
-        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261124-6",
-        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261124-6"
+        "./src/app.js": "./src/app.js?v=20261124-7",
+        "./src/methodology/01-solar-geometry.js": "./src/methodology/01-solar-geometry.js?v=20261124-7",
+        "./src/methodology/02-weather-model.js": "./src/methodology/02-weather-model.js?v=20261124-7",
+        "./src/methodology/03-envelope-and-gains.js": "./src/methodology/03-envelope-and-gains.js?v=20261124-7",
+        "./src/methodology/04-natural-ventilation.js": "./src/methodology/04-natural-ventilation.js?v=20261124-7",
+        "./src/methodology/05-thermal-5r1c-engine.js": "./src/methodology/05-thermal-5r1c-engine.js?v=20261124-7",
+        "./src/methodology/06-sia180-compliance.js": "./src/methodology/06-sia180-compliance.js?v=20261124-7",
+        "./src/methodology/07-thermal-comfort.js": "./src/methodology/07-thermal-comfort.js?v=20261124-7",
+        "./src/methodology/08-scenario-comparator.js": "./src/methodology/08-scenario-comparator.js?v=20261124-7",
+        "./src/parsers/house-importers.js": "./src/parsers/house-importers.js?v=20261124-7",
+        "./src/standards/box3d-presets.js": "./src/standards/box3d-presets.js?v=20261124-7",
+        "./src/standards/comfort-references.js": "./src/standards/comfort-references.js?v=20261124-7",
+        "./src/standards/minergie.js": "./src/standards/minergie.js?v=20261124-7",
+        "./src/standards/sia180.js": "./src/standards/sia180.js?v=20261124-7",
+        "./src/standards/sia380-1.js": "./src/standards/sia380-1.js?v=20261124-7",
+        "./src/standards/sia2024-profiles.js": "./src/standards/sia2024-profiles.js?v=20261124-7",
+        "./src/standards/swiss-stations.js": "./src/standards/swiss-stations.js?v=20261124-7",
+        "./src/state/house-library.js": "./src/state/house-library.js?v=20261124-7",
+        "./src/state/project-store.js": "./src/state/project-store.js?v=20261124-7",
+        "./src/ui/charts.js": "./src/ui/charts.js?v=20261124-7",
+        "./src/ui/config-view.js": "./src/ui/config-view.js?v=20261124-7",
+        "./src/ui/methodology-view.js": "./src/ui/methodology-view.js?v=20261124-7",
+        "./src/ui/results-view.js": "./src/ui/results-view.js?v=20261124-7",
+        "./src/ui/viewer-3d.js": "./src/ui/viewer-3d.js?v=20261124-7"
       }
     }
   </script>
@@ -541,12 +541,12 @@
                   <option value="custom">Personnalisé (saisir g_store)…</option>
                 </select>
               </div>
-              <div class="field" data-tip="Définit quand les stores se baissent. Choisissez « Personnalisé » pour définir vos propres seuils d'irradiance (W/m²) et de température (°C).">
+              <div class="field" data-tip="Définit quand les stores se baissent. En mode Manuel, la plage horaire est indépendante de l'occupation par défaut (modifiable sur la ligne dédiée ci-dessous).">
                 <label>Commande des stores</label>
                 <select id="simpBlindPreset">
                   <option value="auto_sia">Automatique standard (≥ 200 W/m² et ≥ 22 °C)</option>
                   <option value="auto_bsol">Automatique strict bSol (≥ 22 °C ou ≥ 200 W/m²)</option>
-                  <option value="manual_day">Manuelle (pendant occupation)</option>
+                  <option value="manual_day">Manuelle (plage horaire personnalisable)</option>
                   <option value="always_down">Toujours baissés</option>
                   <option value="always_up">Toujours levés (sans store)</option>
                   <option value="custom">Personnalisé (seuils I et T)…</option>
@@ -563,20 +563,40 @@
                 <label>Seuil température T [°C]</label>
                 <input type="number" id="simpBlindThreshT" min="16" max="30" step="0.5" value="22" />
               </div>
-              <div class="field" data-tip="Condition logique : I ET T (les deux seuils atteints), I OU T (dès qu'un seul est atteint), ou I seul.">
+              <div class="field" data-tip="Condition logique : I ET T (les deux seuils atteints), I OU T (dès qu'un seul est atteint), I seul ou Plage seule.">
                 <label>Condition</label>
                 <select id="simpBlindRule">
                   <option value="irr_and_temp">I ≥ seuil ET T ≥ seuil</option>
                   <option value="irr_or_temp">I ≥ seuil OU T ≥ seuil</option>
                   <option value="irr_only">Irradiance I seule</option>
+                  <option value="schedule_only">Plage horaire seule</option>
                 </select>
               </div>
-              <div class="field" data-tip="Automatique (même si absent) ou Manuelle (uniquement pendant les heures d'occupation).">
+              <div class="field" data-tip="Automatique (24h/24) ou Manuelle (selon plage horaire ci-dessous).">
                 <label>Pilotage</label>
                 <select id="simpBlindMode">
                   <option value="auto">Automatique (24h/24)</option>
-                  <option value="manual_day">Manuel (si occupé)</option>
+                  <option value="manual_day">Manuel (plage horaire)</option>
                 </select>
+              </div>
+            </div>
+
+            <!-- Deuxième ligne dédiée à la plage horaire des stores en mode Manuel (Mode Simple) -->
+            <div class="hidden" id="simpManualBlindHoursBox" style="margin-top:10px;padding:10px 14px;border-radius:10px;background:var(--surface-2);border:1px solid var(--border);">
+              <div class="blind-manual-bar">
+                <span class="blind-manual-label">↳ Plage horaire manuelle :</span>
+                <span class="blind-manual-hours">
+                  <span>De</span>
+                  <input type="number" id="simpBlindStart" min="0" max="23" value="10" data-tip="Heure de baisse manuelle des stores [0..23 h]." />
+                  <span>h à</span>
+                  <input type="number" id="simpBlindEnd" min="1" max="24" value="18" data-tip="Heure de relevage manuel des stores [1..24 h]." />
+                  <span>h</span>
+                </span>
+                <span class="blind-manual-sep"></span>
+                <label class="blind-manual-occ" data-tip="Cocher uniquement si les stores manuels ne doivent se baisser que pendant les heures d'occupation de l'étage (hors occupation 24h/24).">
+                  <input type="checkbox" id="simpBlindManualUseOcc" />
+                  <span id="simpBlindManualOccLbl">Suivre les horaires d'occupation</span>
+                </label>
               </div>
             </div>
 
@@ -914,10 +934,12 @@
 <div class="results-pane hidden" id="view-results">
   <div class="results-inner">
 
-    <!-- En-tête d'impression ingénieur (type Lesosai — visible uniquement en PDF / impression) -->
+    <!-- En-tête et tableaux papier d'impression ingénieur (type Lesosai — visibles uniquement en PDF / impression) -->
     <div id="printReportHeader" class="print-only-block"></div>
     <div id="printReportComments" class="print-only-block"></div>
+    <div id="printReportSummary" class="print-only-block"></div>
     <div id="printReportInputs" class="print-only-block"></div>
+    <div id="printReportScenarios" class="print-only-block"></div>
 
     <div class="results-screen-header" style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">
       <div>
@@ -1186,6 +1208,6 @@
 
 <div class="chart-tooltip" id="chartTooltip"></div>
 
-<script type="module" src="./src/app.js?v=20261124-6"></script>
+<script type="module" src="./src/app.js?v=20261124-7"></script>
 </body>
 </html>

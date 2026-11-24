@@ -1075,3 +1075,58 @@ button[data-tip], select[data-tip], input[data-tip], .seg-btn[data-tip], .rail-i
   display: inline-block;
   flex-shrink: 0;
 }
+
+/* Deuxième ligne dédiée à la plage horaire des stores en mode Manuel */
+.blind-manual-subrow td {
+  background: var(--surface-2);
+  padding: 7px 12px 9px 18px !important;
+  border-top: none !important;
+  border-bottom: 1px solid var(--border);
+}
+
+.blind-manual-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding-left: 10px;
+  border-left: 3px solid var(--primary);
+  font-size: 12px;
+  color: var(--text);
+}
+
+.blind-manual-label {
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.blind-manual-hours {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.blind-manual-hours input[type="number"] {
+  width: 56px !important;
+  padding: 4px 6px !important;
+  text-align: center;
+  font-size: 12px !important;
+}
+
+.blind-manual-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.blind-manual-occ {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}

@@ -148,7 +148,10 @@ function fillOverheatZone(ctx, S, i0, i1, xOf, yOf, getThresh, fillStyle) {
 function resolveWindowBounds(S, maxTopHour, winMode) {
   let i0 = 0;
   let i1 = S.length - 1;
-  if (winMode === 'hottest14') {
+  if (winMode === 'day24') {
+    i0 = Math.max(0, S.length - 24);
+    i1 = S.length - 1;
+  } else if (winMode === 'hottest14') {
     i0 = Math.max(0, maxTopHour - 7 * 24);
     i1 = Math.min(S.length - 1, i0 + 14 * 24);
     if (i1 - i0 < 24) {
@@ -164,11 +167,30 @@ function resolveWindowBounds(S, maxTopHour, winMode) {
   return { i0, i1 };
 }
 
-function drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol) {
-  const totalD = Math.max(1, Math.round(len / 24));
-  const stepD = totalD <= 20 ? 2 : totalD <= 100 ? 12 : 31;
+function drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol, pad = null, ph = 0, gridCol = null) {
   ctx.fillStyle = txtCol;
   ctx.textAlign = 'center';
+  if (winMode === 'day24' || len <= 25) {
+    for (let rel = 0; rel < len; rel++) {
+      const hod = S[i0 + rel]?.hod ?? rel;
+      const showTick = hod % 2 === 0 || rel === len - 1;
+      if (!showTick) continue;
+      const px = xOf(rel);
+      if (pad && ph > 0 && gridCol && rel > 0 && rel < len - 1) {
+        ctx.strokeStyle = gridCol;
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.moveTo(px, pad.t);
+        ctx.lineTo(px, pad.t + ph);
+        ctx.stroke();
+      }
+      ctx.fillStyle = txtCol;
+      ctx.fillText(`${String(hod).padStart(2, '0')}h`, px, h - 8);
+    }
+    return;
+  }
+  const totalD = Math.max(1, Math.round(len / 24));
+  const stepD = totalD <= 20 ? 2 : totalD <= 100 ? 12 : 31;
   for (let d = 0; d <= totalD; d += stepD) {
     const rel = Math.min(len - 1, d * 24);
     ctx.fillText(formatAxisDateFR(S[i0 + rel].d, winMode), xOf(rel), h - 8);
@@ -227,7 +249,7 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
     ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
   }
 
-  drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol);
+  drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol, pad, ph, gridCol);
   fillOverheatZone(ctx, S, i0, i1, xOf, yOf, pt => pt.limUpper, pal.dangerFill);
 
   const plot = (arr, getter, col, lw, dash = []) => {
@@ -261,6 +283,14 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
     });
   } else {
     plot(S, p => p.Top, pal.primary, winMode === 'year' ? 1.5 : 2.2);
+    if (winMode === 'day24') {
+      ctx.fillStyle = pal.primary;
+      for (let i = i0; i <= i1; i++) {
+        ctx.beginPath();
+        ctx.arc(xOf(i - i0), yOf(S[i].Top), 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     leg.push(['θ_op Int.', pal.primary]);
   }
 
@@ -277,7 +307,7 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
     lx += itemW + 8;
   }
 
-  return { c, i0, i1, pad, pw, activeFR };
+  return { c, i0, i1, pad, pw, activeFR, isDay24: winMode === 'day24' };
 }
 
 export function drawSIAChart(activeFR, siaCurveMode, project = null) {
@@ -623,7 +653,7 @@ export function drawSimpleHeatwaveChart(
     ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
   }
 
-  drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol);
+  drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol, pad, ph, gridCol);
   fillOverheatZone(ctx, S, i0, i1, xOf, yOf, getLim, pal.dangerFill);
 
   ctx.strokeStyle = pal.ext;
@@ -681,6 +711,14 @@ export function drawSimpleHeatwaveChart(
       else ctx.lineTo(px, py);
     }
     ctx.stroke();
+    if (winMode === 'day24') {
+      ctx.fillStyle = pal.primary;
+      for (let i = i0; i <= i1; i++) {
+        ctx.beginPath();
+        ctx.arc(xOf(i - i0), yOf(S[i].Top), 2.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
     leg.unshift(['Temp. intérieure', pal.primary]);
   }
 
@@ -696,7 +734,7 @@ export function drawSimpleHeatwaveChart(
     lx += itemW + 8;
   }
 
-  return { c, i0, i1, pad, pw, activeFR, limitLabel };
+  return { c, i0, i1, pad, pw, activeFR, limitLabel, isDay24: winMode === 'day24' };
 }
 
 /**
@@ -800,7 +838,7 @@ export function drawVariantsComparisonChart(entries, winMode = 'hottest14', acti
     ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
   }
 
-  drawDateAxisLabels(ctx, refS, i0, len, xOf, h, winMode, txtCol);
+  drawDateAxisLabels(ctx, refS, i0, len, xOf, h, winMode, txtCol, pad, ph, gridCol);
   fillOverheatZone(ctx, refS, i0, i1, xOf, yOf, pt => pt.limUpper, pal.dangerFill);
 
   // Température extérieure de la variante active
@@ -907,6 +945,7 @@ export function drawVariantsComparisonChart(entries, winMode = 'hottest14', acti
     activeEntry,
     limitDiffers,
     limitGroups,
-    getEntryLim
+    getEntryLim,
+    isDay24: winMode === 'day24'
   };
 }

@@ -531,7 +531,9 @@ export function computeHourlySolarGains(
     } else if (op.blindMode === 'auto') {
       closed = trig;
     } else if (op.blindMode === 'manual_day') {
-      const useOccWindow = op.blindManualUseOcc !== false && !isOcc24h;
+      // Par défaut en commande manuelle : plage horaire explicite (indépendante des horaires d'occupation),
+      // sauf si l'utilisateur coche explicitement « Suivre l'occupation » (hors occupation 24h/24).
+      const useOccWindow = op.blindManualUseOcc === true && !isOcc24h;
       let inManualWindow = false;
       if (useOccWindow) {
         inManualWindow = isOcc;

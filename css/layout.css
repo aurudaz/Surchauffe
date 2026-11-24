@@ -400,133 +400,297 @@ body {
   .g2, .g3, .g4, .g5 { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Blocs exclusifs au rapport PDF ingénieur (masqués à l'écran, visibles à l'impression) */
+/* Blocs exclusifs au rapport PDF papier ingénieur (type Lesosai — masqués à l'écran) */
 .print-only-block { display: none; }
 
 @media print {
-  @page { size: A4 portrait; margin: 14mm 13mm 15mm 13mm; }
+  @page { size: A4 portrait; margin: 13mm 13mm 14mm 13mm; }
   :root, :root[data-theme="dark"], :root[data-theme="light"] {
     --bg: #fafbfd;
     --surface: #fafbfd;
-    --surface-2: #f1f4f8;
-    --surface-3: #e5eaf0;
-    --border: #c5ced9;
+    --surface-2: #f2f4f7;
+    --surface-3: #e7ebf0;
+    --border: #2c3540;
     --text: #1b2430;
-    --text-muted: #4b596b;
-    --primary: #1a5bc4;
-    --primary-bg: #1e62cf;
+    --text-muted: #455262;
+    --primary: #1a4b8c;
+    --primary-bg: #1a4b8c;
     --primary-text: #f5f7fa;
-    --ok: #136f38;
-    --ok-bg: #eaf5ee;
-    --warn: #8a4b00;
-    --warn-bg: #fdf4e3;
-    --ko: #b42323;
-    --ko-bg: #fcecec;
+    --ok: #136333;
+    --ok-bg: #edf5ef;
+    --warn: #7c4400;
+    --warn-bg: #faf3e4;
+    --ko: #a61e1e;
+    --ko-bg: #faeaea;
   }
   body {
     background: #fafbfd !important;
     color: #1b2430 !important;
+    font-family: "Arial", "Helvetica Neue", Helvetica, sans-serif !important;
     overflow: visible !important;
     height: auto !important;
-    font-size: 10.5pt !important;
-    line-height: 1.4 !important;
+    font-size: 9pt !important;
+    line-height: 1.36 !important;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
   }
+
+  /* Masquer tous les éléments d'interface web */
   .studio-header, .variant-bar, .left-rail, .right-inspector, #view-config,
-  .results-toolbar-actions, .btn, select, input[type="range"], .seg-pill,
-  .adv-results-header, .step-footer, .modal-backdrop, .chart-tooltip,
-  .drawer-toggle-btn {
+  .results-toolbar-actions, .results-screen-header, .btn, select,
+  input[type="range"], .seg-pill, .adv-results-header, .step-footer,
+  .modal-backdrop, .chart-tooltip, .drawer-toggle-btn, .sub-tabs,
+  .scenario-bar-bg, .cool-meters, #simpleReportTop, #simpleScenariosCard {
     display: none !important;
   }
+
   .print-only-block { display: block !important; }
   .results-pane { overflow: visible !important; padding: 0 !important; display: block !important; }
-  .results-inner { max-width: 100% !important; gap: 12px !important; }
-  .results-screen-header { display: none !important; }
-
-  .print-eng-header {
-    border: 1.5px solid #1e3a5f;
-    border-top: 5px solid #1e3a5f;
-    border-radius: 4px;
-    background: #f4f7fb !important;
-    padding: 12px 14px;
-    margin-bottom: 10px;
-    break-inside: avoid;
+  .results-inner { max-width: 100% !important; gap: 10pt !important; }
+  #resTabReportPane, #resultsSimpleView, #simpleReportBottom, #resTabComparePane {
+    gap: 10pt !important;
   }
-  .print-eng-top {
+
+  /* Cartouche encadré supérieur style Lesosai */
+  .print-lesosai-frame {
+    border: 0.9pt solid #26313e;
+    border-radius: 0;
+    background: #fafbfd !important;
+    padding: 7pt 10pt;
+    margin-bottom: 10pt;
     display: flex;
     justify-content: space-between;
-    align-items: baseline;
-    border-bottom: 1px solid #c5ced9;
-    padding-bottom: 6px;
-    margin-bottom: 8px;
+    align-items: flex-start;
+    gap: 12pt;
+    break-inside: avoid;
   }
-  .print-eng-brand {
+  .print-lesosai-left {
+    font-size: 8.3pt;
+    line-height: 1.45;
+    color: #1b2430;
+  }
+  .print-lesosai-logo {
+    display: flex;
+    align-items: center;
+    gap: 6pt;
+    font-size: 13pt;
+    font-weight: 700;
+    color: #1a4b8c;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .print-lesosai-badge {
+    display: inline-block;
+    border: 1.2pt solid #1a4b8c;
+    padding: 1.5pt 5pt;
     font-size: 9pt;
     font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #1e3a5f;
+    color: #1a4b8c;
+    border-radius: 0;
   }
-  .print-eng-title {
-    font-size: 14pt;
-    font-weight: 700;
-    color: #1b2430;
-    margin: 2px 0;
-  }
-  .print-eng-meta {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 6px 14px;
-    font-size: 8.8pt;
-  }
-  .print-eng-meta span { color: #4b596b; }
-  .print-eng-meta strong { color: #1b2430; }
 
-  .print-eng-comments {
-    border-left: 3.5px solid #1e3a5f;
-    background: #f4f7fb !important;
-    border-top: 1px solid #c5ced9;
-    border-right: 1px solid #c5ced9;
-    border-bottom: 1px solid #c5ced9;
-    padding: 9px 12px;
-    border-radius: 3px;
+  /* En-tête Projet / Vérification sur fond papier nu (sans cadre) */
+  .print-lesosai-meta {
+    margin-bottom: 9pt;
     font-size: 9.5pt;
+    line-height: 1.55;
+    break-inside: avoid;
+  }
+  .print-lesosai-meta-row {
+    display: grid;
+    grid-template-columns: 115pt 1fr;
+    gap: 4pt 10pt;
+  }
+  .print-lesosai-meta-row strong {
+    color: #1b2430;
+    font-weight: 700;
+  }
+  .print-lesosai-intro {
+    font-size: 8.6pt;
+    color: #2c3540;
+    margin: 7pt 0 9pt 0;
+    line-height: 1.4;
+  }
+  .print-eng-comments {
+    border: 0.75pt solid #26313e;
+    border-left: 2.5pt solid #1a4b8c;
+    background: #f5f7fa !important;
+    padding: 6pt 9pt;
+    border-radius: 0;
+    font-size: 8.8pt;
     white-space: pre-wrap;
+    margin-bottom: 9pt;
     break-inside: avoid;
   }
 
-  .card, .kpi-box, .comfort-card, .verdict-banner, .scenario-row, .adv-drawer, .well {
-    border: 1px solid #c5ced9 !important;
-    border-radius: 4px !important;
+  /* Suppression totale du look "cartes web" au profit de sections papier plates */
+  .card, .well, .adv-drawer, .comfort-card, .cool-kpi, .cool-alert, .reco-item {
+    border: none !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 0 8pt 0 !important;
+    break-inside: avoid;
+  }
+  .card-title, .print-sec-title {
+    font-size: 10pt !important;
+    font-weight: 700 !important;
+    color: #1b2430 !important;
+    border-bottom: 1pt solid #26313e !important;
+    padding: 0 0 2.5pt 0 !important;
+    margin: 4pt 0 6pt 0 !important;
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: baseline !important;
+  }
+  .subtitle {
+    font-size: 8.2pt !important;
+    color: #455262 !important;
+    margin: 0 0 5pt 0 !important;
+  }
+  .section-eyebrow {
+    font-size: 8.5pt !important;
+    font-weight: 700 !important;
+    color: #1b2430 !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    margin: 6pt 0 3pt 0 !important;
+  }
+
+  /* Tableaux type papier (grille complète fine, 0px d'arrondi, en-tête gris très léger) */
+  .table-wrap {
+    overflow: visible !important;
+    border: none !important;
+    border-radius: 0 !important;
+    margin: 0 !important;
+  }
+  table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    border: 0.85pt solid #26313e !important;
+    font-size: 8.2pt !important;
+    background: #fafbfd !important;
+    margin: 0 0 8pt 0 !important;
+  }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; }
+  th, td {
+    border: 0.55pt solid #3b4754 !important;
+    padding: 3pt 5pt !important;
+    border-radius: 0 !important;
+    color: #1b2430 !important;
+    vertical-align: top !important;
+    text-decoration: none !important;
+  }
+  th {
+    background: #eaedf2 !important;
+    font-weight: 700 !important;
+    border-bottom: 1pt solid #26313e !important;
+    font-size: 8.1pt !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+  }
+  tbody tr:nth-child(even) td {
+    background: #f5f7fa !important;
+  }
+  .gains-row-total td {
+    background: #eaedf2 !important;
+    border-top: 1pt solid #26313e !important;
+    font-weight: 700 !important;
+  }
+
+  /* Convertir les badges/pills web en texte sobre d'ingénieur */
+  .pill, .delta-tag {
+    border: none !important;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    font-size: 8.2pt !important;
+    font-weight: 700 !important;
+  }
+  .pill.ok, .delta-good { color: #136333 !important; }
+  .pill.warn { color: #7c4400 !important; }
+  .pill.ko, .delta-bad { color: #a61e1e !important; }
+  .pill.neutral, .pill.req-pill, .delta-flat { color: #1b2430 !important; font-weight: 600 !important; }
+
+  /* Recommandations & froid actif en lignes propres type papier */
+  .reco-list {
+    display: block !important;
+    border: 0.75pt solid #26313e !important;
+  }
+  .reco-item {
+    border-bottom: 0.55pt solid #3b4754 !important;
+    padding: 4pt 6pt !important;
+    margin: 0 !important;
+    font-size: 8.4pt !important;
+    line-height: 1.38 !important;
+  }
+  .reco-item:last-child { border-bottom: none !important; }
+
+  .cool-kpi-grid {
+    display: grid !important;
+    grid-template-columns: repeat(4, 1fr) !important;
+    gap: 0 !important;
+    border: 0.75pt solid #26313e !important;
+    margin-bottom: 7pt !important;
+  }
+  .cool-kpi {
+    border-right: 0.55pt solid #3b4754 !important;
+    padding: 4pt 6pt !important;
+    margin: 0 !important;
+  }
+  .cool-kpi:last-child { border-right: none !important; }
+  .cool-kpi-val { font-size: 10.5pt !important; }
+  .kpi-row {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 0 !important;
+    border: 0.75pt solid #26313e !important;
+    margin-bottom: 7pt !important;
+  }
+  .kpi-box {
+    border: 0.45pt solid #3b4754 !important;
+    border-radius: 0 !important;
     background: #fafbfd !important;
     box-shadow: none !important;
-    padding: 11px 13px !important;
-    break-inside: avoid;
+    padding: 4pt 6pt !important;
+    margin: 0 !important;
   }
-  .card-title {
-    font-size: 11pt !important;
-    border-bottom: 1px solid #d4dce6;
-    padding-bottom: 5px;
-    margin-bottom: 8px !important;
-    color: #1e3a5f !important;
+  .kpi-val { font-size: 10.5pt !important; }
+  .cool-alert {
+    border: 0.75pt solid #26313e !important;
+    padding: 4pt 6pt !important;
+    font-size: 8.4pt !important;
+    margin-bottom: 6pt !important;
   }
-  .kpi-row { gap: 8px !important; }
-  .kpi-val { font-size: 14pt !important; }
-  table { font-size: 8.8pt !important; }
-  th { background: #e9eef5 !important; color: #1b2430 !important; border-bottom: 1.5px solid #9aa8ba !important; }
-  td { border-bottom: 1px solid #d8e0ea !important; }
-  .pill { border: 1px solid #c5ced9 !important; font-size: 8pt !important; padding: 1px 6px !important; }
-  .chart-box { height: 210px !important; }
+
+  /* Cadre fin papier autour des graphiques Canvas */
+  .chart-box {
+    height: 195px !important;
+    border: 0.65pt solid #3b4754 !important;
+    padding: 4pt !important;
+    background: #fafbfd !important;
+    border-radius: 0 !important;
+  }
+  .charts-two { gap: 10pt !important; }
+
   .adv-drawer:not([open]) { display: none !important; }
-  .adv-drawer[open] > summary { padding: 6px 8px !important; background: #e9eef5 !important; border-bottom: 1px solid #c5ced9; }
-  .drawer-body { padding: 8px !important; gap: 10px !important; }
-  .sub-tabs { display: none !important; }
+  .adv-drawer[open] > summary {
+    padding: 3pt 0 !important;
+    background: transparent !important;
+    border-bottom: 1pt solid #26313e !important;
+    margin-bottom: 5pt !important;
+  }
+  .drawer-title { font-size: 10pt !important; color: #1b2430 !important; }
+  .drawer-sub { display: none !important; }
+  .drawer-body { padding: 0 !important; gap: 8pt !important; }
 
   /* Options d'inclusion choisies dans la fenêtre de configuration PDF */
-  body.print-hide-summary #resultsSimpleView { display: none !important; }
+  body.print-hide-summary #resultsSimpleView,
+  body.print-hide-summary #printReportSummary { display: none !important; }
   body.print-hide-inputs #printReportInputs { display: none !important; }
-  body.print-hide-scenarios #simpleScenariosCard { display: none !important; }
+  body.print-hide-scenarios #printReportScenarios { display: none !important; }
   body.print-hide-variants #resTabComparePane { display: none !important; }
   body.print-force-variants #resTabComparePane { display: flex !important; }
   body.print-force-report #resTabReportPane { display: flex !important; }

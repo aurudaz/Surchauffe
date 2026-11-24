@@ -796,4 +796,26 @@ test('Minergie v2023.2 (CALC_1) : benchmark bureau exercice, aération diurne, s
   const opNoneRule = { ...op, blindMode: 'auto', blindRule: 'none' };
   const solNoneRule = computeHourlySolarGains([opNoneRule], hrSun, 28, 24, true, 0.2, 0, true, { hod: 14, isOcc24h: false }).totalW;
   assert.ok(Math.abs(solNoneRule - solAt10h) < 1e-6, 'Avec règle « Aucune », le store doit rester ouvert');
+
+  // 7. Store manuel par défaut indépendant de l'occupation (blindManualUseOcc non défini => plage horaire 10h–18h même hors occupation)
+  const opManualDefault = { ...op, blindMode: 'manual_day', blindRule: 'schedule_only' };
+  delete opManualDefault.blindManualUseOcc;
+  delete opManualDefault.blindStart;
+  delete opManualDefault.blindEnd;
+  const solDefaultOutsideOcc14h = computeHourlySolarGains([opManualDefault], hrSun, 25, 22, false, 0.2, 0, true, { hod: 14, isOcc24h: false }).totalW;
+  const solDefaultOutsideOcc08h = computeHourlySolarGains([opManualDefault], hrSun, 25, 22, false, 0.2, 0, true, { hod: 8, isOcc24h: false }).totalW;
+  assert.ok(
+    solDefaultOutsideOcc14h < solDefaultOutsideOcc08h * 0.4,
+    'Par défaut en mode manuel, les stores suivent la plage horaire (10h–18h) indépendamment de l’occupation'
+  );
+
+  // 8. Journée type manuelle : statistiques day24 sur la dernière journée convergée (24 h exactement)
+  const manualWeather = generateManualDesignDayWeather({ tMin: 18, tMax: 34, peakIgh: 850, dayOfYear: 201 });
+  const rawManual = executeEngine(projClosed, manualWeather.data, true, false);
+  const d24 = rawManual.floorRaw[0].day24;
+  assert.ok(d24 && d24.hoursCount === 24, 'day24 doit compter exactement 24 h convergées');
+  assert.ok(d24.overSIA >= 0 && d24.overSIA <= 24, `day24.overSIA doit être dans [0, 24], reçu ${d24.overSIA}`);
+  assert.ok(d24.overMinergie265 >= 0 && d24.overMinergie265 <= 24, `day24.overMinergie265 doit être dans [0, 24]`);
+  assert.ok(d24.maxTop > 22 && d24.maxTop >= d24.minTop, 'day24.maxTop doit être physiquement cohérent');
+  assert.ok(d24.maxTopHod >= 0 && d24.maxTopHod <= 23, 'day24.maxTopHod doit être une heure 0..23');
 });

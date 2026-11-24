@@ -185,33 +185,40 @@ export function applyBox3dToFloor(fl, project) {
           ceiling: 'Plafond (Toit)'
         }[faceKey];
 
+        const opId = `b3_${fl.id}_${faceKey}`;
+        const prevOp = prevOps.find(o => o.id === opId);
+
         newOpenings.push({
-          id: `b3_${fl.id}_${faceKey}`,
+          id: opId,
           floorId: fl.id,
-          name: `${faceLabel} (${orient})`,
+          box3dFace: faceKey,
+          name: w.winName || prevOp?.name || `${faceLabel} (${orient})`,
           orient,
           width: Math.round(ww * 100) / 100,
           height: Math.round(wh * 100) / 100,
           qty: wq,
           uWin: Number(w.uWin) || wp.uWin || 1.0,
           gVit: Number(w.gVit) || wp.gVit || 0.55,
-          gStore: Number(w.gStore) ?? wp.gStore ?? 0.12,
-          gtotMode: 'product',
+          gStore: Number(w.gStore ?? wp.gStore ?? 0.12),
+          gtotMode: w.gtotMode || prevOp?.gtotMode || 'product',
           overhangDepth: faceKey === 'ceiling' ? 0 : Math.max(0, Number(w.overhang) || 0),
-          frameFactor: w.frameFactor ?? defaultFrameFactor,
-          shadingFactor: w.shadingFactor ?? defaultShadingFactor,
-          blindMode: w.blindMode || 'auto',
-          blindThreshI: w.blindThreshI ?? defaultBlindThreshI,
-          blindThreshT: w.blindThreshT ?? defaultBlindThreshT,
-          blindRule: w.blindRule ?? defaultBlindRule,
+          leftFinDepth: w.leftFinDepth ?? prevOp?.leftFinDepth ?? 0,
+          rightFinDepth: w.rightFinDepth ?? prevOp?.rightFinDepth ?? 0,
+          horizonDeg: w.horizonDeg ?? prevOp?.horizonDeg,
+          frameFactor: w.frameFactor ?? prevOp?.frameFactor ?? defaultFrameFactor,
+          shadingFactor: w.shadingFactor ?? prevOp?.shadingFactor ?? defaultShadingFactor,
+          blindMode: w.blindMode || prevOp?.blindMode || 'auto',
+          blindThreshI: w.blindThreshI ?? prevOp?.blindThreshI ?? defaultBlindThreshI,
+          blindThreshT: w.blindThreshT ?? prevOp?.blindThreshT ?? defaultBlindThreshT,
+          blindRule: w.blindRule ?? prevOp?.blindRule ?? defaultBlindRule,
           windSafe: true,
-          operable: true,
-          openWidth: Math.min(ww, 1.0),
-          openHeight: Math.min(wh, 1.4),
-          openType: 'imposte',
-          alphaDeg: 20,
-          cd: 0.6,
-          sillHeight: faceKey === 'ceiling' ? 1.4 : wh > 1.8 ? 0.05 : 0.9
+          operable: w.operable ?? prevOp?.operable ?? true,
+          openWidth: w.openWidth ?? prevOp?.openWidth ?? Math.min(ww, 1.0),
+          openHeight: w.openHeight ?? prevOp?.openHeight ?? Math.min(wh, 1.4),
+          openType: w.openType || prevOp?.openType || 'imposte',
+          alphaDeg: w.alphaDeg ?? prevOp?.alphaDeg ?? 20,
+          cd: prevOp?.cd ?? 0.6,
+          sillHeight: w.sillHeight ?? prevOp?.sillHeight ?? (faceKey === 'ceiling' ? 1.4 : wh > 1.8 ? 0.05 : 0.9)
         });
       }
     }
@@ -252,6 +259,47 @@ export function applyBox3dToFloor(fl, project) {
   fl.inertiaClass = 'custom';
 
   project.openings = project.openings.filter(o => o.floorId !== fl.id).concat(newOpenings);
+}
+
+/**
+ * Synchronise une modification faite dans l'onglet « Vitrages & Stores » vers la paroi 3D
+ * correspondante (`fl.box3d.walls[faceKey]`), puis recalcule l'enveloppe 3D sans perte.
+ */
+export function syncOpeningBackToBox3d(op, fl, project) {
+  if (!op || !fl || !fl.box3d || !fl.box3d.walls) return false;
+  let faceKey = op.box3dFace;
+  if (!faceKey && typeof op.id === 'string' && op.id.startsWith(`b3_${fl.id}_`)) {
+    faceKey = op.id.slice(`b3_${fl.id}_`.length);
+  }
+  const w = faceKey ? fl.box3d.walls[faceKey] : null;
+  if (!w) return false;
+
+  w.winName = op.name;
+  w.winPreset = 'custom';
+  w.winW = op.width;
+  w.winH = op.height;
+  w.winQty = op.qty;
+  w.uWin = op.uWin;
+  w.gVit = op.gVit;
+  w.gStore = op.gStore;
+  w.gtotMode = op.gtotMode || 'product';
+  w.overhang = op.overhangDepth || 0;
+  w.leftFinDepth = op.leftFinDepth || 0;
+  w.rightFinDepth = op.rightFinDepth || 0;
+  w.horizonDeg = op.horizonDeg;
+  w.blindMode = op.blindMode || 'auto';
+  w.blindThreshI = op.blindThreshI ?? 200;
+  w.blindThreshT = op.blindThreshT ?? 22.0;
+  w.blindRule = op.blindRule || 'irr_and_temp';
+  w.operable = Boolean(op.operable);
+  w.openWidth = op.openWidth;
+  w.openHeight = op.openHeight;
+  w.openType = op.openType;
+  w.alphaDeg = op.alphaDeg;
+  w.sillHeight = op.sillHeight;
+
+  applyBox3dToFloor(fl, project);
+  return true;
 }
 
 /**

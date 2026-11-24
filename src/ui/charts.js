@@ -1,14 +1,84 @@
 /**
- * @fileoverview Moteur graphique Canvas haute résolution (DPI-aware) pour :
- *  - Évolution horaire θ_op(t), θ_e(t), limite SIA 180
+ * @fileoverview Moteur graphique Canvas haute résolution (DPI-aware, thème sombre & clair) pour :
+ *  - Évolution horaire θ_op(t), θ_e(t), limite SIA 180 avec vraies dates calendaires & zone rouge
+ *  - Superposition multi-variantes (comparateur style Lesosai)
  *  - Domaine adaptatif SIA 180 (θ_op vs θ_rm,48h)
  *  - Bilan thermique estival (gains & déperditions)
  *  - Apports solaires par orientation
- *  - Comparatif des normes de confort adaptatif (EN 16798-1, ASHRAE 55, SIA 180)
+ *  - Comparatif des normes de confort adaptatif (EN 16798-1, SECO, SIA 180)
  */
 
 import { EN16798_LIMITS } from '../standards/comfort-references.js';
 import { getSIA180Limits } from '../standards/sia180.js';
+
+const MONTH_DAYS = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+const MONTH_SHORT_FR = [
+  'jan.', 'fév.', 'mars', 'avr.', 'mai', 'juin',
+  'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'
+];
+
+/**
+ * Convertit un index de jour de l'année (0..364) en date calendaire lisible (ex. "11 août").
+ */
+export function formatDayOfYearFR(dayIdx) {
+  let rem = ((Math.floor(dayIdx) % 365) + 365) % 365;
+  for (let m = 0; m < 12; m++) {
+    if (rem < MONTH_DAYS[m]) {
+      return `${rem + 1} ${MONTH_SHORT_FR[m]}`;
+    }
+    rem -= MONTH_DAYS[m];
+  }
+  return '31 déc.';
+}
+
+function formatAxisDateFR(dayIdx, winMode) {
+  if (winMode === 'year') {
+    let rem = ((Math.floor(dayIdx) % 365) + 365) % 365;
+    for (let m = 0; m < 12; m++) {
+      if (rem < MONTH_DAYS[m]) return MONTH_SHORT_FR[m];
+      rem -= MONTH_DAYS[m];
+    }
+    return 'déc.';
+  }
+  return formatDayOfYearFR(dayIdx);
+}
+
+export function isLightTheme() {
+  return typeof document !== 'undefined' && document.documentElement.dataset.theme === 'light';
+}
+
+export function getChartPalette() {
+  if (isLightTheme()) {
+    return {
+      primary: '#1a5bc4',
+      ext: '#64748b',
+      limit: '#15803d',
+      danger: '#dc2626',
+      dangerFill: 'rgba(220, 38, 38, 0.22)',
+      amber: '#d97706',
+      orange: '#ea580c',
+      violet: '#7c3aed',
+      cyan: '#0284c7',
+      series: ['#1a5bc4', '#d97706', '#7c3aed', '#0284c7', '#dc2626', '#15803d'],
+      dotOk: 'rgba(26, 91, 196, 0.42)',
+      dotHot: 'rgba(220, 38, 38, 0.82)'
+    };
+  }
+  return {
+    primary: '#4285f4',
+    ext: '#9aa0a6',
+    limit: '#81c995',
+    danger: '#f28b82',
+    dangerFill: 'rgba(242, 139, 130, 0.28)',
+    amber: '#fdd663',
+    orange: '#ffab70',
+    violet: '#c58af9',
+    cyan: '#78d9ec',
+    series: ['#4285f4', '#fdd663', '#c58af9', '#78d9ec', '#ffab70', '#81c995'],
+    dotOk: 'rgba(168, 199, 250, 0.36)',
+    dotHot: 'rgba(242, 139, 130, 0.78)'
+  };
+}
 
 function prepCanvas(id) {
   const c = document.getElementById(id);
@@ -45,19 +115,41 @@ function fillRoundedRect(ctx, x, y, w, h, r) {
   ctx.fill();
 }
 
-export function drawTimeChart(res, activeFR, winMode, compareFloors) {
-  const prep = prepCanvas('chartTime');
-  if (!prep || !activeFR.series || activeFR.series.length < 2) return null;
-  const { c, ctx, w, h } = prep;
-  const pad = { l: 46, r: 16, t: 26, b: 26 };
-  const pw = w - pad.l - pad.r;
-  const ph = h - pad.t - pad.b;
-  const S = activeFR.series;
+function fillOverheatZone(ctx, S, i0, i1, xOf, yOf, getThresh, fillStyle) {
+  ctx.fillStyle = fillStyle;
+  let segStart = -1;
+  const flushSegment = (a, b) => {
+    ctx.beginPath();
+    ctx.moveTo(xOf(a - i0), yOf(getThresh(S[a])));
+    for (let k = a; k <= b; k++) {
+      ctx.lineTo(xOf(k - i0), yOf(S[k].Top));
+    }
+    for (let k = b; k >= a; k--) {
+      ctx.lineTo(xOf(k - i0), yOf(getThresh(S[k])));
+    }
+    ctx.closePath();
+    ctx.fill();
+  };
 
+  for (let i = i0; i <= i1; i++) {
+    const isHot = S[i].Top > getThresh(S[i]);
+    if (isHot) {
+      if (segStart < 0) segStart = i;
+    } else if (segStart >= 0) {
+      flushSegment(segStart, i - 1);
+      segStart = -1;
+    }
+  }
+  if (segStart >= 0) {
+    flushSegment(segStart, i1);
+  }
+}
+
+function resolveWindowBounds(S, maxTopHour, winMode) {
   let i0 = 0;
   let i1 = S.length - 1;
   if (winMode === 'hottest14') {
-    i0 = Math.max(0, activeFR.maxTopHour - 7 * 24);
+    i0 = Math.max(0, maxTopHour - 7 * 24);
     i1 = Math.min(S.length - 1, i0 + 14 * 24);
     if (i1 - i0 < 24) {
       i0 = Math.max(0, S.length - 14 * 24);
@@ -69,7 +161,31 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
       i1 = Math.min(S.length - 1, 243 * 24);
     }
   }
+  return { i0, i1 };
+}
 
+function drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol) {
+  const totalD = Math.max(1, Math.round(len / 24));
+  const stepD = totalD <= 20 ? 2 : totalD <= 100 ? 12 : 31;
+  ctx.fillStyle = txtCol;
+  ctx.textAlign = 'center';
+  for (let d = 0; d <= totalD; d += stepD) {
+    const rel = Math.min(len - 1, d * 24);
+    ctx.fillText(formatAxisDateFR(S[i0 + rel].d, winMode), xOf(rel), h - 8);
+  }
+}
+
+export function drawTimeChart(res, activeFR, winMode, compareFloors) {
+  const prep = prepCanvas('chartTime');
+  if (!prep || !activeFR.series || activeFR.series.length < 2) return null;
+  const { c, ctx, w, h } = prep;
+  const pal = getChartPalette();
+  const pad = { l: 46, r: 16, t: 26, b: 28 };
+  const pw = w - pad.l - pad.r;
+  const ph = h - pad.t - pad.b;
+  const S = activeFR.series;
+
+  const { i0, i1 } = resolveWindowBounds(S, activeFR.maxTopHour, winMode);
   const len = i1 - i0 + 1;
   if (len < 2) return null;
 
@@ -111,14 +227,8 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
     ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
   }
 
-  const totalD = Math.max(1, Math.round(len / 24));
-  const stepD = totalD <= 20 ? 2 : totalD <= 100 ? 10 : 30;
-  for (let d = 0; d <= totalD; d += stepD) {
-    const rel = Math.min(len - 1, d * 24);
-    ctx.fillStyle = txtCol;
-    ctx.textAlign = 'center';
-    ctx.fillText(`J${S[i0 + rel].d + 1}`, xOf(rel), h - 7);
-  }
+  drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol);
+  fillOverheatZone(ctx, S, i0, i1, xOf, yOf, pt => pt.limUpper, pal.dangerFill);
 
   const plot = (arr, getter, col, lw, dash = []) => {
     ctx.strokeStyle = col;
@@ -135,32 +245,32 @@ export function drawTimeChart(res, activeFR, winMode, compareFloors) {
     ctx.setLineDash([]);
   };
 
-  plot(S, p => p.Te, '#9aa0a6', 1.2);
-  plot(S, p => p.limUpper, '#81c995', 1.6, [5, 4]);
+  plot(S, p => p.Te, pal.ext, winMode === 'year' ? 0.9 : 1.2);
+  plot(S, p => p.limUpper, pal.limit, 1.7, [5, 4]);
 
-  const pal = ['#a8c7fa', '#f28b82', '#fdd663', '#c58af9', '#78d9ec'];
   const leg = [
-    ['θ_e Ext.', '#9aa0a6'],
-    ['Limite SIA', '#81c995']
+    ['θ_e Ext.', pal.ext],
+    ['Limite SIA', pal.limit],
+    ['Surchauffe', pal.danger]
   ];
   if (cmp) {
     res.floorResults.forEach((fr, k) => {
-      const cCol = pal[k % pal.length];
-      plot(fr.series, p => p.Top, cCol, fr === activeFR ? 2.2 : 1.4);
+      const cCol = pal.series[k % pal.series.length];
+      plot(fr.series, p => p.Top, cCol, fr === activeFR ? 2.2 : 1.35);
       leg.push([fr.floor.name.slice(0, 14), cCol]);
     });
   } else {
-    plot(S, p => p.Top, '#a8c7fa', 2.0);
-    leg.push(['θ_op Int.', '#a8c7fa']);
+    plot(S, p => p.Top, pal.primary, winMode === 'year' ? 1.5 : 2.2);
+    leg.push(['θ_op Int.', pal.primary]);
   }
 
   let lx = pad.l + 4;
   ctx.font = '11px Inter, sans-serif';
   for (const [lbl, col] of leg) {
-    const itemW = ctx.measureText(lbl).width + 28;
+    const itemW = ctx.measureText(lbl).width + 26;
     if (lx + itemW > w - pad.r) break;
     ctx.fillStyle = col;
-    ctx.fillRect(lx, 7, 13, 3);
+    ctx.fillRect(lx, 7, 13, 3.5);
     ctx.fillStyle = cssVar('--text');
     ctx.textAlign = 'left';
     ctx.fillText(lbl, lx + 17, 12);
@@ -174,6 +284,7 @@ export function drawSIAChart(activeFR, siaCurveMode) {
   const prep = prepCanvas('chartSIA');
   if (!prep || !activeFR.series) return;
   const { ctx, w, h } = prep;
+  const pal = getChartPalette();
   const pad = { l: 46, r: 16, t: 22, b: 30 };
   const pw = w - pad.l - pad.r;
   const ph = h - pad.t - pad.b;
@@ -224,7 +335,7 @@ export function drawSIAChart(activeFR, siaCurveMode) {
     ctx.fillText(`${y}°C`, pad.l - 6, yOf(y) + 4);
   }
 
-  ctx.strokeStyle = '#81c995';
+  ctx.strokeStyle = pal.limit;
   ctx.lineWidth = 1.8;
   ctx.beginPath();
   for (let x = xMin; x <= xMax; x += 0.25) {
@@ -236,7 +347,7 @@ export function drawSIAChart(activeFR, siaCurveMode) {
 
   for (const pt of activeFR.series) {
     if (!pt.isOccHour || pt.tRm48 < xMin || pt.tRm48 > xMax) continue;
-    ctx.fillStyle = pt.isOverSIA ? 'rgba(242, 139, 130, 0.78)' : 'rgba(168, 199, 250, 0.35)';
+    ctx.fillStyle = pt.isOverSIA ? pal.dotHot : pal.dotOk;
     ctx.beginPath();
     ctx.arc(
       xOf(pt.tRm48),
@@ -257,20 +368,21 @@ export function drawBalanceChart(activeFR) {
   const prep = prepCanvas('chartBalance');
   if (!prep) return;
   const { ctx, w, h } = prep;
+  const pal = getChartPalette();
   const b = activeFR.summerBal;
   const items = [
-    ['Apports solaires (+)', b.sol, '#fdd663'],
-    ['Gains internes (+)', b.int, '#f28b82'],
-    ['Conduction entrante (+)', b.trIn, '#ffab70'],
-    ['Conduction sortante (-)', b.trOut, '#a8c7fa'],
-    ['Ventilation diurne (-)', b.veDayOut, '#78d9ec'],
-    ['Déstockage nuit (-)', b.veNightOut, '#81c995']
+    ['Apports solaires (+)', b.sol, pal.amber],
+    ['Gains internes (+)', b.int, pal.danger],
+    ['Conduction entrante (+)', b.trIn, pal.orange],
+    ['Conduction sortante (-)', b.trOut, pal.primary],
+    ['Ventilation diurne (-)', b.veDayOut, pal.cyan],
+    ['Déstockage nuit (-)', b.veNightOut, pal.limit]
   ];
   if (Math.abs(b.slabNet) >= 1) {
     items.push([
       b.slabNet >= 0 ? 'Échange dalles (+)' : 'Échange dalles (-)',
       Math.abs(b.slabNet),
-      '#c58af9'
+      pal.violet
     ]);
   }
 
@@ -301,6 +413,7 @@ export function drawOrientChart(activeFR) {
   const prep = prepCanvas('chartOrient');
   if (!prep) return;
   const { ctx, w, h } = prep;
+  const pal = getChartPalette();
   const keys = ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO', 'R'];
   const vals = keys.map(k => activeFR.solByOrient[k] || 0);
   const maxV = Math.max(10, ...vals);
@@ -329,7 +442,7 @@ export function drawOrientChart(activeFR) {
     const x = pad.l + i * colW + (colW - bw) / 2;
     const y = pad.t + ph - bh;
     ctx.fillStyle =
-      k === 'R' ? '#f28b82' : ['S', 'SO', 'O', 'E', 'SE'].includes(k) ? '#fdd663' : '#a8c7fa';
+      k === 'R' ? pal.danger : ['S', 'SO', 'O', 'E', 'SE'].includes(k) ? pal.amber : pal.primary;
     if (bh > 0) fillRoundedRect(ctx, x, y, bw, bh, 4);
     ctx.fillStyle = cssVar('--text');
     ctx.textAlign = 'center';
@@ -341,14 +454,11 @@ export function drawOrientChart(activeFR) {
   });
 }
 
-/**
- * Graphique comparatif du confort adaptatif : EN 16798-1 (Cat I/II/III),
- * ASHRAE 55 (80 %) et SIA 180 superposés aux heures occupées estivales.
- */
 export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
   const prep = prepCanvas('chartComfortAdaptive');
   if (!prep || !activeFR.series) return;
   const { ctx, w, h } = prep;
+  const pal = getChartPalette();
   const pad = { l: 46, r: 16, t: 26, b: 30 };
   const pw = w - pad.l - pad.r;
   const ph = h - pad.t - pad.b;
@@ -361,7 +471,6 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
   const xOf = x => pad.l + ((x - xMin) / (xMax - xMin)) * pw;
   const yOf = y => pad.t + ph - ((y - yMin) / (yMax - yMin)) * ph;
 
-  // Bande EN 16798-1 Cat II
   ctx.fillStyle = cssVar('--chart-band-2');
   ctx.beginPath();
   for (let x = xMin; x <= xMax; x += 0.5) {
@@ -416,27 +525,27 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
     ctx.setLineDash([]);
   };
 
-  drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 2, '#78d9ec', [4, 3]);
-  drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 3, '#81c995');
-  drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 4, '#fdd663', [2, 3]);
-  drawCurve(() => 26.0, '#c58af9', [6, 4]);
-  drawCurve(x => getSIA180Limits(x, siaCurveMode).upper, '#f28b82', [5, 2]);
+  drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 2, pal.cyan, [4, 3]);
+  drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 3, pal.limit);
+  drawCurve(x => EN16798_LIMITS.slope * x + EN16798_LIMITS.intercept + 4, pal.amber, [2, 3]);
+  drawCurve(() => 26.0, pal.violet, [6, 4]);
+  drawCurve(x => getSIA180Limits(x, siaCurveMode).upper, pal.danger, [5, 2]);
 
   for (const pt of activeFR.series) {
     if (!pt.isOccHour || pt.tRmEN < xMin || pt.tRmEN > xMax) continue;
     const cat2Up = EN16798_LIMITS.slope * pt.tRmEN + EN16798_LIMITS.intercept + 3;
-    ctx.fillStyle = pt.Top > cat2Up ? 'rgba(242, 139, 130, 0.72)' : 'rgba(168, 199, 250, 0.35)';
+    ctx.fillStyle = pt.Top > cat2Up ? pal.dotHot : pal.dotOk;
     ctx.beginPath();
     ctx.arc(xOf(pt.tRmEN), yOf(Math.max(yMin, Math.min(yMax, pt.Top))), 1.7, 0, Math.PI * 2);
     ctx.fill();
   }
 
   const leg = [
-    ['EN Cat I', '#78d9ec'],
-    ['EN Cat II', '#81c995'],
-    ['EN Cat III', '#fdd663'],
-    ['SECO 26°C', '#c58af9'],
-    ['SIA 180', '#f28b82']
+    ['EN Cat I', pal.cyan],
+    ['EN Cat II', pal.limit],
+    ['EN Cat III', pal.amber],
+    ['SECO 26°C', pal.violet],
+    ['SIA 180', pal.danger]
   ];
   let lx = pad.l;
   ctx.font = '11px Inter, sans-serif';
@@ -452,34 +561,43 @@ export function drawAdaptiveComparisonChart(activeFR, siaCurveMode) {
   }
 }
 
-/**
- * Graphique simplifié (Vue Rapport Minergie) :
- * Évolution de la température intérieure vs extérieure sur les 14 jours les plus chauds,
- * avec seuil de confort fixe (26.5 °C) et mise en évidence visuelle des zones de surchauffe.
- */
-export function drawSimpleHeatwaveChart(activeFR, thresholdC = 26.5) {
+export function drawSimpleHeatwaveChart(
+  res,
+  activeFR,
+  thresholdC = 26.5,
+  winMode = 'hottest14',
+  compareFloors = false,
+  useAdaptiveLimit = false
+) {
   const prep = prepCanvas('chartSimpleHeatwave');
   if (!prep || !activeFR.series || activeFR.series.length < 2) return null;
   const { c, ctx, w, h } = prep;
+  const pal = getChartPalette();
   const pad = { l: 46, r: 16, t: 28, b: 28 };
   const pw = w - pad.l - pad.r;
   const ph = h - pad.t - pad.b;
   const S = activeFR.series;
 
-  let i0 = Math.max(0, activeFR.maxTopHour - 7 * 24);
-  let i1 = Math.min(S.length - 1, i0 + 14 * 24);
-  if (i1 - i0 < 24) {
-    i0 = Math.max(0, S.length - 14 * 24);
-    i1 = S.length - 1;
-  }
+  const { i0, i1 } = resolveWindowBounds(S, activeFR.maxTopHour, winMode);
   const len = i1 - i0 + 1;
   if (len < 2) return null;
+
+  const cmp = compareFloors && res && res.floorResults && res.floorResults.length > 1;
+  const getLim = pt => (useAdaptiveLimit ? pt.limUpper : thresholdC);
 
   let yMin = 100;
   let yMax = -100;
   for (let i = i0; i <= i1; i++) {
     yMin = Math.min(yMin, S[i].Te, S[i].Top);
-    yMax = Math.max(yMax, S[i].Te, S[i].Top, thresholdC + 1);
+    yMax = Math.max(yMax, S[i].Te, S[i].Top, getLim(S[i]) + 1);
+    if (cmp) {
+      for (const fr of res.floorResults) {
+        if (fr.series && fr.series[i]) {
+          yMin = Math.min(yMin, fr.series[i].Top);
+          yMax = Math.max(yMax, fr.series[i].Top);
+        }
+      }
+    }
   }
   yMin = Math.floor((yMin - 1) / 5) * 5;
   yMax = Math.ceil((yMax + 1) / 5) * 5;
@@ -504,43 +622,11 @@ export function drawSimpleHeatwaveChart(activeFR, thresholdC = 26.5) {
     ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
   }
 
-  const totalD = Math.max(1, Math.round(len / 24));
-  for (let d = 0; d <= totalD; d += 2) {
-    const rel = Math.min(len - 1, d * 24);
-    ctx.fillStyle = txtCol;
-    ctx.textAlign = 'center';
-    ctx.fillText(`J${S[i0 + rel].d + 1}`, xOf(rel), h - 8);
-  }
+  drawDateAxisLabels(ctx, S, i0, len, xOf, h, winMode, txtCol);
+  fillOverheatZone(ctx, S, i0, i1, xOf, yOf, getLim, pal.dangerFill);
 
-  // Remplissage rouge là où θ_op dépasse le seuil de confort
-  const yThresh = yOf(thresholdC);
-  ctx.fillStyle = 'rgba(242, 139, 130, 0.28)';
-  ctx.beginPath();
-  let inHot = false;
-  for (let i = i0; i <= i1; i++) {
-    const px = xOf(i - i0);
-    const val = S[i].Top;
-    if (val > thresholdC) {
-      if (!inHot) {
-        ctx.moveTo(px, yThresh);
-        inHot = true;
-      }
-      ctx.lineTo(px, yOf(val));
-    } else if (inHot) {
-      ctx.lineTo(px, yThresh);
-      ctx.closePath();
-      inHot = false;
-    }
-  }
-  if (inHot) {
-    ctx.lineTo(xOf(len - 1), yThresh);
-    ctx.closePath();
-  }
-  ctx.fill();
-
-  // Température extérieure
-  ctx.strokeStyle = '#9aa0a6';
-  ctx.lineWidth = 1.3;
+  ctx.strokeStyle = pal.ext;
+  ctx.lineWidth = winMode === 'year' ? 0.9 : 1.25;
   ctx.beginPath();
   for (let i = i0; i <= i1; i++) {
     const px = xOf(i - i0);
@@ -550,114 +636,171 @@ export function drawSimpleHeatwaveChart(activeFR, thresholdC = 26.5) {
   }
   ctx.stroke();
 
-  // Ligne seuil 26.5 °C
-  ctx.strokeStyle = '#81c995';
+  ctx.strokeStyle = pal.limit;
   ctx.lineWidth = 1.8;
   ctx.setLineDash([6, 4]);
   ctx.beginPath();
-  ctx.moveTo(pad.l, yThresh);
-  ctx.lineTo(w - pad.r, yThresh);
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  // Température intérieure
-  ctx.strokeStyle = '#4285f4';
-  ctx.lineWidth = 2.4;
-  ctx.beginPath();
   for (let i = i0; i <= i1; i++) {
     const px = xOf(i - i0);
-    const py = yOf(S[i].Top);
+    const py = yOf(getLim(S[i]));
     if (i === i0) ctx.moveTo(px, py);
     else ctx.lineTo(px, py);
   }
   ctx.stroke();
+  ctx.setLineDash([]);
 
   const leg = [
-    ['Temp. intérieure', '#4285f4'],
-    ['Temp. extérieure', '#9aa0a6'],
-    [`Seuil confort (${thresholdC.toFixed(1)} °C)`, '#81c995'],
-    ['Dépassement', '#f28b82']
+    ['Temp. extérieure', pal.ext],
+    [useAdaptiveLimit ? 'Seuil SIA 180' : `Seuil (${thresholdC.toFixed(1)} °C)`, pal.limit],
+    ['Surchauffe', pal.danger]
   ];
+  if (cmp) {
+    res.floorResults.forEach((fr, k) => {
+      const col = pal.series[k % pal.series.length];
+      ctx.strokeStyle = col;
+      ctx.lineWidth = fr === activeFR ? (winMode === 'year' ? 1.5 : 2.3) : 1.3;
+      ctx.beginPath();
+      for (let i = i0; i <= i1; i++) {
+        const px = xOf(i - i0);
+        const py = yOf(fr.series[i].Top);
+        if (i === i0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+      leg.unshift([fr.floor.name.slice(0, 14), col]);
+    });
+  } else {
+    ctx.strokeStyle = pal.primary;
+    ctx.lineWidth = winMode === 'year' ? 1.5 : 2.3;
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const px = xOf(i - i0);
+      const py = yOf(S[i].Top);
+      if (i === i0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    leg.unshift(['Temp. intérieure', pal.primary]);
+  }
+
   let lx = pad.l + 4;
   for (const [lbl, col] of leg) {
-    const itemW = ctx.measureText(lbl).width + 26;
+    const itemW = ctx.measureText(lbl).width + 24;
     if (lx + itemW > w - pad.r) break;
     ctx.fillStyle = col;
-    ctx.fillRect(lx, 8, 12, 4);
+    ctx.fillRect(lx, 8, 12, 3.5);
     ctx.fillStyle = cssVar('--text');
     ctx.textAlign = 'left';
     ctx.fillText(lbl, lx + 16, 13);
-    lx += itemW + 10;
+    lx += itemW + 8;
   }
 
-  return { c, i0, i1, pad, pw, activeFR, thresholdC };
+  return { c, i0, i1, pad, pw, activeFR, thresholdC, useAdaptiveLimit };
 }
 
 /**
- * Graphique détaillé des puissances de pointe [W] et apports estivaux [kWh] par source de gain
- * (Personnes, Lampes, Appareils, Solaire transmis vs brut hors stores, Conduction entrante).
+ * Superpose les températures opératives intérieures de plusieurs variantes de projet (comparateur Lesosai).
+ * @param {Array<{ id: string, name: string, color: string, wf: object }>} entries
+ * @param {'hottest14'|'summer'|'year'} winMode
  */
-export function drawGainsDetailChart(activeFR) {
-  const prep = prepCanvas('chartGainsDetail');
-  if (!prep || !activeFR.gains) return;
-  const { ctx, w, h } = prep;
-  const g = activeFR.gains;
+export function drawVariantsComparisonChart(entries, winMode = 'hottest14') {
+  const prep = prepCanvas('chartVariantsCompare');
+  if (!prep || !entries || entries.length === 0) return null;
+  const valid = entries.filter(e => e.wf && e.wf.series && e.wf.series.length >= 2);
+  if (valid.length === 0) return null;
 
-  const items = [
-    { lbl: 'Personnes (occupants)', peakW: g.people.peakW, kwh: g.people.summerKWh, col: '#c58af9' },
-    { lbl: 'Lampes (éclairage)', peakW: g.lighting.peakW, kwh: g.lighting.summerKWh, col: '#fdd663' },
-    { lbl: 'Appareils (appliances)', peakW: g.appliances.peakW, kwh: g.appliances.summerKWh, col: '#ffab70' },
-    {
-      lbl: 'Solaire transmis (avec stores)',
-      peakW: g.solarTransmitted.peakW,
-      kwh: g.solarTransmitted.summerKWh,
-      col: '#f28b82',
-      ghostW: g.solarUnshaded.peakW
-    },
-    { lbl: 'Conduction entrante', peakW: g.conductionIn.peakW, kwh: g.conductionIn.summerKWh, col: '#78d9ec' }
-  ];
+  const { c, ctx, w, h } = prep;
+  const pal = getChartPalette();
+  const pad = { l: 46, r: 16, t: 28, b: 28 };
+  const pw = w - pad.l - pad.r;
+  const ph = h - pad.t - pad.b;
 
-  const maxW = Math.max(50, ...items.map(x => Math.max(x.peakW, x.ghostW || 0)));
-  const padL = 190;
-  const padR = 175;
-  const padT = 22;
-  const padB = 10;
-  const rowH = (h - padT - padB) / items.length;
-  const barMaxW = Math.max(40, w - padL - padR);
+  const refS = valid[0].wf.series;
+  const minLen = Math.min(...valid.map(e => e.wf.series.length));
+  const { i0, i1 } = resolveWindowBounds(
+    refS.slice(0, minLen),
+    Math.min(minLen - 1, valid[0].wf.maxTopHour || 0),
+    winMode
+  );
+  const len = i1 - i0 + 1;
+  if (len < 2) return null;
+
+  let yMin = 100;
+  let yMax = -100;
+  for (let i = i0; i <= i1; i++) {
+    yMin = Math.min(yMin, refS[i].limUpper - 4);
+    yMax = Math.max(yMax, refS[i].limUpper + 1);
+    for (const e of valid) {
+      const top = e.wf.series[i].Top;
+      yMin = Math.min(yMin, top);
+      yMax = Math.max(yMax, top);
+    }
+  }
+  yMin = Math.floor((yMin - 1) / 5) * 5;
+  yMax = Math.ceil((yMax + 1) / 5) * 5;
+  if (yMax <= yMin) yMax = yMin + 10;
+
+  const xOf = r => pad.l + (r / (len - 1)) * pw;
+  const yOf = v => pad.t + ph - ((v - yMin) / (yMax - yMin)) * ph;
 
   ctx.font = '11px Inter, sans-serif';
-  ctx.fillStyle = cssVar('--text-muted');
-  ctx.textAlign = 'left';
-  ctx.fillText('Puissance de pointe [W] (contour = solaire brut sans stores)', padL, 13);
+  const gridCol = cssVar('--grid-line');
+  const txtCol = cssVar('--text-muted');
 
-  items.forEach((it, i) => {
-    const y = padT + i * rowH;
-    const bh = Math.max(10, rowH - 13);
-    const by = y + 4;
-
-    ctx.fillStyle = cssVar('--text-muted');
+  for (let y = yMin; y <= yMax; y += 5) {
+    const py = yOf(y);
+    ctx.strokeStyle = gridCol;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, py);
+    ctx.lineTo(w - pad.r, py);
+    ctx.stroke();
+    ctx.fillStyle = txtCol;
     ctx.textAlign = 'right';
-    ctx.fillText(it.lbl, padL - 10, by + bh * 0.72);
+    ctx.fillText(`${y}°C`, pad.l - 6, py + 4);
+  }
 
-    if (it.ghostW && it.ghostW > it.peakW) {
-      const gw = (it.ghostW / maxW) * barMaxW;
-      ctx.strokeStyle = 'rgba(129, 201, 149, 0.75)';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([4, 3]);
-      ctx.strokeRect(padL, by, gw, bh);
-      ctx.setLineDash([]);
+  drawDateAxisLabels(ctx, refS, i0, len, xOf, h, winMode, txtCol);
+
+  // Limite SIA de référence (pointillés verts)
+  ctx.strokeStyle = pal.limit;
+  ctx.lineWidth = 1.6;
+  ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  for (let i = i0; i <= i1; i++) {
+    const px = xOf(i - i0);
+    const py = yOf(refS[i].limUpper);
+    if (i === i0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const leg = [['Limite SIA', pal.limit]];
+  valid.forEach((entry, idx) => {
+    ctx.strokeStyle = entry.color;
+    ctx.lineWidth = idx === 0 ? (winMode === 'year' ? 1.6 : 2.4) : (winMode === 'year' ? 1.4 : 2.0);
+    ctx.beginPath();
+    for (let i = i0; i <= i1; i++) {
+      const px = xOf(i - i0);
+      const py = yOf(entry.wf.series[i].Top);
+      if (i === i0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
     }
+    ctx.stroke();
+    leg.unshift([entry.name.slice(0, 18), entry.color]);
+  });
 
-    const bw = (Math.max(0, it.peakW) / maxW) * barMaxW;
-    ctx.fillStyle = it.col;
-    if (bw > 0) fillRoundedRect(ctx, padL, by, bw, bh, 4);
-
-    const endX = padL + Math.max(bw, (it.ghostW || 0) > it.peakW ? (it.ghostW / maxW) * barMaxW : 0) + 8;
+  let lx = pad.l + 4;
+  for (const [lbl, col] of leg) {
+    const itemW = ctx.measureText(lbl).width + 24;
+    if (lx + itemW > w - pad.r) break;
+    ctx.fillStyle = col;
+    ctx.fillRect(lx, 8, 12, 3.5);
     ctx.fillStyle = cssVar('--text');
     ctx.textAlign = 'left';
-    const labelTxt = it.ghostW && it.ghostW > it.peakW
-      ? `${it.peakW.toFixed(0)} W (brut ${it.ghostW.toFixed(0)} W) • ${it.kwh.toFixed(0)} kWh`
-      : `${it.peakW.toFixed(0)} W • ${it.kwh.toFixed(0)} kWh`;
-    ctx.fillText(labelTxt, endX, by + bh * 0.72);
-  });
+    ctx.fillText(lbl, lx + 16, 13);
+    lx += itemW + 8;
+  }
+
+  return { c, i0, i1, pad, pw, entries: valid };
 }

@@ -1,11 +1,16 @@
 /**
- * @fileoverview Gestion de l'interface Résultats :
- *  - Vue Simple : Rapport de synthèse clair en 2 minutes (verdict, quantités clés, scénarios d'oubli, courbe des 14 jours chauds)
- *  - Vue Avancée : Détail des puissances et types de gains (gens, lampes, appareils, solaire, conduction),
- *    contrôles normatifs, confort multi-normes, méthodologie & graphiques d'analyse
+ * @fileoverview Gestion de l'interface Résultats unifiée :
+ *  - Rapport de synthèse affiché par défaut (lisible en 2 min : verdict, KPIs, courbe interactive 14j/été/année,
+ *    paramètres clés, scénarios d'oubli, recommandations)
+ *  - 4 tiroirs dépliables à la demande (individuellement ou via « Tout déplier ») :
+ *      1. Diagnostic normatif, Scénarios détaillés & Méthodologie
+ *      2. Graphiques d'analyse (Évolution SIA 180 avec zones rouges, Domaine adaptatif, Bilan)
+ *      3. Apports solaires estivaux par orientation & Puissance détaillée des gains
+ *      4. Confort thermique multi-normes (SIA / SECO, OMS, EN 16798-1, ISO 7730 PMV/PPD)
  */
 
 import { evaluateThermalComfort } from '../methodology/07-thermal-comfort.js';
+import { getSIA180Profile } from '../standards/sia180.js';
 import { appState, escapeHtml } from '../state/project-store.js';
 import {
   drawAdaptiveComparisonChart,
@@ -19,15 +24,142 @@ import { renderMethodologyPanel } from './methodology-view.js';
 
 let timeChartMeta = null;
 let simpleChartMeta = null;
+let lastRenderCtx = null;
 
 function badge(ok, yesLabel = 'Conforme', noLabel = 'Non conforme', warnMode = false, tip = '') {
   const tipAttr = tip ? ` data-tip="${escapeHtml(tip)}"` : '';
   return `<span class="pill ${ok ? 'ok' : warnMode ? 'warn' : 'ko'}"${tipAttr}>${ok ? yesLabel : noLabel}</span>`;
 }
 
+function renderActiveCoolingCard(res, activeFR, project) {
+  const ac = activeFR.activeCooling;
+  if (!ac) return '';
+  if (!ac.needed && project.siaCurveMode !== 'fig4') return '';
+
+  if (!ac.needed) {
+    return `
+      <div class="card">
+        <h3 class="card-title">
+          <span data-tip="Énergie frigorifique qui serait nécessaire pour maintenir 0 heure de surchauffe.">Besoins énergétiques de froid actif</span>
+          <span class="pill ok">0 kWh/an — 100 % passif</span>
+        </h3>
+        <div class="cool-alert ok" style="margin-bottom:0;">
+          Aucun refroidissement actif requis : le local respecte la limite de confort toute l'année par conception passive uniquement.
+        </div>
+      </div>
+    `;
+  }
+
+  const sevCls = ac.level === 'excessive' ? 'ko' : ac.level === 'high' ? 'warn' : 'ok';
+  const th = ac.thresholds;
+  const eScaleMax = Math.max(th.energyExcessiveKWhm2 * 1.5, ac.coolKWhm2 * 1.12, 15);
+  const pScaleMax = Math.max(th.powerExcessiveWm2 * 1.4, ac.maxCoolWm2 * 1.12, 30);
+
+  const eFillPct = Math.min(100, (ac.coolKWhm2 / eScaleMax) * 100);
+  const pFillPct = Math.min(100, (ac.maxCoolWm2 / pScaleMax) * 100);
+  const eWarnPos = Math.min(95, (th.energyWarnKWhm2 / eScaleMax) * 100);
+  const eExcPos = Math.min(95, (th.energyExcessiveKWhm2 / eScaleMax) * 100);
+  const pWarnPos = Math.min(95, (th.powerWarnWm2 / pScaleMax) * 100);
+  const pExcPos = Math.min(95, (th.powerExcessiveWm2 / pScaleMax) * 100);
+
+  const eCol =
+    ac.coolKWhm2 > th.energyExcessiveKWhm2
+      ? 'var(--ko)'
+      : ac.coolKWhm2 > th.energyWarnKWhm2
+        ? 'var(--warn)'
+        : 'var(--ok)';
+  const pCol =
+    ac.maxCoolWm2 > th.powerExcessiveWm2
+      ? 'var(--ko)'
+      : ac.maxCoolWm2 > th.powerWarnWm2
+        ? 'var(--warn)'
+        : 'var(--ok)';
+
+  const multiFloor = res.floorResults.length > 1 && res.buildingCooling;
+  const buildingSub = multiFloor
+    ? `Total bâtiment : ${res.buildingCooling.totalCoolKWh.toFixed(0)} kWh/an (${res.buildingCooling.totalCoolKWhm2.toFixed(1)} kWh/m²)`
+    : `${ac.coolKWh.toFixed(0)} kWh utiles/an sur ${activeFR.floor.area.toFixed(0)} m²`;
+
+  const proposalsHtml = ac.proposals.length
+    ? `
+      <div style="margin-top:4px;">
+        <div class="section-eyebrow">Propositions ciblées pour réduire les besoins de froid actif</div>
+        <div class="reco-list">
+          ${ac.proposals.map(p => `<div class="reco-item">${p}</div>`).join('')}
+        </div>
+      </div>
+    `
+    : '';
+
+  return `
+    <div class="card" style="${ac.level === 'excessive' ? 'border-color:rgba(242,139,130,0.55);' : ''}">
+      <h3 class="card-title">
+        <span data-tip="Énergie et puissance frigorifiques nécessaires pour maintenir 0 heure de surchauffe dans le local, comparées aux seuils suisses SIA 180, SIA 382/1, SIA 2024 et MoPEC (EN-102).">Besoins énergétiques de froid actif (si refroidissement pour 0 h de surchauffe)</span>
+        <span class="pill ${sevCls}">${escapeHtml(ac.statusLabel)}</span>
+      </h3>
+
+      <div class="cool-alert ${sevCls}">
+        <strong>${ac.level === 'excessive' ? '⚠ Alerte surconsommation de froid actif : ' : ac.level === 'high' ? 'Vigilance froid actif : ' : 'Diagnostic froid actif : '}</strong>
+        ${escapeHtml(ac.statusSummary)}
+      </div>
+
+      <div class="cool-kpi-grid">
+        <div class="cool-kpi" data-tip="Besoin annuel d'énergie utile de refroidissement Q_C nécessaire pour supprimer toutes les heures de surchauffe.">
+          <div class="cool-kpi-label">Besoin énergétique utile</div>
+          <div class="cool-kpi-val" style="color:${eCol}">${ac.coolKWhm2.toFixed(1)} kWh/(m²·an)</div>
+          <div class="cool-kpi-sub">${buildingSub}</div>
+        </div>
+        <div class="cool-kpi" data-tip="Puissance frigorifique maximale instantanée requise lors du pic estival (seuil passif SIA 180 / 382/1 : ≤ 12 W/m²).">
+          <div class="cool-kpi-label">Puissance de pointe</div>
+          <div class="cool-kpi-val" style="color:${pCol}">${ac.maxCoolWm2.toFixed(1)} W/m²</div>
+          <div class="cool-kpi-sub">${(ac.maxCoolW / 1000).toFixed(2)} kW (${ac.maxCoolW.toFixed(0)} W) • Seuil SIA ≤ 12 W/m²</div>
+        </div>
+        <div class="cool-kpi" data-tip="Nombre d'heures annuelles durant lesquelles le système de refroidissement actif devrait fonctionner, et mois le plus chargé.">
+          <div class="cool-kpi-label">Fonctionnement actif</div>
+          <div class="cool-kpi-val" style="color:var(--primary)">${ac.coolHours} h/an</div>
+          <div class="cool-kpi-sub">Mois pic : ${escapeHtml(ac.peakMonthName)} (${ac.peakMonthKWh.toFixed(0)} kWh)</div>
+        </div>
+        <div class="cool-kpi" data-tip="Consommation électrique estimée avec une climatisation / PAC froid standard (SEER = 3.5, tarif indicatif 0.30 CHF/kWh), comparée au geocooling passif (SEER ≈ 15).">
+          <div class="cool-kpi-label">Électricité estimée (SEER 3.5)</div>
+          <div class="cool-kpi-val">${ac.elecPacKWh.toFixed(0)} kWh/an</div>
+          <div class="cool-kpi-sub">~${ac.estCostChf.toFixed(0)} CHF/an • Geocooling : ~${ac.elecGeoKWh.toFixed(0)} kWh/an</div>
+        </div>
+      </div>
+
+      <div class="cool-meters">
+        <div class="cool-meter-box" data-tip="Position de votre besoin annuel de froid par rapport aux seuils de référence suisses (${ac.isResidential ? 'logement : vigilance > 3, excessif > 10 kWh/m²·an' : 'tertiaire SIA 2024 : vigilance > 10, excessif > 20 kWh/m²·an'}).">
+          <div class="cool-meter-head">
+            <strong>Besoin annuel [kWh/(m²·an)]</strong>
+            <span style="color:${eCol};font-weight:700;">${ac.coolKWhm2.toFixed(1)} / max ${th.energyExcessiveKWhm2}</span>
+          </div>
+          <div class="cool-meter-track">
+            <div class="cool-meter-fill" style="width:${Math.max(2, eFillPct).toFixed(1)}%;background:${eCol};"></div>
+            <div class="cool-meter-tick" style="left:${eWarnPos.toFixed(1)}%;"><span class="cool-meter-tick-lbl">${th.energyWarnKWhm2}</span></div>
+            <div class="cool-meter-tick" style="left:${eExcPos.toFixed(1)}%;background:var(--ko);"><span class="cool-meter-tick-lbl" style="color:var(--ko);">Exc. ${th.energyExcessiveKWhm2}</span></div>
+          </div>
+        </div>
+        <div class="cool-meter-box" data-tip="Position de votre puissance frigorifique de pointe par rapport au seuil SIA 180 / 382/1 (12 W/m²) et au seuil excessif (${th.powerExcessiveWm2} W/m²).">
+          <div class="cool-meter-head">
+            <strong>Puissance de pointe [W/m²]</strong>
+            <span style="color:${pCol};font-weight:700;">${ac.maxCoolWm2.toFixed(1)} / seuil SIA 12</span>
+          </div>
+          <div class="cool-meter-track">
+            <div class="cool-meter-fill" style="width:${Math.max(2, pFillPct).toFixed(1)}%;background:${pCol};"></div>
+            <div class="cool-meter-tick" style="left:${pWarnPos.toFixed(1)}%;background:var(--ok);"><span class="cool-meter-tick-lbl" style="color:var(--ok);">SIA 12</span></div>
+            <div class="cool-meter-tick" style="left:${pExcPos.toFixed(1)}%;background:var(--ko);"><span class="cool-meter-tick-lbl" style="color:var(--ko);">Exc. ${th.powerExcessiveWm2}</span></div>
+          </div>
+        </div>
+      </div>
+
+      ${proposalsHtml}
+    </div>
+  `;
+}
+
 function renderSimpleReport(res, activeFR, project) {
   const m = activeFR.minergie;
   const g = activeFR.gains;
+  const prof = getSIA180Profile(project.projectType);
   const isMinergie = project.projectType === 'minergie';
   const mainHours = isMinergie ? activeFR.overMinergie265 : activeFR.overSIA;
   const mainLimit = isMinergie ? 100 : res.limHours;
@@ -41,6 +173,54 @@ function renderSimpleReport(res, activeFR, project) {
       : verdictStatus === 'warn'
         ? 'Confort atteint, mais vigilance constructive requise'
         : 'Risque de surchauffe estivale — Mesures nécessaires';
+
+  const floorDisplay = activeFR.floor.name.includes('m²')
+    ? escapeHtml(activeFR.floor.name)
+    : `${escapeHtml(activeFR.floor.name)} (${activeFR.floor.area.toFixed(0)} m²)`;
+
+  const mainCriterionTxt = isMinergie
+    ? `<strong>${activeFR.overMinergie265} h/an &gt; 26.5 °C</strong> (seuil ${escapeHtml(prof.label)} : ≤ 100 h)`
+    : `<strong>${activeFR.overSIA} h/an</strong> au-dessus de la limite SIA 180 (seuil ${escapeHtml(prof.label)} : ≤ ${mainLimit} h)`;
+
+  document.getElementById('simpleReportTop').innerHTML = `
+    <div class="verdict-banner ${verdictStatus}" data-tip="Verdict global de surchauffe pour l'étage analysé selon l'exigence réglementaire sélectionnée (${escapeHtml(prof.label)}).">
+      <div>
+        <h3 class="verdict-title">${verdictTitle}</h3>
+        <p class="verdict-sub">
+          ${floorDisplay} : ${mainCriterionTxt} •
+          Température maximale d'été : <strong>${activeFR.summerMaxTop.toFixed(1)} °C</strong>.
+        </p>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${m ? badge(m.constructivePass, 'Constructif OK', 'Constructif à revoir', false, 'Vérifie que les protections solaires, la masse thermique et la résistance au vent des stores sont suffisantes.') : ''}
+        ${m ? badge(m.comfortPass, `Climat 2035 OK (${m.hoursOver265} h)`, `Climat 2035 : ${m.hoursOver265} h`, false, 'Nombre d\'heures dépassant 26.5 °C sous le climat projeté 2035 (max autorisé : 100 h/an).') : ''}
+        ${badge(activeFR.passSIA, `SIA 180 OK (${activeFR.overSIA} h)`, `SIA 180 : ${activeFR.overSIA} h`, false, 'Nombre d\'heures dépassant la limite adaptative SIA 180 pendant l\'occupation.')}
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-box" data-tip="Nombre total d'heures d'occupation par an où la température intérieure dépasse le seuil de confort (${isMinergie ? '26.5 °C fixe — Minergie' : 'courbe adaptative SIA 180'}).">
+        <div class="kpi-label">${isMinergie ? 'Heures > 26.5 °C (Minergie)' : 'Heures de surchauffe (SIA 180)'}</div>
+        <div class="kpi-val" style="color:${mainPass ? 'var(--ok)' : 'var(--ko)'}">${mainHours} h/an</div>
+        <div class="kpi-sub">Limite autorisée : ≤ ${mainLimit} h/an</div>
+      </div>
+      <div class="kpi-box" data-tip="Pic de température opérative atteint à l'intérieur pendant la saison estivale (mai–septembre), et nombre d'heures de nuit (22h–07h) au-dessus de 26 °C gênant le sommeil.">
+        <div class="kpi-label">Température maximale en été</div>
+        <div class="kpi-val" style="color:${activeFR.summerMaxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.summerMaxTop.toFixed(1)} °C</div>
+        <div class="kpi-sub">Nuits chaudes (&gt; 26 °C) : ${activeFR.comfort.healthSleep.nightOver26H} h</div>
+      </div>
+      <div class="kpi-box" data-tip="Note globale sur 100 évaluant la résistance du bâtiment aux vagues de chaleur (50 pts sur les heures de surchauffe, 20 pts sur le pic de température, 15 pts sur les stores, 15 pts sur l'inertie et la ventilation nocturne).">
+        <div class="kpi-label">Score de protection estivale</div>
+        <div class="kpi-val" style="color:${activeFR.score >= 75 ? 'var(--ok)' : activeFR.score >= 45 ? 'var(--warn)' : 'var(--ko)'}">${activeFR.score} / 100</div>
+        <div class="kpi-sub">${activeFR.score >= 75 ? 'Très bonne résilience' : activeFR.score >= 45 ? 'Marge d\'amélioration' : 'Vulnérable aux canicules'}</div>
+      </div>
+      <div class="kpi-box" data-tip="Débit d'air frais nocturne par m² de plancher (sous un écart type ΔT = 8 K). Un débit ≥ 10 m³/(h·m²) est nécessaire pour décharger efficacement la chaleur stockée dans les murs et dalles.">
+        <div class="kpi-label">Aération nocturne</div>
+        <div class="kpi-val" style="color:${nightPass ? 'var(--ok)' : 'var(--warn)'}">${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</div>
+        <div class="kpi-sub">Objectif recommandé : ≥ 10 m³/(h·m²)</div>
+      </div>
+    </div>
+  `;
 
   const scenarios = res.behavioralScenarios || [];
   const maxScenarioHours = Math.max(
@@ -90,46 +270,7 @@ function renderSimpleReport(res, activeFR, project) {
     })
     .join('');
 
-  document.getElementById('simpleReportBody').innerHTML = `
-    <div class="verdict-banner ${verdictStatus}" data-tip="Verdict global de surchauffe pour l'étage analysé en combinant les critères constructifs et le nombre d'heures chaudes sur l'année.">
-      <div>
-        <h3 class="verdict-title">${verdictTitle}</h3>
-        <p class="verdict-sub">
-          ${escapeHtml(activeFR.floor.name)} (${activeFR.floor.area.toFixed(0)} m²) :
-          <strong>${activeFR.overMinergie265} h/an &gt; 26.5 °C</strong> (seuil : 100 h) •
-          Température maximale d'été : <strong>${activeFR.summerMaxTop.toFixed(1)} °C</strong>.
-        </p>
-      </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;">
-        ${m ? badge(m.constructivePass, 'Constructif OK', 'Constructif à revoir', false, 'Vérifie que les protections solaires, la masse thermique et la résistance au vent des stores sont suffisantes.') : ''}
-        ${m ? badge(m.comfortPass, `Climat 2035 OK (${m.hoursOver265} h)`, `Climat 2035 : ${m.hoursOver265} h`, false, 'Nombre d\'heures dépassant 26.5 °C sous le climat projeté 2035 (max autorisé : 100 h/an).') : ''}
-        ${badge(activeFR.passSIA, `SIA 180 OK (${activeFR.overSIA} h)`, `SIA 180 : ${activeFR.overSIA} h`, false, 'Nombre d\'heures dépassant la limite adaptative SIA 180 pendant l\'occupation.')}
-      </div>
-    </div>
-
-    <div class="kpi-row">
-      <div class="kpi-box" data-tip="Nombre total d'heures d'occupation par an où la température intérieure dépasse le seuil de confort (${isMinergie ? '26.5 °C fixe' : 'courbe adaptative SIA 180'}).">
-        <div class="kpi-label">${isMinergie ? 'Heures > 26.5 °C' : 'Heures de surchauffe'}</div>
-        <div class="kpi-val" style="color:${mainPass ? 'var(--ok)' : 'var(--ko)'}">${mainHours} h/an</div>
-        <div class="kpi-sub">Limite autorisée : ≤ ${mainLimit} h/an</div>
-      </div>
-      <div class="kpi-box" data-tip="Pic de température opérative atteint à l'intérieur pendant la saison estivale (mai–septembre), et nombre d'heures de nuit (22h–07h) au-dessus de 26 °C gênant le sommeil.">
-        <div class="kpi-label">Température maximale en été</div>
-        <div class="kpi-val" style="color:${activeFR.summerMaxTop > 28 ? 'var(--ko)' : 'var(--primary)'}">${activeFR.summerMaxTop.toFixed(1)} °C</div>
-        <div class="kpi-sub">Nuits chaudes (&gt; 26 °C) : ${activeFR.comfort.healthSleep.nightOver26H} h</div>
-      </div>
-      <div class="kpi-box" data-tip="Note globale sur 100 évaluant la résistance du bâtiment aux vagues de chaleur (50 pts sur les heures de surchauffe, 20 pts sur le pic de température, 15 pts sur les stores, 15 pts sur l'inertie et la ventilation nocturne).">
-        <div class="kpi-label">Score de protection estivale</div>
-        <div class="kpi-val" style="color:${activeFR.score >= 75 ? 'var(--ok)' : activeFR.score >= 45 ? 'var(--warn)' : 'var(--ko)'}">${activeFR.score} / 100</div>
-        <div class="kpi-sub">${activeFR.score >= 75 ? 'Très bonne résilience' : activeFR.score >= 45 ? 'Marge d\'amélioration' : 'Vulnérable aux canicules'}</div>
-      </div>
-      <div class="kpi-box" data-tip="Débit d'air frais nocturne par m² de plancher (sous un écart type ΔT = 8 K). Un débit ≥ 10 m³/(h·m²) est nécessaire pour décharger efficacement la chaleur stockée dans les murs et dalles.">
-        <div class="kpi-label">Aération nocturne</div>
-        <div class="kpi-val" style="color:${nightPass ? 'var(--ok)' : 'var(--warn)'}">${activeFR.nomNightSpec.toFixed(1)} m³/(h·m²)</div>
-        <div class="kpi-sub">Objectif recommandé : ≥ 10 m³/(h·m²)</div>
-      </div>
-    </div>
-
+  document.getElementById('simpleReportBottom').innerHTML = `
     <div class="card">
       <h3 class="card-title">
         <span data-tip="Résumé des 6 quantités physiques qui déterminent si le local accumule ou évacue la chaleur en été.">Synthèse constructive &amp; paramètres clés</span>
@@ -181,15 +322,31 @@ function renderSimpleReport(res, activeFR, project) {
               <td class="num">≥ 10.0 m³/(h·m²)</td>
               <td>${badge(nightPass, 'Efficace', activeFR.nomNightSpec > 0 ? 'Modérée' : 'Absente', activeFR.nomNightSpec > 0)}</td>
             </tr>
+            <tr data-tip="Énergie et puissance frigorifiques qui seraient requises si un système de froid actif maintenait 0 h de surchauffe (seuil SIA 180 / 382/1 : ≤ 12 W/m²).">
+              <td>Besoin de froid actif (pour 0 h surchauffe)</td>
+              <td class="num"><strong>${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an)</strong> (${activeFR.maxCoolWm2.toFixed(1)} W/m²)</td>
+              <td class="num">≤ 12 W/m² • ≤ ${activeFR.activeCooling ? activeFR.activeCooling.thresholds.energyExcessiveKWhm2 : 20} kWh/m²</td>
+              <td>${
+                !activeFR.activeCooling || !activeFR.activeCooling.needed
+                  ? '<span class="pill ok">Passif (0 kWh)</span>'
+                  : activeFR.activeCooling.level === 'excessive'
+                    ? '<span class="pill ko">Trop important</span>'
+                    : activeFR.activeCooling.level === 'high'
+                      ? '<span class="pill warn">Important (EN-102)</span>'
+                      : '<span class="pill ok">Faible</span>'
+              }</td>
+            </tr>
           </tbody>
         </table>
       </div>
     </div>
 
+    ${renderActiveCoolingCard(res, activeFR, project)}
+
     <div class="card">
       <h3 class="card-title">
         <span data-tip="Compare votre configuration aux cas où les occupants oublient de fermer les stores le jour ou d'ouvrir les fenêtres la nuit.">Impact des gestes quotidiens &amp; scénarios (« Et si on oublie... ? »)</span>
-        <span class="pill neutral">${isMinergie ? 'Heures > 26.5 °C' : 'Heures de surchauffe'}</span>
+        <span class="pill neutral">${isMinergie ? 'Heures > 26.5 °C' : 'Heures SIA 180'}</span>
       </h3>
       <p class="subtitle">
         Montre l'effet concret d'un oubli de fermeture des stores ou d'ouverture nocturne des fenêtres sur la surchauffe.
@@ -518,6 +675,11 @@ function renderComfortSection(activeFR) {
       appState.comfortParams[key] = parseFloat(el.value);
       document.getElementById(lblId).textContent = fmt(appState.comfortParams[key]);
       activeFR.comfort = evaluateThermalComfort(activeFR.series, appState.comfortParams);
+      const comfBadge = document.getElementById('drawerBadgeComfort');
+      if (comfBadge) {
+        comfBadge.textContent = `EN Cat. II : ${activeFR.comfort.en16798.cat2OkPct.toFixed(0)} % • PMV ${activeFR.comfort.fanger.meanPmv >= 0 ? '+' : ''}${activeFR.comfort.fanger.meanPmv.toFixed(2)}`;
+        comfBadge.className = `pill ${activeFR.comfort.en16798.cat2OkPct >= 97 ? 'ok' : 'warn'}`;
+      }
       renderComfortSection(activeFR);
       requestAnimationFrame(() => drawAdaptiveComparisonChart(activeFR, appState.project.siaCurveMode));
     });
@@ -528,11 +690,64 @@ function renderComfortSection(activeFR) {
   rebindComfort('inComfortRh', 'rh', 'lblComfortRh', v => v.toFixed(0));
 }
 
+function redrawOpenDrawerCharts() {
+  if (!lastRenderCtx) return;
+  const { res, activeFR, project } = lastRenderCtx;
+
+  if (document.getElementById('drawer-charts')?.open) {
+    const winMode = document.getElementById('plotWindow')?.value || 'hottest14';
+    const compareFloors = Boolean(document.getElementById('plotCompareFloors')?.checked);
+    timeChartMeta = drawTimeChart(res, activeFR, winMode, compareFloors);
+    drawSIAChart(activeFR, project.siaCurveMode);
+    drawBalanceChart(activeFR);
+  }
+  if (document.getElementById('drawer-gains')?.open) {
+    drawOrientChart(activeFR);
+  }
+  if (document.getElementById('drawer-comfort')?.open) {
+    drawAdaptiveComparisonChart(activeFR, project.siaCurveMode);
+  }
+}
+
+function redrawSimpleChart() {
+  if (!lastRenderCtx) return;
+  const { res, activeFR, project } = lastRenderCtx;
+  const isMinergie = project.projectType === 'minergie';
+  const winMode = document.getElementById('simplePlotWindow')?.value || 'hottest14';
+  const compareFloors = Boolean(document.getElementById('simpleCompareFloors')?.checked);
+
+  const titleMap = {
+    hottest14: 'Évolution des températures — 14 jours les plus chauds',
+    summer: 'Évolution des températures — Été complet (juin–août)',
+    year: 'Évolution des températures — Année complète (8760 h)'
+  };
+  const titleEl = document.getElementById('simpleChartTitle');
+  if (titleEl) titleEl.textContent = titleMap[winMode] || titleMap.hottest14;
+
+  const subEl = document.getElementById('simpleChartSub');
+  if (subEl) {
+    subEl.textContent = isMinergie
+      ? 'Compare la température intérieure (bleu) à la température extérieure (gris) et au seuil Minergie de 26.5 °C (vert). Zone rouge = dépassement.'
+      : 'Compare la température intérieure (bleu) à la température extérieure (gris) et à la courbe limite SIA 180 (vert). Zone rouge = dépassement.';
+  }
+
+  simpleChartMeta = drawSimpleHeatwaveChart(res, activeFR, 26.5, winMode, compareFloors, !isMinergie);
+}
+
+function syncToggleAllDrawersBtn() {
+  const btn = document.getElementById('btnToggleAllAdvDetails');
+  if (!btn) return;
+  const drawers = [...document.querySelectorAll('#advDrawersContainer .adv-drawer')];
+  const allOpen = drawers.length > 0 && drawers.every(d => d.open);
+  btn.textContent = allOpen ? 'Tout replier' : 'Tout déplier';
+}
+
 export function renderResultsView(onEnsureSimulation) {
   if (!appState.lastResults) onEnsureSimulation();
   const res = appState.lastResults;
-  const { project, uiModes } = appState;
+  const { project } = appState;
 
+  const multiFloor = res.floorResults.length > 1;
   const sel = document.getElementById('resFloorSelect');
   const prev = sel.value;
   const isMinergie = project.projectType === 'minergie';
@@ -545,33 +760,50 @@ export function renderResultsView(onEnsureSimulation) {
       )
       .join('');
   sel.value =
-    prev && (prev === 'WORST' || res.floorResults.some(fr => fr.floor.id === prev)) ? prev : 'WORST';
+    multiFloor && prev && (prev === 'WORST' || res.floorResults.some(fr => fr.floor.id === prev))
+      ? prev
+      : 'WORST';
+
+  // Masquer les contrôles multi-étages s'il n'y a qu'un seul étage
+  sel.classList.toggle('hidden', !multiFloor);
+  document.getElementById('simpleCompareFloorsWrap')?.classList.toggle('hidden', !multiFloor);
+  document.getElementById('plotCompareFloorsWrap')?.classList.toggle('hidden', !multiFloor);
+  const flTabBtn = document.getElementById('subTabFloorsBtn');
+  if (flTabBtn) {
+    flTabBtn.classList.toggle('hidden', !multiFloor);
+    if (!multiFloor && flTabBtn.classList.contains('active')) {
+      document.querySelector('.sub-tab[data-sub="m3"]')?.click();
+    }
+  }
 
   const activeFR =
     sel.value === 'WORST' ? res.worstFloor : res.floorResults.find(fr => fr.floor.id === sel.value);
   const limH = res.limHours;
   const pass = isMinergie ? activeFR.overMinergie265 <= 100 : activeFR.overSIA <= limH;
   const coolOk = activeFR.maxCoolWm2 <= 12.0;
-  const isAdv = uiModes.results === 'advanced';
+
+  lastRenderCtx = { res, activeFR, project };
 
   document.getElementById('resProjectTitle').textContent = `${project.name} — ${activeFR.floor.name}`;
   document.getElementById('resSubMeta').textContent =
     `${res.weatherLabel}${project.foehnExposed ? ' • Zone föhn' : ''}  •  θ_e : ${res.minTe.toFixed(1)}..${res.maxTe.toFixed(1)} °C (${res.tropicalNights} nuits tropicales)`;
 
-  const simpleView = document.getElementById('resultsSimpleView');
-  const advView = document.getElementById('resultsAdvView');
-  if (simpleView) simpleView.classList.toggle('hidden', isAdv);
-  if (advView) advView.classList.toggle('hidden', !isAdv);
+  // 1. RAPPORT SIMPLE (TOUJOURS AFFICHÉ PAR DÉFAUT)
+  renderSimpleReport(res, activeFR, project);
 
-  if (!isAdv) {
-    renderSimpleReport(res, activeFR, project);
-    requestAnimationFrame(() => {
-      simpleChartMeta = drawSimpleHeatwaveChart(activeFR, 26.5);
-    });
-    return;
+  // Badges synthétiques sur les en-têtes des tiroirs dépliables
+  const diagBadge = document.getElementById('drawerBadgeDiag');
+  if (diagBadge) {
+    diagBadge.textContent = pass ? `Conforme (${isMinergie ? activeFR.overMinergie265 : activeFR.overSIA} h)` : `Dépassé (${isMinergie ? activeFR.overMinergie265 : activeFR.overSIA} h)`;
+    diagBadge.className = `pill ${pass ? 'ok' : 'ko'}`;
+  }
+  const comfBadge = document.getElementById('drawerBadgeComfort');
+  if (comfBadge) {
+    comfBadge.textContent = `EN Cat. II : ${activeFR.comfort.en16798.cat2OkPct.toFixed(0)} % • PMV ${activeFR.comfort.fanger.meanPmv >= 0 ? '+' : ''}${activeFR.comfort.fanger.meanPmv.toFixed(2)}`;
+    comfBadge.className = `pill ${activeFR.comfort.en16798.cat2OkPct >= 97 ? 'ok' : 'warn'}`;
   }
 
-  // ==================== VUE AVANCÉE ====================
+  // 2. CONTENU DES TIROIRS AVANCÉS
   document.getElementById('kpiGrid').innerHTML = `
     <div class="kpi-box" data-tip="Heures annuelles d'occupation dépassant la courbe limite SIA 180, et heures dépassant le seuil fixe de 26.5 °C.">
       <div class="kpi-label">Heures de surchauffe</div>
@@ -620,7 +852,16 @@ export function renderResultsView(onEnsureSimulation) {
         <tr data-tip="Nombre total d'heures dans l'année où le local est occupé selon l'horaire défini à l'étape 4."><td>Heures d'occupation analysées</td><td class="num">${activeFR.occH} h/an</td><td>${activeFR.floor.occStart}h–${activeFR.floor.occEnd}h (${activeFR.floor.occDays} j/sem)</td></tr>
         <tr data-tip="Heures occupées où la température opérative dépasse la limite supérieure adaptative SIA 180."><td>Heures de surchauffe SIA 180 (courbe adaptative)</td><td class="num"><strong>${activeFR.overSIA} h/an</strong> (${activeFR.dhSIA.toFixed(1)} Kh)</td><td>${badge(activeFR.passSIA, `≤ ${limH} h/an`, `> ${limH} h/an`)}</td></tr>
         <tr data-tip="Heures où la température opérative dépasse 26.5 °C (pendant l'occupation / sur toute l'année)."><td>Heures θ_op &gt; 26.5 °C (occupation / 8760 h)</td><td class="num"><strong>${activeFR.overMinergie265} h</strong> / ${activeFR.over265All} h</td><td>${badge(activeFR.overMinergie265 <= 100, '≤ 100 h/an', '> 100 h/an')}</td></tr>
-        <tr data-tip="Puissance de pointe et énergie de refroidissement théoriques pour éliminer tout dépassement."><td>Puissance / besoin froid pour 0 h de surchauffe</td><td class="num">${activeFR.maxCoolW.toFixed(0)} W (${activeFR.maxCoolWm2.toFixed(1)} W/m²)</td><td>${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an)</td></tr>
+        <tr data-tip="Puissance de pointe et énergie de refroidissement théoriques pour éliminer tout dépassement."><td>Puissance / besoin froid actif pour 0 h de surchauffe</td><td class="num"><strong>${activeFR.coolKWhm2.toFixed(1)} kWh/(m²·an)</strong> (${(activeFR.coolKWh || 0).toFixed(0)} kWh) • ${activeFR.maxCoolWm2.toFixed(1)} W/m²</td><td>${
+          activeFR.activeCooling
+            ? badge(
+                activeFR.activeCooling.level === 'none' || activeFR.activeCooling.level === 'low',
+                activeFR.activeCooling.statusLabel,
+                activeFR.activeCooling.statusLabel,
+                activeFR.activeCooling.level === 'high'
+              )
+            : `${activeFR.maxCoolW.toFixed(0)} W`
+        }</td></tr>
         <tr data-tip="Nombre total d'heures sur l'année entière (24h/24) où la température dépasse 26 °C."><td>Heures toutes périodes θ_op &gt; 26 °C</td><td class="num">${activeFR.over26} h/an</td><td>Indicateur d'inconfort global 8760 h</td></tr>
       </tbody>
     </table></div>
@@ -697,7 +938,7 @@ export function renderResultsView(onEnsureSimulation) {
   // Onglet Par étage
   document.getElementById('sub-floors').innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>Étage</th><th class="num">Surface</th><th class="num">θ_op Min / Max</th><th class="num">Été Min / Max</th><th class="num">&gt; 26.5 °C</th><th class="num">SIA 180</th><th class="num">Froid fictif</th><th class="num">Score</th><th>Statut</th></tr></thead>
+      <thead><tr><th>Étage</th><th class="num">Surface</th><th class="num">θ_op Min / Max</th><th class="num">Été Min / Max</th><th class="num">&gt; 26.5 °C</th><th class="num">SIA 180</th><th class="num">Froid actif</th><th class="num">Score</th><th>Statut</th></tr></thead>
       <tbody>${res.floorResults
         .map(
           fr => `<tr>
@@ -707,7 +948,7 @@ export function renderResultsView(onEnsureSimulation) {
             <td class="num">${fr.summerMinTop.toFixed(1)} / ${fr.summerMaxTop.toFixed(1)} °C</td>
             <td class="num">${fr.overMinergie265} h</td>
             <td class="num"><strong>${fr.overSIA} h/an</strong></td>
-            <td class="num">${fr.maxCoolWm2.toFixed(1)} W/m²</td>
+            <td class="num">${fr.coolKWhm2.toFixed(1)} kWh/m² (${fr.maxCoolWm2.toFixed(1)} W/m²)</td>
             <td class="num">${fr.score}/100</td>
             <td>${badge(isMinergie ? fr.overMinergie265 <= 100 : fr.overSIA <= limH, 'Conforme', 'Non conforme')}</td>
           </tr>`
@@ -720,15 +961,11 @@ export function renderResultsView(onEnsureSimulation) {
   document.getElementById('sub-methodology').innerHTML = renderMethodologyPanel(activeFR, project);
 
   renderComfortSection(activeFR);
+  syncToggleAllDrawersBtn();
 
   requestAnimationFrame(() => {
-    const winMode = document.getElementById('plotWindow').value;
-    const compareFloors = document.getElementById('plotCompareFloors').checked;
-    timeChartMeta = drawTimeChart(res, activeFR, winMode, compareFloors);
-    drawSIAChart(activeFR, project.siaCurveMode);
-    drawBalanceChart(activeFR);
-    drawOrientChart(activeFR);
-    drawAdaptiveComparisonChart(activeFR, project.siaCurveMode);
+    redrawSimpleChart();
+    redrawOpenDrawerCharts();
   });
 }
 
@@ -744,6 +981,28 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
       const target = document.getElementById('sub-' + btn.dataset.sub);
       if (target) target.classList.remove('hidden');
     });
+  });
+
+  // Redessin automatique des graphiques dès qu'un tiroir avancé est déplié
+  document.querySelectorAll('#advDrawersContainer .adv-drawer').forEach(drawer => {
+    drawer.addEventListener('toggle', () => {
+      syncToggleAllDrawersBtn();
+      if (drawer.open) {
+        requestAnimationFrame(redrawOpenDrawerCharts);
+      }
+    });
+  });
+
+  document.getElementById('btnToggleAllAdvDetails')?.addEventListener('click', () => {
+    const drawers = [...document.querySelectorAll('#advDrawersContainer .adv-drawer')];
+    const shouldOpen = !drawers.every(d => d.open);
+    drawers.forEach(d => {
+      d.open = shouldOpen;
+    });
+    syncToggleAllDrawersBtn();
+    if (shouldOpen) {
+      requestAnimationFrame(redrawOpenDrawerCharts);
+    }
   });
 
   const tooltipEl = document.getElementById('chartTooltip');
@@ -784,18 +1043,27 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
   bindHoverTooltip(
     'chartSimpleHeatwave',
     () => simpleChartMeta,
-    (pt, meta) => `<strong>Jour ${pt.d + 1} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
+    (pt, meta) => {
+      const lim = meta.useAdaptiveLimit ? pt.limUpper : meta.thresholdC;
+      return `<strong>Jour ${pt.d + 1} — ${String(pt.hod).padStart(2, '0')}h00</strong><br>
       Temp. intérieure : <strong>${pt.Top.toFixed(1)} °C</strong><br>
       Temp. extérieure : ${pt.Te.toFixed(1)} °C<br>
-      Seuil confort : ${meta.thresholdC.toFixed(1)} °C`
+      Seuil confort : ${lim.toFixed(1)} °C`;
+    }
   );
 
   document.getElementById('resFloorSelect').addEventListener('change', onRenderResults);
+  document.getElementById('simplePlotWindow')?.addEventListener('change', () => {
+    if (appState.lastResults) requestAnimationFrame(redrawSimpleChart);
+  });
+  document.getElementById('simpleCompareFloors')?.addEventListener('change', () => {
+    if (appState.lastResults) requestAnimationFrame(redrawSimpleChart);
+  });
   document.getElementById('plotWindow').addEventListener('change', () => {
-    if (appState.lastResults) onRenderResults();
+    if (appState.lastResults) requestAnimationFrame(redrawOpenDrawerCharts);
   });
   document.getElementById('plotCompareFloors').addEventListener('change', () => {
-    if (appState.lastResults) onRenderResults();
+    if (appState.lastResults) requestAnimationFrame(redrawOpenDrawerCharts);
   });
   document.getElementById('btnPrintReport').addEventListener('click', () => window.print());
 
@@ -807,7 +1075,7 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
         ? appState.lastResults.worstFloor
         : appState.lastResults.floorResults.find(x => x.floor.id === sel);
     const header =
-      'Heure;Jour;HeureJour;Te_C;T_rm48_C;T_rmEN_C;Top_C;Tair_C;Ts_rad_C;Limite_Sup_SIA_C;Occupation;Surchauffe_SIA;Q_sol_W;Q_sol_brut_W;Q_int_W;Q_gens_W;Q_lampes_W;Q_appareils_W;Q_tr_W;Q_slab_W;Q_ve_jour_W;Q_ve_nuit_W\n';
+      'Heure;Jour;HeureJour;Te_C;T_rm48_C;T_rmEN_C;Top_C;Tair_C;Ts_rad_C;Limite_Sup_SIA_C;Occupation;Surchauffe_SIA;Q_sol_W;Q_sol_brut_W;Q_int_W;Q_gens_W;Q_lampes_W;Q_appareils_W;Q_tr_W;Q_slab_W;Q_ve_jour_W;Q_ve_nuit_W;Q_froid_actif_W\n';
     const rows = fr.series
       .map(p =>
         [
@@ -832,7 +1100,8 @@ export function bindResultsEvents({ onEnsureSimulation, onRenderResults }) {
           p.qTr.toFixed(1),
           p.qSlab.toFixed(1),
           p.qVeDay.toFixed(1),
-          p.qVeNight.toFixed(1)
+          p.qVeNight.toFixed(1),
+          (p.qCool ?? 0).toFixed(1)
         ].join(';')
       )
       .join('\n');

@@ -30,6 +30,23 @@ export const ORIENTATIONS = {
   R:  { az: 180, tilt: 0,  label: 'Toiture (horizontal)' }
 };
 
+export const GLAZING_PRESETS = {
+  triple_std: { label: 'Triple vitrage isolant (U = 0.75, g = 0.55)', uWin: 0.75, gVit: 0.55 },
+  triple_sol: { label: 'Triple vitrage contrôle solaire (U = 0.75, g = 0.35)', uWin: 0.75, gVit: 0.35 },
+  double_mod: { label: 'Double vitrage moderne (U = 1.10, g = 0.60)', uWin: 1.10, gVit: 0.60 },
+  double_old: { label: 'Double vitrage ancien (U = 2.60, g = 0.72)', uWin: 2.60, gVit: 0.72 }
+};
+
+export const STORE_PRESETS = {
+  lamelles_10: { label: 'Store lamelles ext. performant (g_store = 0.10)', gStore: 0.10, gtotMode: 'product' },
+  lamelles_15: { label: 'Store lamelles ext. standard (g_store = 0.15)', gStore: 0.15, gtotMode: 'product' },
+  ext_pastel:  { label: 'Store / volet ext. pastel (g_tot = 0.09)', gStore: 0.09, gtotMode: 'direct' },
+  toile_sombre:{ label: 'Toile extérieure sombre (g_store = 0.15)', gStore: 0.15, gtotMode: 'product' },
+  toile_claire:{ label: 'Toile extérieure claire (g_store = 0.35)', gStore: 0.35, gtotMode: 'product' },
+  int_claire:  { label: 'Store intérieur clair (g_tot = 0.36)', gStore: 0.36, gtotMode: 'direct' },
+  none:        { label: 'Aucun store (g_store = 1.00)', gStore: 1.00, gtotMode: 'product' }
+};
+
 export const SHADING_PRESETS = {
   triple_lamelles:   { label: 'Triple vitrage (g=0.55) + Store lamelles ext. (g_store=0.10)', gVit: 0.55, gStore: 0.10, gtotMode: 'product', uWin: 0.75 },
   triple_ext_15:     { label: 'Triple vitrage (g=0.60) + Store ext. standard (g_store=0.15)', gVit: 0.60, gStore: 0.15, gtotMode: 'product', uWin: 1.00 },

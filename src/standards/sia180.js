@@ -4,20 +4,62 @@
  */
 
 /**
- * Seuils de tolérance annuelle d'heures de dépassement (SIA 180:2014 & Minergie).
- * Note : les clés 'new' et 'reno' sont conservées pour compatibilité rétroactive JSON.
+ * Seuils de tolérance annuelle d'heures de dépassement selon les normes suisses officielles.
+ * Note : les clés historiques ('new', 'reno', 'residential_400', 'strict_100') sont conservées
+ * pour assurer une rétrocompatibilité complète avec les fichiers JSON exportés.
  */
 export const SIA180_TOLERANCE_PROFILES = {
-  minergie:        { hours: 100, tempLimitC: 26.5, label: 'Minergie — Confort estival (≤ 100 h/an > 26.5 °C)' },
-  new:             { hours: 100, label: 'Bureau / École / SIA 180 stricte (≤ 100 h/an)' },
-  strict_100:      { hours: 100, label: 'Bureau / École / SIA 180 stricte (≤ 100 h/an)' },
-  residential_400: { hours: 400, label: 'Habitation SIA 180 standard (≤ 400 h/an)' },
-  reno:            { hours: 400, label: 'Transformation / Rénovation / Habitation SIA 180 (≤ 400 h/an)' },
-  zero:            { hours: 0,   label: 'Exigence zéro surchauffe / Froid fictif (0 h/an)' }
+  minergie: {
+    hours: 100,
+    tempLimitC: 26.5,
+    label: 'Minergie (Variante 2)',
+    shortLabel: 'Minergie (≤ 100 h > 26.5 °C)',
+    description:
+      'Label Minergie / Minergie-P / Minergie-A (protection thermique estivale, Variante 2) : ≤ 100 h/an au-dessus de 26.5 °C (climat 2035) + bilan constructif (g_total, inertie, vent SIA 342).'
+  },
+  new: {
+    hours: 100,
+    label: 'SIA 180:2014 — Construction neuve',
+    shortLabel: 'SIA 180 — Neuf (≤ 100 h/an)',
+    description:
+      'Norme SIA 180:2014 pour constructions neuves (et bureaux/écoles) : ≤ 100 h/an de dépassement de la courbe limite adaptative (Fig. 3 ou Fig. 4) pendant l’occupation.'
+  },
+  strict_100: {
+    hours: 100,
+    label: 'SIA 180:2014 — Construction neuve',
+    shortLabel: 'SIA 180 — Neuf (≤ 100 h/an)',
+    description:
+      'Norme SIA 180:2014 pour constructions neuves : ≤ 100 h/an au-dessus de la courbe limite adaptative.'
+  },
+  reno: {
+    hours: 400,
+    label: 'SIA 180:2014 — Rénovation / Transformation',
+    shortLabel: 'SIA 180 — Rénovation (≤ 400 h/an)',
+    description:
+      'Norme SIA 180:2014 pour transformations, rénovations et bâtiments existants : tolérance élargie à ≤ 400 h/an au-dessus de la courbe limite adaptative pendant l’occupation.'
+  },
+  residential_400: {
+    hours: 400,
+    label: 'SIA 180:2014 — Rénovation / Transformation',
+    shortLabel: 'SIA 180 — Rénovation (≤ 400 h/an)',
+    description:
+      'Norme SIA 180:2014 (tolérance élargie ≤ 400 h/an au-dessus de la courbe limite adaptative).'
+  },
+  zero: {
+    hours: 0,
+    label: 'MoPEC / EN-102 — Sans refroidissement',
+    shortLabel: 'MoPEC / EN-102 (0 h/an)',
+    description:
+      'Modèle de prescriptions énergétiques des cantons (MoPEC / justificatif EN-102) : exigence stricte sans installation de refroidissement (0 h/an de dépassement toléré).'
+  }
 };
 
+export function getSIA180Profile(projectType) {
+  return SIA180_TOLERANCE_PROFILES[projectType] || SIA180_TOLERANCE_PROFILES.new;
+}
+
 export function getSIA180ToleranceHours(projectType) {
-  return (SIA180_TOLERANCE_PROFILES[projectType] || SIA180_TOLERANCE_PROFILES.new).hours;
+  return getSIA180Profile(projectType).hours;
 }
 
 /**

@@ -171,7 +171,10 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       summerHours: 0,
       totalHours: 0,
       maxCoolW: 0,
+      maxCoolHour: 0,
       coolKWh: 0,
+      coolHours: 0,
+      coolMonthlyKWh: new Array(12).fill(0),
       bal: {
         sol: 0,
         solUnshaded: 0,
@@ -248,6 +251,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
         slab: 0,
         veDay: 0,
         veNight: 0,
+        cool: 0,
         isOcc: false
       }));
 
@@ -370,6 +374,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           acc[k].veNight += H_ve_night * (hr.Te - out.Tair);
 
           if (withCoolingPass) {
+            const coolSetpoint =
+              projObj.projectType === 'minergie' ? Math.min(lim.upper, 26.5) : lim.upper;
             const canNightC =
               isNight &&
               TairCoolPrev[k] > fl.nightTargetTi &&
@@ -385,7 +391,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
               : 0;
             const H_veC = H_ve_day + 0.335 * qNC;
             const c0 = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, 0);
-            if (isOcc && c0.Top > lim.upper) {
+            if (isOcc && c0.Top > coolSetpoint) {
               const c1 = step5R1C(
                 fp,
                 TmCool[k],
@@ -398,7 +404,7 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
                 1000
               );
               const sens = c0.Top - c1.Top;
-              const coolW = sens > 1e-6 ? 1000 * ((c0.Top - lim.upper) / sens) : 0;
+              const coolW = sens > 1e-6 ? 1000 * ((c0.Top - coolSetpoint) / sens) : 0;
               const cFin = step5R1C(
                 fp,
                 TmCool[k],
@@ -412,9 +418,16 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
               );
               TmCool[k] = cFin.TmNext;
               TairCoolPrev[k] = cFin.Tair;
+              acc[k].cool += coolW;
               if (record) {
-                if (coolW > stats[k].maxCoolW) stats[k].maxCoolW = coolW;
-                stats[k].coolKWh += coolW / subSteps / 1000;
+                if (coolW > stats[k].maxCoolW) {
+                  stats[k].maxCoolW = coolW;
+                  stats[k].maxCoolHour = hr.h;
+                }
+                const stepKWh = coolW / subSteps / 1000;
+                stats[k].coolKWh += stepKWh;
+                const mIdx = Math.min(11, Math.max(0, Math.floor((hr.d * 12) / 365)));
+                stats[k].coolMonthlyKWh[mIdx] += stepKWh;
               }
             } else if (c0.Top < heatSetpoint) {
               const h1C = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, -1000);
@@ -481,6 +494,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           const qSlab = acc[k].slab / subSteps;
           const qVD = acc[k].veDay / subSteps;
           const qVN = acc[k].veNight / subSteps;
+          const qCool = acc[k].cool / subSteps;
+          if (qCool > 1.0) st.coolHours++;
 
           st.annInt.peopleKWh += qPeople / 1000;
           st.annInt.lightKWh += qLight / 1000;
@@ -547,7 +562,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
               qTr,
               qSlab,
               qVeDay: qVD,
-              qVeNight: qVN
+              qVeNight: qVN,
+              qCool
             });
           }
         }
@@ -659,7 +675,11 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       occH: st.occH,
       maxCoolW: st.maxCoolW,
       maxCoolWm2: st.maxCoolW / area,
+      maxCoolHour: st.maxCoolHour,
+      coolKWh: st.coolKWh,
       coolKWhm2: st.coolKWh / area,
+      coolHours: st.coolHours,
+      coolMonthlyKWh: st.coolMonthlyKWh,
       summerBal: st.bal,
       gains,
       solIrrBelow200KWh: st.solIrrBelow200KWh,

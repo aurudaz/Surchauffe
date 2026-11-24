@@ -34,18 +34,7 @@ export function runFullSimulation(project, customWeather = null, comfortUserPara
     raw2035 = executeEngine(project, weather2035.data, false, false);
   }
 
-  const base = enrichWithSIA180(baseRaw, project.projectType, project, raw2035);
-  const r2035 = enrichWithSIA180(raw2035, project.projectType);
-
-  // Calcul du confort thermique pour chaque étage
-  base.floorResults = base.floorResults.map(fr => ({
-    ...fr,
-    comfort: evaluateThermalComfort(fr.series, comfortUserParams)
-  }));
-  base.worstFloor =
-    base.floorResults.find(fr => fr.floor.id === base.worstFloor.floor.id) || base.floorResults[0];
-
-  // Variantes rapides (sans séries 8760h ni passe froid fictif)
+  // Variantes rapides (passe froid activée sur pOpt pour chiffrer l'économie potentielle de froid)
   const clone = obj => JSON.parse(JSON.stringify(obj));
 
   const pOpt = clone(project);
@@ -68,6 +57,19 @@ export function runFullSimulation(project, customWeather = null, comfortUserPara
     }
   });
 
+  const optRaw = executeEngine(pOpt, weatherObj.data, false, true);
+
+  const base = enrichWithSIA180(baseRaw, project.projectType, project, raw2035, optRaw);
+  const r2035 = enrichWithSIA180(raw2035, project.projectType);
+
+  // Calcul du confort thermique pour chaque étage
+  base.floorResults = base.floorResults.map(fr => ({
+    ...fr,
+    comfort: evaluateThermalComfort(fr.series, comfortUserParams)
+  }));
+  base.worstFloor =
+    base.floorResults.find(fr => fr.floor.id === base.worstFloor.floor.id) || base.floorResults[0];
+
   const pNoBlinds = clone(project);
   pNoBlinds.openings.forEach(o => {
     o.blindMode = 'always_up';
@@ -86,7 +88,7 @@ export function runFullSimulation(project, customWeather = null, comfortUserPara
     f.nightVentMode = 'none';
   });
 
-  const rOpt = enrichWithSIA180(executeEngine(pOpt, weatherObj.data, false, false), project.projectType);
+  const rOpt = enrichWithSIA180(optRaw, project.projectType);
   const rNoBlinds = enrichWithSIA180(executeEngine(pNoBlinds, weatherObj.data, false, false), project.projectType);
   const rNoNight = enrichWithSIA180(executeEngine(pNoNight, weatherObj.data, false, false), project.projectType);
   const rBad = enrichWithSIA180(executeEngine(pBad, weatherObj.data, false, false), project.projectType);

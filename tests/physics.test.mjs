@@ -426,3 +426,34 @@ test('Améliorations avancées : Fresnel (ISO 52016), Profils horaires SIA 2024 
   assert.equal(omParsed.data.length, 24);
   assert.ok(omParsed.sourceLabel.includes('Open-Meteo ERA5 (2023)'));
 });
+
+test('Besoins énergétiques de froid actif : calcul, seuils excessifs & propositions ciblées', () => {
+  const lib = createHouseLibrary();
+  // 1. Cas critique : bureau Sion sans stores + sans ventilation nuit => besoin excessif
+  const hotOffice = lib.find(x => x.id === 'tb_lea_bsol').build();
+  hotOffice.openings.forEach(o => {
+    o.blindMode = 'always_up';
+  });
+  hotOffice.floors.forEach(f => {
+    f.nightVentMode = 'none';
+  });
+  const resHot = runFullSimulation(hotOffice);
+  const acHot = resHot.worstFloor.activeCooling;
+  assert.ok(acHot && acHot.needed, 'Un bureau non protégé sans aération nuit doit nécessiter du froid actif');
+  assert.equal(acHot.level, 'excessive', `Niveau attendu excessive, reçu ${acHot.level} (${acHot.coolKWhm2.toFixed(1)} kWh/m², ${acHot.maxCoolWm2.toFixed(1)} W/m²)`);
+  assert.ok(acHot.coolHours > 100, 'Doit compter les heures actives de refroidissement');
+  assert.ok(acHot.elecPacKWh > 0 && acHot.elecGeoKWh < acHot.elecPacKWh);
+  const monthlySum = acHot.coolMonthlyKWh.reduce((s, v) => s + v, 0);
+  assert.ok(Math.abs(monthlySum - acHot.coolKWh) < 1e-6, 'Somme mensuelle doit égaler coolKWh');
+  assert.ok(acHot.proposals.length >= 2, 'Doit générer des propositions ciblées');
+  assert.ok(acHot.optSavings && acHot.optSavings.savedEnergyPct > 20, 'Le scénario passif optimal doit réduire nettement le besoin de froid');
+  assert.ok(resHot.buildingCooling && resHot.buildingCooling.totalCoolKWh >= acHot.coolKWh - 1e-6);
+
+  // 2. Cas passif en montagne (Zermatt) : aucun froid actif requis
+  const coolHouse = lib[0].build();
+  coolHouse.climate.station = 'ZER';
+  coolHouse.climate.scenario = 'REF';
+  const resCool = runFullSimulation(coolHouse);
+  assert.equal(resCool.worstFloor.activeCooling.needed, false, 'À Zermatt avec protections, le froid actif ne doit pas être nécessaire');
+  assert.equal(resCool.worstFloor.activeCooling.level, 'none');
+});

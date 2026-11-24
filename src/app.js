@@ -71,6 +71,17 @@ function initHoverTooltips() {
     activeTipNode = null;
     tipEl.style.display = 'none';
   });
+  document.addEventListener('pointerdown', () => {
+    activeTipNode = null;
+    tipEl.style.display = 'none';
+  });
+
+  document.addEventListener('focusin', e => {
+    if (e.target && e.target.tagName === 'SELECT') {
+      activeTipNode = null;
+      tipEl.style.display = 'none';
+    }
+  });
 }
 
 function runSimulation() {
@@ -96,6 +107,7 @@ function setMode(mode) {
   document.getElementById('view-results').classList.toggle('hidden', !isRes);
   document.getElementById('btnModeConfig').classList.toggle('active', !isRes);
   document.getElementById('btnModeResults').classList.toggle('active', isRes);
+  document.getElementById('btnRunTop')?.classList.toggle('hidden', isRes);
   if (isRes) {
     runSimulation();
     refreshResults();

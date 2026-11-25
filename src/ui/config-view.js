@@ -3004,6 +3004,9 @@ export function bindConfigEvents({
   document.getElementById('btnFetchOpenMeteo')?.addEventListener('click', () =>
     runLiveWeatherFetch('openmeteo', 'btnFetchOpenMeteo', 'Open-Meteo ERA5')
   );
+  document.getElementById('btnImportWeatherQuick')?.addEventListener('click', () => {
+    document.getElementById('weatherFileInput')?.click();
+  });
 
   const handleHouseFile = file => {
     const r = new FileReader();

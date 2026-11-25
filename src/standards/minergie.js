@@ -371,7 +371,10 @@ export function evaluateMinergieVariante2(fr, project, sim2035FloorResult = null
   const roomTypeKey = fl.roomType2024 || getDefaultRoomTypeForSiaCat(fl.siaCategory || 'I');
   const roomType2024 = SIA2024_ROOM_TYPES[roomTypeKey] || SIA2024_ROOM_TYPES.hab_collectif;
   const internalLoadRefWhm2d = roomType2024.dailyLoadWhm2d || SIA2024_INTERNAL_LOAD_REF[fl.siaCategory] || 84;
-  const internalLoadWhm2d = fr.gains?.internalTotal?.dailyWhm2d ?? internalLoadRefWhm2d;
+  const internalLoadWhm2d =
+    fr.gains?.internalTotal?.operatingDayWhm2d ??
+    fr.gains?.internalTotal?.dailyWhm2d ??
+    internalLoadRefWhm2d;
   const internalLoadForAnalytical =
     fl.minergieInternalLoadWhm2d !== undefined && fl.minergieInternalLoadWhm2d !== null
       ? Number(fl.minergieInternalLoadWhm2d)

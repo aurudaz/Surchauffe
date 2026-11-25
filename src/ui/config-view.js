@@ -1007,17 +1007,28 @@ function renderBox3dBuilder(wrap) {
 
         <div class="wall-panel">
           <div class="wall-panel-head">
-            <strong>Inertie thermique (ISO 13786)</strong>
+            <strong>Inertie thermique (5R1C vs Minergie)</strong>
             <span class="pill neutral" style="font-size:10.5px;">${capMJ} MJ/K</span>
           </div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <label data-tip="Calcule automatiquement la capacité thermique C_R/A_SNP à partir de la surface et de la composition des 6 parois opaques (béton nu, faux-plafond acoustique, parquet, cloison plâtre, bois)." style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+            <label data-tip="Calcule automatiquement la capacité thermique dynamique ISO 13786 (5R1C) depuis les 6 parois opaques." style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
               <input type="checkbox" id="b3AutoCSpec" ${!b3.manualCSpec ? 'checked' : ''} />
-              Auto depuis les 6 parois
+              5R1C auto (6 parois)
             </label>
-            <div style="display:flex;align-items:center;gap:6px;" data-tip="Capacité thermique spécifique effective rapportée à la surface de plancher [Wh/(m²·K)]. Décochez « Auto » pour imposer une valeur manuelle.">
-              <label style="font-size:11.5px;color:var(--text-muted);">C_R/A_SNP :</label>
+            <div style="display:flex;align-items:center;gap:6px;" data-tip="Capacité thermique dynamique 5R1C (ISO 13786) utilisée pour la simulation horaire [Wh/(m²·K)].">
+              <label style="font-size:11.5px;color:var(--text-muted);">C_5R1C :</label>
               <input type="number" id="b3ManualCSpec" step="5" min="10" max="250" value="${activeFl.cSpec}" ${!b3.manualCSpec ? 'disabled' : ''} style="width:74px;" />
+              <span style="font-size:11px;color:var(--text-muted);">Wh/m²K</span>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);">
+            <label data-tip="Calcule automatiquement la capacité Bauteile Minergie (plafonnée à 75 Wh/m²K) séparément du modèle 5R1C." style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;">
+              <input type="checkbox" id="b3AutoCSpecMin" ${!b3.manualCSpecMinergie ? 'checked' : ''} />
+              Minergie auto (≤ 75)
+            </label>
+            <div style="display:flex;align-items:center;gap:6px;" data-tip="Capacité thermique spécifique C_R/A_SNP du justificatif constructif Minergie [Wh/(m²·K)], plafonnée à 75.">
+              <label style="font-size:11.5px;color:var(--text-muted);">C_R/A Minergie :</label>
+              <input type="number" id="b3ManualCSpecMin" step="1" min="5" max="75" value="${activeFl.cSpecMinergie ?? Math.min(75, activeFl.cSpec)}" ${!b3.manualCSpecMinergie ? 'disabled' : ''} style="width:74px;" />
               <span style="font-size:11px;color:var(--text-muted);">Wh/m²K</span>
             </div>
           </div>
@@ -1141,6 +1152,15 @@ function renderBox3dBuilder(wrap) {
   card.querySelector('#b3ManualCSpec')?.addEventListener('change', e => {
     b3.manualCSpec = true;
     activeFl.cSpec = Math.max(10, Math.min(250, Number(e.target.value) || 80));
+    commitBox3d(true);
+  });
+  card.querySelector('#b3AutoCSpecMin')?.addEventListener('change', e => {
+    b3.manualCSpecMinergie = !e.target.checked;
+    commitBox3d(true);
+  });
+  card.querySelector('#b3ManualCSpecMin')?.addEventListener('change', e => {
+    b3.manualCSpecMinergie = true;
+    activeFl.cSpecMinergie = Math.max(5, Math.min(75, Number(e.target.value) || 45));
     commitBox3d(true);
   });
 
@@ -1311,10 +1331,12 @@ export function renderFloors() {
 
       if (k === 'inertiaClass' && e.target.value !== 'custom') {
         fl.cSpec = Number(e.target.value);
+        fl.cSpecMinergie = Math.min(75, fl.cSpec);
         renderFloors();
       }
       if (k === 'cSpec') {
         fl.inertiaClass = 'custom';
+        fl.cSpecMinergie = Math.min(75, Math.max(5, Number(e.target.value) || 45));
         renderFloors();
       }
       if (!isAdv && ['area', 'height', 'simplePos', 'envelopeStd'].includes(k)) {
@@ -1586,6 +1608,46 @@ function updateMechVentUI(fl) {
   const qNatEl = document.getElementById('inQHygNat');
   if (qEl) qEl.value = fl.qHygSpec;
   if (qNatEl) qNatEl.value = fl.qHygSpec;
+
+  const schedEl = document.getElementById('inVmcSchedule');
+  const curSched = fl.vmcSchedule || (fl.spaceType === 'office' ? 'occ_bypass_night' : '24h');
+  if (schedEl) schedEl.value = curSched;
+
+  const liveHint = document.getElementById('vmcLiveInfoHint');
+  if (liveHint) {
+    const qTot = (Number(fl.qHygSpec) || 0) * Math.max(1, fl.area);
+    const vol = Math.max(1, fl.area * fl.height);
+    const ach = qTot / vol;
+    const occ = Number(fl.occCount) || 0;
+    const qPerPers = occ > 0 ? qTot / occ : 0;
+    const sia382Low = fl.spaceType === 'office' && occ > 0 && qPerPers < 25;
+    const baseTxt =
+      `<span>Débit VMC : <strong>${qTot.toFixed(0)} m³/h</strong> (${ach.toFixed(2)} vol/h` +
+      `${occ > 0 ? ` • ${qPerPers.toFixed(1)} m³/(h·pers)` : ''}) — Bypass estival auto (θ_i &gt; 22 °C et θ_e &lt; θ_i).</span>`;
+    if (sia382Low) {
+      const recQ = Math.round(((30 * occ) / Math.max(1, fl.area)) * 10) / 10;
+      liveHint.innerHTML =
+        `${baseTxt}` +
+        `<button type="button" class="btn btn-sm" id="btnApplySia382Vmc" data-tip="Appliquer le débit hygiénique SIA 382/1 (~30 m³/(h·pers) soit ${recQ.toFixed(1)} m³/(h·m²))." style="padding:2px 8px;font-size:11px;border-color:var(--warn);color:var(--warn);">Appliquer SIA 382/1 (${recQ.toFixed(1)} m³/hm²)</button>`;
+      liveHint.querySelector('#btnApplySia382Vmc')?.addEventListener('click', () => {
+        const targets = getTargetFloorsForSia();
+        targets.forEach(tfl => {
+          tfl.qHygSpec = recQ;
+          tfl.siaCategory = 'custom';
+        });
+        const act = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+        if (act) {
+          document.getElementById('siaCategorySelect').value = 'custom';
+          syncMainCategorySelect();
+          updateMechVentUI(act);
+          updateSiaCatChips(act);
+        }
+        updateInspector();
+      });
+    } else {
+      liveHint.innerHTML = baseTxt;
+    }
+  }
 }
 
 export function loadSiaFloorInputs() {
@@ -1703,6 +1765,21 @@ export function updateInspector() {
   if (totalWin === 0) alerts.push('<span class="pill warn">Aucune ouverture vitrée définie</span>');
   if (project.floors.some(f => f.cSpec < 30)) {
     alerts.push('<span class="pill warn">Inertie faible sur un étage (&lt; 30 Wh/m²K)</span>');
+  }
+  const hasConfinedBox = project.floors.some(fl => {
+    const flOps = project.openings.filter(o => o.floorId === fl.id);
+    const fp = buildFloorThermalParams(fl, flOps);
+    return (
+      fp.H_tr_op + fp.H_tr_w + (fp.H_tr_adj || 0) < 10 &&
+      fl.nightVentMode === 'none' &&
+      fl.dayVentMode !== 'window_occ' &&
+      (fl.qHygSpec || 0) < 1.5
+    );
+  });
+  if (hasConfinedBox) {
+    alerts.push(
+      '<span class="pill warn" data-tip="Parois intérieures adiabatiques sans déstockage nocturne ni ouverture des fenêtres : le local accumule la chaleur.">Local confiné (adiabatique sans déstockage)</span>'
+    );
   }
   document.getElementById('inspectorAlerts').innerHTML = alerts.join('');
 }
@@ -2617,11 +2694,8 @@ export function bindConfigEvents({
         syncMainCategorySelect();
         updateSiaCatChips(activeFl);
       }
-      if (prop === 'qHygSpec') {
-        const q1 = document.getElementById('inQHyg');
-        const q2 = document.getElementById('inQHygNat');
-        if (q1) q1.value = activeFl.qHygSpec;
-        if (q2) q2.value = activeFl.qHygSpec;
+      if (prop === 'qHygSpec' || prop === 'occCount') {
+        updateMechVentUI(activeFl);
       }
       if (['nightVentMode', 'nightVentFixedVal', 'nightStart', 'nightEnd'].includes(prop)) {
         updateNightVentUI(activeFl);
@@ -2700,6 +2774,18 @@ export function bindConfigEvents({
     });
     const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
     updateMechVentUI(activeFl);
+  });
+
+  document.getElementById('inVmcSchedule')?.addEventListener('change', e => {
+    const targets = getTargetFloorsForSia();
+    if (targets.length === 0) return;
+    const val = e.target.value;
+    targets.forEach(tfl => {
+      tfl.vmcSchedule = val;
+    });
+    const activeFl = appState.project.floors.find(f => f.id === appState.activeFloorId) || targets[0];
+    updateMechVentUI(activeFl);
+    notifyProjectChanged();
   });
 
   document.getElementById('inNightFreeCool24h')?.addEventListener('change', e => {

@@ -36,28 +36,32 @@ import {
  * @param {number} dt Durée du sous-pas [s] (900 s pour 4 sous-pas/h)
  * @param {number} [coolW=0] Puissance de refroidissement convectif fictive [W]
  */
-export function step5R1C(fp, TmVal, P_int, P_sol, H_ve, Te, slabQ, dt, coolW = 0) {
+export function step5R1C(fp, TmVal, P_int, P_sol, H_ve, Te, slabQ, dt, coolW = 0, T_adj = 23.0) {
   const Phi_ia = 0.5 * P_int - coolW;
   const Phi_m = (fp.A_m / fp.A_tot) * (0.5 * P_int + P_sol) + slabQ;
   const Phi_st =
     Math.max(0, 1 - fp.A_m / fp.A_tot - fp.H_tr_w / (9.1 * fp.A_tot)) * (0.5 * P_int + P_sol);
 
+  const H_tr_adj = fp.H_tr_adj || 0;
   const H_tr_1 = H_ve > 1e-6 ? 1 / (1 / H_ve + 1 / fp.H_is) : 0;
-  const H_tr_2 = H_tr_1 + fp.H_tr_w;
+  const H_tr_2 = H_tr_1 + fp.H_tr_w + H_tr_adj;
   const H_tr_3 = H_tr_2 > 1e-9 ? 1 / (1 / H_tr_2 + 1 / fp.H_ms) : 0;
   const ratio32 = H_tr_2 > 1e-9 ? H_tr_3 / H_tr_2 : 0;
 
   const convTerm = (fp.H_is / (H_ve + fp.H_is)) * Phi_ia + H_tr_1 * Te;
   const Phi_mtot =
-    Phi_m + fp.H_tr_em * Te + ratio32 * (Phi_st + fp.H_tr_w * Te + convTerm);
+    Phi_m + fp.H_tr_em * Te + ratio32 * (Phi_st + fp.H_tr_w * Te + H_tr_adj * T_adj + convTerm);
   const H_tot = H_tr_3 + fp.H_tr_em;
 
   const capOverDt = fp.C_m / dt;
   const TmNext = (TmVal * (capOverDt - 0.5 * H_tot) + Phi_mtot) / (capOverDt + 0.5 * H_tot);
   const TmAvg = 0.5 * (TmVal + TmNext);
 
-  const denomTs = fp.H_ms + fp.H_tr_w + H_tr_1;
-  const Ts = denomTs > 1e-9 ? (fp.H_ms * TmAvg + Phi_st + fp.H_tr_w * Te + convTerm) / denomTs : TmAvg;
+  const denomTs = fp.H_ms + fp.H_tr_w + H_tr_adj + H_tr_1;
+  const Ts =
+    denomTs > 1e-9
+      ? (fp.H_ms * TmAvg + Phi_st + fp.H_tr_w * Te + H_tr_adj * T_adj + convTerm) / denomTs
+      : TmAvg;
 
   const denomAir = fp.H_is + H_ve;
   const Tair = denomAir > 1e-9 ? (fp.H_is * Ts + H_ve * Te + Phi_ia) / denomAir : Ts;
@@ -337,11 +341,37 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             }
           }
 
-          // Ventilation hygiénique (avec bypass estival automatique du récupérateur si θ_i > 22 °C et θ_e < θ_i)
-          // + infiltration d'enveloppe (jamais soumise à récupération de chaleur)
-          const qHyg_m3h = isOcc ? fl.qHygSpec * fl.area : 0;
+          // Ventilation hygiénique (VMC ou naturelle) + free-cooling bypass nocturne VMC + infiltration
+          // Couplage optionnel vers un couloir/zone tempérée intérieure T_adj (BOX3D adj_corridor)
+          const T_adj = Math.max(20.0, Math.min(26.0, 20.0 + 0.35 * Math.max(0, tRm48 - 10.0)));
+          const hasVmc =
+            fl.hasMechVent === true ||
+            (fl.hasMechVent === undefined && (fl.etaWRG || 0) > 0);
+          const vmcSched =
+            fl.vmcSchedule || (fl.spaceType === 'office' ? 'occ_bypass_night' : '24h');
+          const vmcBypassTi = fl.vmcBypassTi ?? 22.0;
+
           const qInf_m3h = fl.achInfil * fp.vol;
-          const etaEff = TairPrev[k] > 22.0 && hr.Te < TairPrev[k] ? 0 : (fl.etaWRG || 0);
+          const vmcFlowM3h = fl.qHygSpec * fl.area;
+          let qHyg_m3h = 0;
+          let qVmcFreeCool_m3h = 0;
+          if (hasVmc) {
+            if (vmcSched === '24h') {
+              qHyg_m3h = vmcFlowM3h;
+            } else if (vmcSched === 'occ_bypass_night') {
+              qHyg_m3h = isOcc ? vmcFlowM3h : 0;
+              qVmcFreeCool_m3h =
+                !isOcc && TairPrev[k] > vmcBypassTi && hr.Te < TairPrev[k] - 1.0
+                  ? vmcFlowM3h
+                  : 0;
+            } else {
+              qHyg_m3h = isOcc ? vmcFlowM3h : 0;
+            }
+          } else {
+            qHyg_m3h = isOcc ? vmcFlowM3h : 0;
+          }
+          const etaNominal = hasVmc ? (fl.etaWRG || 0) : 0;
+          const etaEff = TairPrev[k] > vmcBypassTi && hr.Te < TairPrev[k] ? 0 : etaNominal;
 
           const canNightCool =
             isNight &&
@@ -375,19 +405,19 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
             : 0;
 
           const H_ve_day = 0.335 * (qHyg_m3h * (1 - etaEff) + qInf_m3h + qDayWin_m3h);
-          const H_ve_night = 0.335 * qNight_m3h;
+          const H_ve_night = 0.335 * (qNight_m3h + qVmcFreeCool_m3h);
           const H_ve = H_ve_day + H_ve_night;
 
           // Maintien hivernal SIA 380/1 / SIA 2044 (par défaut θ_i de la catégorie SIA, ex. 20 °C)
           const heatSetpoint =
             fl.heatSetpoint ?? SIA380_CATEGORIES[fl.siaCategory]?.ti ?? 20.0;
-          let out = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, 0);
+          let out = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, 0, T_adj);
           if (out.Top < heatSetpoint) {
-            const h1 = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, -1000);
+            const h1 = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, -1000, T_adj);
             const sensH = h1.Top - out.Top;
             if (sensH > 1e-6) {
               const heatW = 1000 * ((heatSetpoint - out.Top) / sensH);
-              out = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, -heatW);
+              out = step5R1C(fp, Tm[k], P_int, P_sol, H_ve, hr.Te, slabFlux[k], dt, -heatW, T_adj);
             }
           }
           Tm[k] = out.TmNext;
@@ -404,13 +434,33 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
           acc[k].people += intBreakdown.people;
           acc[k].light += intBreakdown.lighting;
           acc[k].equip += intBreakdown.appliances;
-          acc[k].tr += fp.H_tr_w * (hr.Te - out.Ts) + fp.H_tr_em * (hr.Te - out.TmAvg);
+          acc[k].tr +=
+            fp.H_tr_w * (hr.Te - out.Ts) +
+            fp.H_tr_em * (hr.Te - out.TmAvg) +
+            (fp.H_tr_adj || 0) * (T_adj - out.Ts);
           acc[k].slab += slabFlux[k];
           acc[k].veDay += H_ve_day * (hr.Te - out.Tair);
           acc[k].veNight += H_ve_night * (hr.Te - out.Tair);
 
           if (withCoolingPass) {
             const coolSetpoint = lim.upper;
+            let qHygC = 0;
+            let qVmcFCC = 0;
+            if (hasVmc) {
+              if (vmcSched === '24h') {
+                qHygC = vmcFlowM3h;
+              } else if (vmcSched === 'occ_bypass_night') {
+                qHygC = isOcc ? vmcFlowM3h : 0;
+                qVmcFCC =
+                  !isOcc && TairCoolPrev[k] > vmcBypassTi && hr.Te < TairCoolPrev[k] - 1.0
+                    ? vmcFlowM3h
+                    : 0;
+              } else {
+                qHygC = isOcc ? vmcFlowM3h : 0;
+              }
+            } else {
+              qHygC = isOcc ? vmcFlowM3h : 0;
+            }
             const canNightC =
               isNight &&
               TairCoolPrev[k] > fl.nightTargetTi &&
@@ -439,10 +489,10 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
                   projObj.stackCoupling
                 )
               : 0;
-            const etaEffC = TairCoolPrev[k] > 22.0 && hr.Te < TairCoolPrev[k] ? 0 : (fl.etaWRG || 0);
-            const H_veC = 0.335 * (qHyg_m3h * (1 - etaEffC) + qInf_m3h + qDayWinC + qNC);
-            const c0 = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, 0);
-            if ((countAllHours || isOcc) && c0.Top > coolSetpoint) {
+            const etaEffC = TairCoolPrev[k] > vmcBypassTi && hr.Te < TairCoolPrev[k] ? 0 : etaNominal;
+            const H_veC = 0.335 * (qHygC * (1 - etaEffC) + qInf_m3h + qDayWinC + qNC + qVmcFCC);
+            const c0 = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, 0, T_adj);
+            if (c0.Top > coolSetpoint) {
               const c1 = step5R1C(
                 fp,
                 TmCool[k],
@@ -452,7 +502,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
                 hr.Te,
                 slabFluxC[k],
                 dt,
-                1000
+                1000,
+                T_adj
               );
               const sens = c0.Top - c1.Top;
               const coolW = sens > 1e-6 ? 1000 * ((c0.Top - coolSetpoint) / sens) : 0;
@@ -465,26 +516,23 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
                 hr.Te,
                 slabFluxC[k],
                 dt,
-                coolW
+                coolW,
+                T_adj
               );
               TmCool[k] = cFin.TmNext;
               TairCoolPrev[k] = cFin.Tair;
               acc[k].cool += coolW;
               if (record) {
-                if (coolW > stats[k].maxCoolW) {
-                  stats[k].maxCoolW = coolW;
-                  stats[k].maxCoolHour = hr.h;
-                }
                 const stepKWh = coolW / subSteps / 1000;
                 stats[k].coolKWh += stepKWh;
                 const mIdx = Math.min(11, Math.max(0, Math.floor((hr.d * 12) / 365)));
                 stats[k].coolMonthlyKWh[mIdx] += stepKWh;
               }
             } else if (c0.Top < heatSetpoint) {
-              const h1C = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, -1000);
+              const h1C = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, -1000, T_adj);
               const sensHC = h1C.Top - c0.Top;
               const heatWC = sensHC > 1e-6 ? 1000 * ((heatSetpoint - c0.Top) / sensHC) : 0;
-              const hFinC = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, -heatWC);
+              const hFinC = step5R1C(fp, TmCool[k], P_int, P_sol, H_veC, hr.Te, slabFluxC[k], dt, -heatWC, T_adj);
               TmCool[k] = hFinC.TmNext;
               TairCoolPrev[k] = hFinC.Tair;
             } else {
@@ -538,6 +586,10 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
 
           const qCool = acc[k].cool / subSteps;
           if (qCool > 1.0) st.coolHours++;
+          if (qCool > st.maxCoolW) {
+            st.maxCoolW = qCool;
+            st.maxCoolHour = hr.h;
+          }
 
           // Statistiques convergées sur la dernière journée complète (24 h — utile pour la journée type)
           if (isLastDay24) {
@@ -698,6 +750,8 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
 
     const area = Math.max(1, fl.area);
     const numDays = Math.max(1, st.totalHours / 24);
+    const occDaysPerWeek = Math.max(1, Math.min(7, fl.occDays || 7));
+    const occDaysCount = Math.max(1, numDays * (occDaysPerWeek / 7));
     const summerH = Math.max(1, st.summerHours);
     const summerDays = Math.max(1, summerH / 24);
     const totalSummerGainsKWh = Math.max(
@@ -719,7 +773,10 @@ export function executeEngine(projObj, weatherData, recordSeries = true, withCoo
       people: mkGain(st.peakW.people, st.bal.intPeople, st.annInt.peopleKWh),
       lighting: mkGain(st.peakW.light, st.bal.intLight, st.annInt.lightKWh),
       appliances: mkGain(st.peakW.equip, st.bal.intEquip, st.annInt.equipKWh),
-      internalTotal: mkGain(st.peakW.int, st.bal.int, st.annInt.totalKWh),
+      internalTotal: {
+        ...mkGain(st.peakW.int, st.bal.int, st.annInt.totalKWh),
+        operatingDayWhm2d: (st.annInt.totalKWh * 1000) / (occDaysCount * area)
+      },
       solarTransmitted: mkGain(st.peakW.sol, st.bal.sol),
       solarUnshaded: mkGain(st.peakW.solUnshaded, st.bal.solUnshaded),
       solarBlockedByBlinds: mkGain(st.peakW.solSaved, st.bal.solSavedByBlinds),

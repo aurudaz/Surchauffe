@@ -39,6 +39,10 @@ export function ensureFloorDefaults(fl, idx = 0, total = 1) {
   if (fl.nightSimpleCross === undefined) fl.nightSimpleCross = false;
   if (fl.internalProfileMode === undefined) fl.internalProfileMode = 'sia2024';
   if (fl.hasMechVent === undefined) fl.hasMechVent = (fl.etaWRG || 0) > 0;
+  if (fl.vmcSchedule === undefined) {
+    fl.vmcSchedule = fl.spaceType === 'office' ? 'occ_bypass_night' : '24h';
+  }
+  if (fl.adjCorridorUA === undefined) fl.adjCorridorUA = 0;
   if (fl.nightVentMode === undefined) fl.nightVentMode = 'simple_pct';
   if (fl.uSlabInter === undefined) fl.uSlabInter = 1.4;
   if (fl.psiTotal === undefined) fl.psiTotal = Math.round((fl.area || 50) * 0.03 * 10) / 10;
@@ -99,7 +103,9 @@ function makeFloor(
     qHygSpec: sia.qHygSpec,
     achInfil: 0.1,
     hasMechVent: false,
+    vmcSchedule: sia.spaceType === 'office' ? 'occ_bypass_night' : '24h',
     etaWRG: 0.0,
+    adjCorridorUA: 0,
     dayVentMode: 'none',
     dayTargetTi: 23.0,
     dayMinDT: 1.0,

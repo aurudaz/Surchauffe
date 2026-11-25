@@ -117,6 +117,17 @@ export function evaluateSIA180PrescriptiveMethods(fr) {
  */
 export function buildRecommendations(fr, limHours, projectType = 'new') {
   const recos = [];
+  const totalEnvCond = (fr.fp?.H_tr_op || 0) + (fr.fp?.H_tr_w || 0) + (fr.fp?.H_tr_adj || 0);
+  if (
+    totalEnvCond < 10 &&
+    fr.floor.nightVentMode === 'none' &&
+    fr.floor.dayVentMode !== 'window_occ' &&
+    (fr.floor.qHygSpec || 0) < 1.5
+  ) {
+    recos.push(
+      `<strong>Local confiné (« boîte adiabatique ») :</strong> la quasi-totalité des parois (${(fr.fp?.A_tot || 0).toFixed(0)} m²) étant modélisées comme adiabatiques sans aération nocturne ni aération par les fenêtres, la chaleur s’accumule durablement. Activez l’aération nocturne / diurne par les fenêtres, vérifiez le débit VMC (~30 m³/(h·pers) SIA 382/1) ou passez une cloison intérieure en « Intérieur sur couloir / zone tempérée » dans le Constructeur 3D.`
+    );
+  }
   if (projectType === 'minergie' && fr.overMinergie265 > 100) {
     recos.push(
       `<strong>Dépassement Minergie :</strong> ${fr.overMinergie265} h/an dépassent 26.5 °C (limite Minergie : 100 h/an). Renforcez les protections solaires extérieures (g_tot ≤ 0.10) et le rafraîchissement nocturne.`

@@ -150,7 +150,9 @@ export function generateSyntheticWeather(stationKey = 'SIO', scenarioKey = 'REF'
     let Ibn = 0;
     let Idh = 0;
     if (sun.cosZ > 0.02) {
-      const kt = Math.min(0.84 * altFactor, dw.cloud * (0.86 + 0.14 * sun.cosZ) * altFactor);
+      const airMass = 1 / Math.max(0.08, sun.cosZ);
+      const amAtten = Math.exp(-0.10 * Math.max(0, airMass - 1.15));
+      const kt = Math.min(0.82 * altFactor, dw.cloud * 1.03 * amAtten * altFactor);
       const I0 = 1361 * (1 + 0.033 * Math.cos((2 * Math.PI * (d + 1)) / 365));
       Igh = Math.max(0, I0 * sun.cosZ * kt);
       Idh = Igh * erbsDiffuseFraction(kt);
@@ -592,21 +594,36 @@ export function parseAnyWeatherText(text, sourceName = 'Import', climateSettings
     };
   }
 
-  // 5. SIA 2028 / Meteonorm (.dat / .cli — colonnes tabulées ou point-virgule, heure CET+1)
+  // 5. SIA 2028 / Meteonorm (.dat / .cli / .csv / .txt — heure locale CET+1, colonnes flexibles)
   const lowerName = sourceName.toLowerCase();
   const isSiaDat =
     lowerName.endsWith('.dat') ||
     lowerName.endsWith('.cli') ||
-    lines.slice(0, 20).some(l => /\b(g_sum|gls|str\.diffus|rad_global|ta|time\.hh)\b/i.test(l));
+    lowerName.endsWith('.txt') ||
+    lowerName.endsWith('.csv') ||
+    lines
+      .slice(0, 30)
+      .some(l => /\b(g_sum|gls|str\.diffus|rad_global|g_gh|g_dh|g_bn|g_bh|ta|time\.hh)\b/i.test(l));
 
   if (isSiaDat) {
     let hdrIdx = -1;
     let colNames = [];
-    for (let i = 0; i < Math.min(30, lines.length); i++) {
-      const l = lines[i].trim();
-      if (!l || l.startsWith('#') || l.startsWith('!')) continue;
-      const toks = l.split(/[;\t, ]+/).filter(Boolean);
-      if (toks.length >= 5 && /[a-zA-Z]/.test(l) && toks.some(t => /^(ta|t|temp|t2m|gls|g_sum|g_h|gh|rad_global)$/i.test(t))) {
+    for (let i = 0; i < Math.min(35, lines.length); i++) {
+      const rawLine = lines[i].trim();
+      const latM = rawLine.match(/\b(?:lat|latitude)\b\s*[:=]?\s*([-+]?\d+(?:\.\d+)?)/i);
+      if (latM) lat = parseFloat(latM[1]) || lat;
+      const lonM = rawLine.match(/\b(?:lon|longitude)\b\s*[:=]?\s*([-+]?\d+(?:\.\d+)?)/i);
+      if (lonM) lon = parseFloat(lonM[1]) || lon;
+
+      if (!rawLine || rawLine.startsWith('#') || rawLine.startsWith('!')) continue;
+      const toks = rawLine.split(/[;\t, ]+/).filter(Boolean);
+      if (
+        toks.length >= 3 &&
+        /[a-zA-Z]/.test(rawLine) &&
+        toks.some(t =>
+          /^(ta|t_a|t|temp|t_air|t_dry|t2m|tamb|air_temp|tt|g_gh|gh|gls|g_sum|g_h|glob|global|rad_global|ghi)$/i.test(t)
+        )
+      ) {
         hdrIdx = i;
         colNames = toks.map(t => t.toLowerCase());
         break;
@@ -614,50 +631,69 @@ export function parseAnyWeatherText(text, sourceName = 'Import', climateSettings
     }
 
     const findCol = patterns => colNames.findIndex(c => patterns.some(rx => rx.test(c)));
-    const iTe = hdrIdx >= 0 ? findCol([/^ta$/, /^t$/, /^temp/, /^t_air$/, /^t_dry$/, /^t2m$/]) : 4;
-    const iGh = hdrIdx >= 0 ? findCol([/^g_sum$/, /^gls$/, /^g_h$/, /^gh$/, /^rad_global/, /^g_glob/, /^ig$/]) : 5;
-    const iGd = hdrIdx >= 0 ? findCol([/^g_diff$/, /^str\.diffus$/, /^rad_diffuse/, /^gd$/, /^idh$/]) : 6;
-    const iGb = hdrIdx >= 0 ? findCol([/^str\.direkt$/, /^g_dir$/, /^ibn$/, /^gb$/, /^dni$/]) : -1;
+    const iTe = hdrIdx >= 0 ? findCol([/^ta$/, /^t_a$/, /^t$/, /^temp/, /^t_air$/, /^t_dry$/, /^t2m$/, /^tamb$/, /^air_temp$/, /^tt$/]) : 4;
+    const iGh = hdrIdx >= 0 ? findCol([/^g_gh$/, /^gh$/, /^g_sum$/, /^gls$/, /^g_h$/, /^glob$/, /^global$/, /^rad_global/, /^g_glob/, /^ig$/, /^ghi$/]) : 5;
+    const iGd = hdrIdx >= 0 ? findCol([/^g_dh$/, /^dh$/, /^g_diff$/, /^str\.diffus$/, /^rad_diffuse/, /^diff$/, /^diffuse$/, /^gd$/, /^idh$/, /^dhi$/]) : 6;
+    const iGbNorm = hdrIdx >= 0 ? findCol([/^g_bn$/, /^bn$/, /^dni$/, /^ibn$/, /^str\.direkt$/, /^g_dir$/, /^gb$/]) : -1;
+    const iGbHor = hdrIdx >= 0 ? findCol([/^g_bh$/, /^bh$/, /^dir_hor$/, /^g_dir_h$/, /^gbh$/]) : -1;
+    const iMonth = hdrIdx >= 0 ? findCol([/^m$/, /^mo$/, /^month$/, /^time\.mm$/]) : -1;
+    const iDay = hdrIdx >= 0 ? findCol([/^d$/, /^dm$/, /^day$/, /^time\.dd$/]) : -1;
 
-    const hours = [];
-    const startLine = hdrIdx >= 0 ? hdrIdx + 1 : 0;
-    for (let i = startLine; i < lines.length && hours.length < 8760; i++) {
-      const l = lines[i].trim();
-      if (!l || l.startsWith('#') || l.startsWith('!')) continue;
-      const p = l.split(/[;\t, ]+/).filter(Boolean);
-      if (p.length <= Math.max(iTe, iGh)) continue;
-      const Te = parseFloat(p[iTe]);
-      const IghRaw = parseFloat(p[iGh]);
-      if (!Number.isFinite(Te) || !Number.isFinite(IghRaw)) continue;
+    if (iTe >= 0 && iGh >= 0) {
+      const hours = [];
+      const startLine = hdrIdx >= 0 ? hdrIdx + 1 : 0;
+      for (let i = startLine; i < lines.length && hours.length < 8760; i++) {
+        const l = lines[i].trim();
+        if (!l || l.startsWith('#') || l.startsWith('!')) continue;
+        const p = l.split(/[;\t, ]+/).filter(Boolean);
+        if (p.length <= Math.max(iTe, iGh)) continue;
+        const Te = parseFloat(p[iTe]);
+        const IghRaw = parseFloat(p[iGh]);
+        if (!Number.isFinite(Te) || !Number.isFinite(IghRaw)) continue;
 
-      const h = hours.length;
-      const d = Math.floor(h / 24);
-      const hod = h % 24;
-      const Igh = Math.max(0, IghRaw);
-      const sun = solarPosition(d + 1, hod + 0.5, lat, lon, 1);
+        if (iMonth >= 0 && iDay >= 0) {
+          const mo = parseInt(p[iMonth], 10);
+          const da = parseInt(p[iDay], 10);
+          if (mo === 2 && da === 29) continue;
+        }
 
-      let Idh;
-      let Ibn;
-      if (iGd >= 0 && p[iGd] !== undefined && Number.isFinite(parseFloat(p[iGd]))) {
-        Idh = Math.max(0, parseFloat(p[iGd]));
-        Ibn =
-          iGb >= 0 && p[iGb] !== undefined && Number.isFinite(parseFloat(p[iGb]))
-            ? Math.max(0, parseFloat(p[iGb]))
-            : sun.cosZ > 0.03
-              ? Math.max(0, (Igh - Idh) / sun.cosZ)
-              : 0;
-      } else {
-        const sp = splitGlobalToComponents(Igh, sun, d + 1);
-        Ibn = sp.Ibn;
-        Idh = sp.Idh;
+        const h = hours.length;
+        const d = Math.floor(h / 24);
+        const hod = h % 24;
+        const Igh = Math.max(0, IghRaw);
+        const sun = solarPosition(d + 1, hod + 0.5, lat, lon, 1);
+
+        let Idh;
+        let Ibn;
+        const hasDiff = iGd >= 0 && p[iGd] !== undefined && Number.isFinite(parseFloat(p[iGd]));
+        const hasDni = iGbNorm >= 0 && p[iGbNorm] !== undefined && Number.isFinite(parseFloat(p[iGbNorm]));
+        const hasBh = iGbHor >= 0 && p[iGbHor] !== undefined && Number.isFinite(parseFloat(p[iGbHor]));
+
+        if (hasDiff) {
+          Idh = Math.max(0, parseFloat(p[iGd]));
+          if (hasDni) {
+            Ibn = Math.max(0, parseFloat(p[iGbNorm]));
+          } else if (hasBh) {
+            Ibn = sun.cosZ > 0.03 ? Math.max(0, parseFloat(p[iGbHor]) / sun.cosZ) : 0;
+          } else {
+            Ibn = sun.cosZ > 0.03 ? Math.max(0, (Igh - Idh) / sun.cosZ) : 0;
+          }
+        } else if (hasDni) {
+          Ibn = Math.max(0, parseFloat(p[iGbNorm]));
+          Idh = Math.max(0, Igh - Ibn * Math.max(0, sun.cosZ));
+        } else {
+          const sp = splitGlobalToComponents(Igh, sun, d + 1);
+          Ibn = sp.Ibn;
+          Idh = sp.Idh;
+        }
+        hours.push({ h, d, hod, Te, Igh, Ibn, Idh, sun });
       }
-      hours.push({ h, d, hod, Te, Igh, Ibn, Idh, sun });
-    }
-    if (hours.length >= 24) {
-      return {
-        sourceLabel: `SIA 2028 / Meteonorm : ${sourceName} (${hours.length} h)`,
-        data: hours
-      };
+      if (hours.length >= 24) {
+        return {
+          sourceLabel: `Meteonorm / SIA 2028 : ${sourceName} (${hours.length} h)`,
+          data: hours
+        };
+      }
     }
   }
 

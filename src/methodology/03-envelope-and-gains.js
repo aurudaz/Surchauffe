@@ -156,6 +156,7 @@ export function applyBox3dToFloor(fl, project, { preserveOpenings = false } = {}
   let groundArea = 0;
   let groundUA = 0;
   let groundB = 0.3;
+  let adjCorridorUA = 0;
   // Capacité thermique effective ISO 13786 (modèle horaire 5R1C) : Σ (A_paroi · κ_5R1C) + mobilier (~8 Wh/(m²·K))
   let totalCapWhK = 8.0 * fl.area;
   // Capacité thermique spécifique SIA 180 / Minergie Bauteile (sans mobilier, plafonnée à 75 Wh/(m²·K))
@@ -257,7 +258,9 @@ export function applyBox3dToFloor(fl, project, { preserveOpenings = false } = {}
     const kappaMin = preset.kappaMinergie ?? Math.min(28, kappa * 0.45);
     totalCapMinergieWhK += netOpaque * kappaMin;
 
-    if (contact.b > 0 && netOpaque > 0) {
+    if (contact.corridor && netOpaque > 0) {
+      adjCorridorUA += netOpaque * uVal;
+    } else if (contact.b > 0 && netOpaque > 0) {
       if (faceKey === 'ceiling') {
         roofArea += netOpaque * contact.b;
         roofUA += netOpaque * uVal * contact.b;
@@ -279,6 +282,7 @@ export function applyBox3dToFloor(fl, project, { preserveOpenings = false } = {}
   fl.floorGroundArea = Math.round(groundArea * 10) / 10;
   fl.bFloorGround = groundArea > 0.01 ? groundB : 0.0;
   fl.uFloorGround = groundArea > 0.01 ? Math.round((groundUA / groundArea) * 1000) / 1000 : 0.2;
+  fl.adjCorridorUA = Math.round(adjCorridorUA * 100) / 100;
 
   const autoCSpec = Math.round(Math.max(15, Math.min(220, totalCapWhK / Math.max(1, fl.area))));
   b3.autoCSpec = autoCSpec;
@@ -361,6 +365,7 @@ export function buildFloorThermalParams(fl, ops) {
     fl.roofExtArea * fl.uRoofExt +
     fl.floorGroundArea * fl.uFloorGround * fl.bFloorGround +
     (fl.psiTotal || 0);
+  const H_tr_adj = Math.max(0, Number(fl.adjCorridorUA) || 0);
 
   const A_tot = Math.max(4.5 * fl.area, 2 * fl.area + fl.wallExtArea + fl.roofExtArea + winArea);
   const f_m = fl.cSpec <= 55 ? 2.5 : fl.cSpec <= 85 ? 3.0 : 3.5;
@@ -371,7 +376,7 @@ export function buildFloorThermalParams(fl, ops) {
   const H_tr_em = H_tr_op <= 1e-4 ? 0 : 1 / Math.max(1e-4, 1 / H_tr_op - 1 / H_ms);
   const C_m = Math.max(5, fl.cSpec) * fl.area * 3600;
   const vol = fl.area * fl.height;
-  const tauHours = C_m / (3600 * Math.max(1e-3, H_tr_op + H_tr_w));
+  const tauHours = C_m / (3600 * Math.max(1e-3, H_tr_op + H_tr_w + H_tr_adj));
 
   return {
     fl,
@@ -379,6 +384,7 @@ export function buildFloorThermalParams(fl, ops) {
     winArea,
     H_tr_w,
     H_tr_op,
+    H_tr_adj,
     A_tot,
     A_m,
     H_is,

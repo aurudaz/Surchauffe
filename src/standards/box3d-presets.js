@@ -8,11 +8,12 @@
  */
 
 export const BOX3D_CONTACTS = {
-  ext_sun:   { label: 'Extérieur (avec soleil & vent)', b: 1.0, exposed: true },
-  ext_nosun: { label: 'Extérieur sans flux solaires',    b: 1.0, exposed: true },
-  adiabatic: { label: 'Intérieur / Adiabatique (aucun flux)', b: 0.0, exposed: false },
-  ground:    { label: 'Sur sol (b = 0.30)',              b: 0.3, exposed: false },
-  unheated:  { label: 'Sur local non chauffé (b = 0.50)', b: 0.5, exposed: false }
+  ext_sun:      { label: 'Extérieur (avec soleil & vent)', b: 1.0, exposed: true },
+  ext_nosun:    { label: 'Extérieur sans flux solaires',    b: 1.0, exposed: true },
+  adiabatic:    { label: 'Intérieur / Adiabatique (aucun flux)', b: 0.0, exposed: false },
+  adj_corridor: { label: 'Intérieur sur couloir / zone tempérée (~23–25 °C)', b: 0.0, exposed: false, corridor: true },
+  ground:       { label: 'Sur sol (b = 0.30)',              b: 0.3, exposed: false },
+  unheated:     { label: 'Sur local non chauffé (b = 0.50)', b: 0.5, exposed: false }
 };
 
 export const BOX3D_WALL_PRESETS = {

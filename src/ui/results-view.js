@@ -1510,8 +1510,14 @@ function buildEngineeringPrintBlocks() {
         const ops = project.openings.filter(o => o.floorId === fl.id);
         const winGross = ops.reduce((s, o) => s + o.width * o.height * o.qty, 0);
         const winGlass = ops.reduce((s, o) => s + o.width * o.height * o.qty * (o.frameFactor ?? 0.78), 0);
+        const vmcSchedLbl =
+          fl.vmcSchedule === '24h'
+            ? '24h/24'
+            : fl.vmcSchedule === 'occ_only'
+              ? 'occ.'
+              : 'bypass nuit';
         const vmcTxt = fl.hasMechVent
-          ? `VMC (η=${Math.round((fl.etaWRG || 0) * 100)} %, q=${fl.qHygSpec})`
+          ? `VMC (η=${Math.round((fl.etaWRG || 0) * 100)} %, q=${fl.qHygSpec}, ${vmcSchedLbl})`
           : `Naturelle (q=${fl.qHygSpec})${fl.dayVentMode === 'window_occ' ? ' + fen. jour' : ''}`;
         return `<tr>
           <td><strong>${escapeHtml(fl.name)}</strong></td>

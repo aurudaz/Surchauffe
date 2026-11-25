@@ -357,6 +357,8 @@ test('Validation TB Léa Bohren (bSol Pro) : aéraulique, stores, inertie ISO 13
   const wSioRef = generateSyntheticWeather('SIO', 'REF');
   const resNoWrg = executeEngine(leaBase, wSioRef.data, false, false).floorRaw[0];
   const leaWrg = JSON.parse(JSON.stringify(leaBase));
+  leaWrg.floors[0].hasMechVent = true;
+  leaWrg.floors[0].vmcSchedule = '24h';
   leaWrg.floors[0].etaWRG = 0.85;
   const resWithWrg = executeEngine(leaWrg, wSioRef.data, false, false).floorRaw[0];
   assert.ok(resWithWrg.over26 <= resNoWrg.over26 + 5, 'Le bypass estival WRG doit empêcher la surchauffe par récupération');
@@ -818,4 +820,190 @@ test('Minergie v2023.2 (CALC_1) : benchmark bureau exercice, aération diurne, s
   assert.ok(d24.overMinergie265 >= 0 && d24.overMinergie265 <= 24, `day24.overMinergie265 doit être dans [0, 24]`);
   assert.ok(d24.maxTop > 22 && d24.maxTop >= d24.minTop, 'day24.maxTop doit être physiquement cohérent');
   assert.ok(d24.maxTopHod >= 0 && d24.maxTopHod <= 23, 'day24.maxTopHod doit être une heure 0..23');
+});
+
+test('Correctifs physiques complets : VMC active/bypass nuit, pic froid horaire, masse d’air solaire, couloir 3D, charges ouvrées & Meteonorm', () => {
+  // Cas exact du bureau 20 m² à Sion 2035 (exercice Minergie 2 pers., 380 W internes)
+  const makeBureauProj = () => ({
+    name: 'Bureau exercice 20 m²',
+    projectType: 'minergie',
+    siaCurveMode: 'fig4',
+    stackCoupling: false,
+    albedo: 0.2,
+    climate: { station: 'SIO', scenario: '2035', lat: 46.22, lon: 7.33, tzMode: 'cet_cest', urbanHeatIsland: false },
+    floors: [
+      {
+        id: 'f1',
+        name: 'Bureau',
+        elevationZ: 0,
+        area: 20,
+        height: 2.5,
+        depthBehindWin: 4,
+        simplePos: 'mid',
+        envelopeStd: 'sia_new',
+        siaCategory: 'custom',
+        roomType2024: 'bureau_indiv',
+        spaceType: 'office',
+        inertiaClass: 'custom',
+        cSpec: 125,
+        cSpecMinergie: 46.2,
+        gainFactorPct: 100,
+        wallExtArea: 8.7,
+        uWallExt: 0.17,
+        roofExtArea: 0,
+        uRoofExt: 0.2,
+        floorGroundArea: 0,
+        bFloorGround: 0,
+        uFloorGround: 0.2,
+        uSlabInter: 1.4,
+        psiTotal: 0,
+        adjCorridorUA: 0,
+        occCount: 2,
+        occWatt: 70,
+        occPresenceFactor: 1.0,
+        lightWm2: 2.0,
+        equipWatt: 200,
+        occStart: 8,
+        occEnd: 16,
+        occDays: 5,
+        standbyPct: 0,
+        internalProfileMode: 'constant',
+        qHygSpec: 0.7,
+        achInfil: 0.1,
+        hasMechVent: true,
+        vmcSchedule: 'occ_bypass_night',
+        etaWRG: 0.75,
+        dayVentMode: 'none',
+        dayTargetTi: 23,
+        dayMinDT: 1,
+        nightVentMode: 'none',
+        nightStart: 21,
+        nightEnd: 7,
+        nightTargetTi: 21,
+        nightMinDT: 1.5,
+        heatSetpoint: 20,
+        box3d: {
+          dimX: 5,
+          dimY: 4,
+          frontOrient: 'S',
+          manualCSpec: false,
+          manualCSpecMinergie: true,
+          walls: {
+            front: { contact: 'ext_sun', preset: 'wall_sia_heavy', u: 0.17 },
+            back: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8 },
+            right: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8 },
+            left: { contact: 'adiabatic', preset: 'wall_plaster_int', u: 1.8 },
+            ceiling: { contact: 'adiabatic', preset: 'slab_acoustic', u: 1.1 },
+            floor: { contact: 'adiabatic', preset: 'slab_heavy_int', u: 1.4 }
+          }
+        }
+      }
+    ],
+    openings: [
+      {
+        id: 'b3_f1_front',
+        floorId: 'f1',
+        box3dFace: 'front',
+        name: 'Fenêtre Sud',
+        orient: 'S',
+        width: 2.0,
+        height: 1.9,
+        qty: 1,
+        uWin: 1.0,
+        gVit: 0.60,
+        gStore: 0.15,
+        gtotMode: 'direct',
+        overhangDepth: 0,
+        frameFactor: 0.82,
+        shadingFactor: 1.0,
+        blindMode: 'auto',
+        blindThreshI: 200,
+        blindThreshT: 22.0,
+        blindRule: 'irr_only',
+        windSafe: true,
+        operable: true,
+        openWidth: 1.0,
+        openHeight: 1.4,
+        openType: 'imposte',
+        alphaDeg: 20,
+        cd: 0.6,
+        sillHeight: 0.6
+      }
+    ]
+  });
+
+  const w2035 = generateSyntheticWeather('SIO', '2035', false);
+
+  // 1. Bug #1 : VMC active avec bypass nocturne réduit fortement la surchauffe vs absence de bypass (et 3.0 m³/hm² encore plus)
+  const pVmcBypass = makeBureauProj();
+  const pVmcOccOnly = makeBureauProj();
+  pVmcOccOnly.floors[0].vmcSchedule = 'occ_only';
+  const pVmcSia382 = makeBureauProj();
+  pVmcSia382.floors[0].qHygSpec = 3.0; // 60 m³/h pour 2 pers. (SIA 382/1)
+
+  const rBypass = executeEngine(pVmcBypass, w2035.data, false, true).floorRaw[0];
+  const rOccOnly = executeEngine(pVmcOccOnly, w2035.data, false, true).floorRaw[0];
+  const rSia382 = executeEngine(pVmcSia382, w2035.data, false, true).floorRaw[0];
+
+  assert.ok(
+    rBypass.maxTop < rOccOnly.maxTop - 4.0,
+    `Le bypass nocturne VMC doit abaisser nettement le pic (${rOccOnly.maxTop.toFixed(1)} -> ${rBypass.maxTop.toFixed(1)} °C)`
+  );
+  assert.ok(
+    rSia382.maxTop < 38.5 && rSia382.overMinergie265 < rBypass.overMinergie265,
+    `Le débit SIA 382/1 (3.0 m³/hm²) doit abaisser le pic sous 38.5 °C (reçu ${rSia382.maxTop.toFixed(1)} °C)`
+  );
+
+  // 2. Bug #3 : Plus de pic artificiel sur 15 min à 08h00 le lundi (maxCoolWm2 < 45 W/m² vs ~100 W/m² avant)
+  assert.ok(
+    rOccOnly.maxCoolWm2 < 45.0,
+    `La puissance de froid de pointe horaire doit rester réaliste (< 45 W/m²), reçu ${rOccOnly.maxCoolWm2.toFixed(1)} W/m²`
+  );
+
+  // 3. Bug #4 : Atténuation par masse d'air atmosphérique (Sion REF 16 août 06h : Ibn < 350 W/m² au lieu de 856 W/m²)
+  const wSioRef = generateSyntheticWeather('SIO', 'REF', false);
+  const earlySun = wSioRef.data[228 * 24 + 6];
+  const maxIghRef = Math.max(...wSioRef.data.map(h => h.Igh));
+  assert.ok(earlySun.Ibn < 350, `À 06h00 (soleil bas), Ibn doit rester modéré (< 350 W/m²), reçu ${earlySun.Ibn.toFixed(0)}`);
+  assert.ok(maxIghRef >= 900 && maxIghRef <= 1100, `Pic Igh Sion REF attendu 900–1100 W/m², reçu ${maxIghRef.toFixed(0)}`);
+
+  // 4. Bug #5 : Contact 3D 'adj_corridor' dissipe vers le couloir tempéré
+  const pCorr = makeBureauProj();
+  pCorr.floors[0].vmcSchedule = 'occ_only';
+  pCorr.floors[0].box3d.walls.back.contact = 'adj_corridor';
+  applyBox3dToFloor(pCorr.floors[0], pCorr, { preserveOpenings: true });
+  assert.ok(pCorr.floors[0].adjCorridorUA > 15, `adjCorridorUA attendu > 15 W/K, reçu ${pCorr.floors[0].adjCorridorUA}`);
+  const rCorr = executeEngine(pCorr, w2035.data, false, false).floorRaw[0];
+  assert.ok(
+    rCorr.maxTop < rOccOnly.maxTop - 10.0,
+    `Couplage couloir doit supprimer l'effet four (${rOccOnly.maxTop.toFixed(1)} -> ${rCorr.maxTop.toFixed(1)} °C)`
+  );
+
+  // 5. Bug #6 : Charges internes Minergie évaluées par jour d'exploitation (152 Wh/m²j pour 5 j/7, > seuil 120 mech)
+  const mCorr = evaluateMinergieVariante2(rOccOnly, pVmcOccOnly, rOccOnly);
+  assert.ok(
+    Math.abs(mCorr.internalLoadForAnalytical - 152) < 1.0,
+    `Charge interne par jour ouvré attendue 152 Wh/(m²·j), reçu ${mCorr.internalLoadForAnalytical.toFixed(1)}`
+  );
+  assert.equal(mCorr.coolingRequiredByRule, true, 'En stratégie mech (seuil 120 Wh/m²j), 152 Wh/m²j exige du froid');
+
+  // 6. Import Meteonorm complet (colonnes G_Gh, G_Dh, G_Bn + Latitude dans l'en-tête)
+  const meteonormSample = [
+    '# Meteonorm v8 export — Sion REF',
+    '# Latitude: 46.22, Longitude: 7.33',
+    'm;d;h;Ta;G_Gh;G_Dh;G_Bn',
+    ...Array.from({ length: 24 }, (_, h) => {
+      const te = (18 + 8 * Math.sin((Math.PI * h) / 24)).toFixed(1);
+      const gh = h >= 6 && h <= 18 ? 720 : 0;
+      const dh = h >= 6 && h <= 18 ? 140 : 0;
+      const bn = h >= 6 && h <= 18 ? 780 : 0;
+      return `7;15;${h + 1};${te};${gh};${dh};${bn}`;
+    })
+  ].join('\n');
+  const mnParsed = parseAnyWeatherText(meteonormSample, 'Sion_Meteonorm.csv', { lat: 46.22, lon: 7.33 });
+  assert.equal(mnParsed.data.length, 24);
+  assert.ok(mnParsed.sourceLabel.includes('Meteonorm'), `sourceLabel doit mentionner Meteonorm, reçu ${mnParsed.sourceLabel}`);
+  assert.equal(mnParsed.data[12].Igh, 720);
+  assert.equal(mnParsed.data[12].Idh, 140);
+  assert.equal(mnParsed.data[12].Ibn, 780);
 });
